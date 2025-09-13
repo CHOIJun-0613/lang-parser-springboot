@@ -1,0 +1,6 @@
+pytest
+neo4j
+javalang
+click
+pydantic
+python-dotenv
