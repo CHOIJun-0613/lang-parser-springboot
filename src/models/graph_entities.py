@@ -15,6 +15,8 @@ class Method(BaseModel):
     name: str
     return_type: str
     parameters: list[Property] = []
+    visibility: str = "public"
+    source: str = ""
 
 
 class MethodCall(BaseModel):
@@ -27,6 +29,17 @@ class MethodCall(BaseModel):
     target_class: str
     target_method: str
 
+    def dict(self):
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "source_package": self.source_package,
+            "source_class": self.source_class,
+            "source_method": self.source_method,
+            "target_package": self.target_package,
+            "target_class": self.target_class,
+            "target_method": self.target_method
+        }
+
 
 class Class(BaseModel):
     """Represents a Java class, interface, or enum."""
@@ -35,6 +48,10 @@ class Class(BaseModel):
     package: str
     file_path: str
     type: Literal["class", "interface", "enum"]
+    source: str = ""
+    superclass: str | None = None
+    interfaces: list[str] = []
+    imports: list[str] = []
     properties: list[Property] = []
     methods: list[Method] = []
     calls: list[MethodCall] = []

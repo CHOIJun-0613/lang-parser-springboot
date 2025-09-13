@@ -1,6 +1,8 @@
 package com.example;
 
-public class Greeter {
+import com.test.Parent;
+
+public class Greeter extends Parent{
     public void sayHello() {
         System.out.println("Hello, World!");
     }

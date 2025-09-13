@@ -1,8 +1,13 @@
 import click
-from src.services.java_parser import parse_java_project
-from src.services.graph_db import GraphDB
+import sys
 import os
 from dotenv import load_dotenv
+
+# Add the project root to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from src.services.java_parser import parse_java_project
+from src.services.graph_db import GraphDB
 
 load_dotenv()
 
@@ -16,28 +21,53 @@ def cli():
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--neo4j-password', default=os.getenv("NEO4J_PASSWORD"), help='Neo4j password')
 @click.option('--clean', is_flag=True, help='Wipe the database before analysis.')
-def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean):
+@click.option('--dry-run', is_flag=True, help='Parse Java files without connecting to database.')
+def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dry_run):
     """Analyzes a Java project and populates a Neo4j database."""
     if not java_source_folder:
         click.echo("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required.", err=True)
         exit(1)
 
-    db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
-
-    if clean:
-        click.echo("Cleaning database...")
-        with db._driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
-
     click.echo(f"Parsing Java project at: {java_source_folder}")
     classes_to_add = parse_java_project(java_source_folder)
     
-    click.echo(f"Found {len(classes_to_add)} classes. Adding to database...")
-    for class_node in classes_to_add:
-        db.add_class(class_node)
+    click.echo(f"Found {len(classes_to_add)} classes.")
     
-    db.close()
-    click.echo("Analysis complete.")
+    if dry_run:
+        click.echo("Dry run mode - not connecting to database.")
+        for class_node in classes_to_add:
+            click.echo(f"Class: {class_node.package}.{class_node.name}")
+            click.echo(f"  Methods: {len(class_node.methods)}")
+            click.echo(f"  Properties: {len(class_node.properties)}")
+            click.echo(f"  Method calls: {len(class_node.calls)}")
+        click.echo("Analysis complete (dry run).")
+        return
+
+    try:
+        click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+        db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+
+        if clean:
+            click.echo("Cleaning database...")
+            with db._driver.session() as session:
+                session.run("MATCH (n) DETACH DELETE n")
+
+        click.echo("Adding classes to database...")
+        for class_node in classes_to_add:
+            if class_node.package == class_node.name:
+                click.echo(f"Skipping class {class_node.name} in package {class_node.package}: package name and class name are identical.")
+                continue
+            if class_node.package.startswith("java.io"):
+                click.echo(f"Skipping class {class_node.name} in package {class_node.package}: belongs to java.io package.")
+                continue
+            db.add_class(class_node)
+        
+        db.close()
+        click.echo("Analysis complete.")
+    except Exception as e:
+        click.echo(f"Error connecting to database: {e}")
+        click.echo("Use --dry-run flag to parse without database connection.")
+        exit(1)
 
 if __name__ == '__main__':
     cli()
