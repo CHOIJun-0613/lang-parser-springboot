@@ -2,11 +2,18 @@ from pydantic import BaseModel
 from typing import Literal
 
 
+class Package(BaseModel):
+    """Represents a Java package."""
+
+    name: str
+
+
 class Property(BaseModel):
     """Represents a field or property within a class."""
 
     name: str
     type: str
+    modifiers: list[str] = []
 
 
 class Method(BaseModel):
@@ -15,7 +22,7 @@ class Method(BaseModel):
     name: str
     return_type: str
     parameters: list[Property] = []
-    visibility: str = "public"
+    modifiers: list[str] = []
     source: str = ""
 
 
@@ -42,16 +49,16 @@ class MethodCall(BaseModel):
 
 
 class Class(BaseModel):
-    """Represents a Java class, interface, or enum."""
+    """Represents a Java class with its methods, properties, and relationships."""
 
     name: str
-    package: str
     file_path: str
-    type: Literal["class", "interface", "enum"]
+    type: Literal["class", "interface", "enum"] = "class"
+    methods: list[Method] = []
+    properties: list[Property] = []
+    calls: list[MethodCall] = []
     source: str = ""
     superclass: str | None = None
     interfaces: list[str] = []
     imports: list[str] = []
-    properties: list[Property] = []
-    methods: list[Method] = []
-    calls: list[MethodCall] = []
+

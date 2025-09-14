@@ -29,14 +29,16 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dr
         exit(1)
 
     click.echo(f"Parsing Java project at: {java_source_folder}")
-    classes_to_add = parse_java_project(java_source_folder)
+    packages_to_add, classes_to_add, class_to_package_map = parse_java_project(java_source_folder)
     
-    click.echo(f"Found {len(classes_to_add)} classes.")
+    click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
     
     if dry_run:
         click.echo("Dry run mode - not connecting to database.")
+        for package_node in packages_to_add:
+            click.echo(f"Package: {package_node.name}")
         for class_node in classes_to_add:
-            click.echo(f"Class: {class_node.package}.{class_node.name}")
+            click.echo(f"Class: {class_node.name}")
             click.echo(f"  Methods: {len(class_node.methods)}")
             click.echo(f"  Properties: {len(class_node.properties)}")
             click.echo(f"  Method calls: {len(class_node.calls)}")
@@ -52,15 +54,24 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dr
             with db._driver.session() as session:
                 session.run("MATCH (n) DETACH DELETE n")
 
+        click.echo("Adding packages to database...")
+        for package_node in packages_to_add:
+            db.add_package(package_node)
+        
         click.echo("Adding classes to database...")
         for class_node in classes_to_add:
-            if class_node.package == class_node.name:
-                click.echo(f"Skipping class {class_node.name} in package {class_node.package}: package name and class name are identical.")
-                continue
-            if class_node.package.startswith("java.io"):
-                click.echo(f"Skipping class {class_node.name} in package {class_node.package}: belongs to java.io package.")
-                continue
-            db.add_class(class_node)
+            # Find the package for this class using the mapping
+            class_key = f"{class_to_package_map.get(class_node.name, '')}.{class_node.name}"
+            package_name = class_to_package_map.get(class_key, None)
+            
+            if not package_name:
+                # Fallback: try to find package by class name
+                for key, pkg_name in class_to_package_map.items():
+                    if key.endswith(f".{class_node.name}"):
+                        package_name = pkg_name
+                        break
+            
+            db.add_class(class_node, package_name)
         
         db.close()
         click.echo("Analysis complete.")

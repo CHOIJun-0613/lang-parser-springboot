@@ -2,12 +2,14 @@ import os
 
 import javalang
 
-from src.models.graph_entities import Class, Method, MethodCall, Property
+from src.models.graph_entities import Class, Method, MethodCall, Property, Package
 
 
-def parse_java_project(directory: str) -> list[Class]:
-    """Parses all Java files in a directory and returns a list of Class objects."""
+def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str]]:
+    """Parses all Java files in a directory and returns a tuple of (packages, classes, class_to_package_map)."""
+    packages = {}
     classes = {}
+    class_to_package_map = {}  # Maps class_key to package_name
 
     for root, _, files in os.walk(directory):
         for file in files:
@@ -18,6 +20,19 @@ def parse_java_project(directory: str) -> list[Class]:
                 try:
                     tree = javalang.parse.parse(file_content)
                     package_name = tree.package.name if tree.package else ""
+                    
+                    # Create or update package node
+                    if package_name and package_name not in packages:
+                        packages[package_name] = Package(
+                            name=package_name
+                        )
+                    elif not package_name:
+                        # Handle classes without package (default package)
+                        package_name = "default"
+                        if package_name not in packages:
+                            packages[package_name] = Package(
+                                name=package_name
+                            )
                     
                     import_map = {}
                     for imp in tree.imports:
@@ -37,11 +52,11 @@ def parse_java_project(directory: str) -> list[Class]:
                         if class_key not in classes:
                             classes[class_key] = Class(
                                 name=class_name,
-                                package=package_name,
                                 file_path=file_path,
                                 type="class", # Simplified for now
                                 source=class_source # Add class source
                             )
+                            class_to_package_map[class_key] = package_name
                         
                         # --- Start of new import logic ---
                         for imp in tree.imports:
@@ -77,7 +92,8 @@ def parse_java_project(directory: str) -> list[Class]:
                                 field_map[declarator.name] = field_declaration.type.name
                                 prop = Property(
                                     name=declarator.name,
-                                    type=field_declaration.type.name
+                                    type=field_declaration.type.name,
+                                    modifiers=list(field_declaration.modifiers) # Add modifiers
                                 )
                                 classes[class_key].properties.append(prop)
 
@@ -102,15 +118,8 @@ def parse_java_project(directory: str) -> list[Class]:
                             else: # ConstructorDeclaration
                                 return_type = "constructor"
 
-                            # --- Start of new visibility logic ---
-                            visibility = "package-private" # Default
-                            if "public" in declaration.modifiers:
-                                visibility = "public"
-                            elif "private" in declaration.modifiers:
-                                visibility = "private"
-                            elif "protected" in declaration.modifiers:
-                                visibility = "protected"
-                            # --- End of new visibility logic ---
+                            # Extract modifiers
+                            modifiers = list(declaration.modifiers)
 
                             # Extract method source code
                             method_source = ""
@@ -140,7 +149,7 @@ def parse_java_project(directory: str) -> list[Class]:
                                 name=declaration.name,
                                 return_type=return_type,
                                 parameters=params,
-                                visibility=visibility,
+                                modifiers=modifiers,
                                 source=method_source # Add method source
                             )
                             classes[class_key].methods.append(method)
@@ -182,4 +191,4 @@ def parse_java_project(directory: str) -> list[Class]:
                     print(f"Error parsing {file_path}: {e}")
                     continue
     
-    return list(classes.values())
+    return list(packages.values()), list(classes.values()), class_to_package_map

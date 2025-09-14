@@ -43,6 +43,7 @@ def test_parse_java_project(mock_file, mock_walk):
     assert len(my_class.properties) == 1
     assert my_class.properties[0].name == "myField"
     assert my_class.properties[0].type == "String"
+    assert sorted(my_class.properties[0].modifiers) == sorted(["private"])
 
     # Check method calls
     assert len(my_class.calls) == 1
@@ -78,3 +79,45 @@ def test_parse_java_project(mock_file, mock_walk):
     assert len(another_method.parameters) == 1
     assert another_method.parameters[0].name == "count"
     assert another_method.parameters[0].type == "int"
+
+
+@patch("os.walk")
+@patch("builtins.open", new_callable=mock_open, read_data='''
+package com.example;
+
+import com.test.Parent;
+
+public class Greeter extends Parent{
+    private String greeting = "Hello";
+    public static final int MAX_VALUE = 100;
+
+    public void sayHello() {
+        System.out.println(greeting + ", World!");
+    }
+}
+''')
+def test_parse_java_project_with_greeter_fields(mock_file, mock_walk):
+    # Given
+    mock_walk.return_value = [("/fake/dir", [], ["Greeter.java"])]
+
+    # When
+    classes = parse_java_project("/fake/dir")
+
+    # Then
+    assert len(classes) == 1
+    greeter_class = classes[0]
+
+    assert greeter_class.name == "Greeter"
+    assert greeter_class.package == "com.example"
+
+    assert len(greeter_class.properties) == 2
+
+    greeting_field = next((p for p in greeter_class.properties if p.name == "greeting"), None)
+    assert greeting_field is not None
+    assert greeting_field.type == "String"
+    assert sorted(greeting_field.modifiers) == sorted(["private"])
+
+    max_value_field = next((p for p in greeter_class.properties if p.name == "MAX_VALUE"), None)
+    assert max_value_field is not None
+    assert max_value_field.type == "int"
+    assert sorted(max_value_field.modifiers) == sorted(["public", "static", "final"])
