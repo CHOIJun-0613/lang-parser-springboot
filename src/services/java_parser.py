@@ -3,6 +3,7 @@ import os
 import javalang
 
 from src.models.graph_entities import Class, Method, MethodCall, Property, Package
+from typing import Optional, List, Literal
 
 
 def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str]]:
@@ -52,6 +53,7 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                         if class_key not in classes:
                             classes[class_key] = Class(
                                 name=class_name,
+                                logical_name=class_key,  # Add logical_name
                                 file_path=file_path,
                                 type="class", # Simplified for now
                                 source=class_source # Add class source
@@ -147,6 +149,7 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
 
                             method = Method(
                                 name=declaration.name,
+                                logical_name=f"{class_key}.{declaration.name}",  # Add logical_name
                                 return_type=return_type,
                                 parameters=params,
                                 modifiers=modifiers,

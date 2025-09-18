@@ -6,6 +6,7 @@ class Package(BaseModel):
     """Represents a Java package."""
 
     name: str
+    logical_name: str = ""
 
 
 class Property(BaseModel):
@@ -20,6 +21,7 @@ class Method(BaseModel):
     """Represents a method within a class."""
 
     name: str
+    logical_name: str = ""
     return_type: str
     parameters: list[Property] = []
     modifiers: list[str] = []
@@ -52,6 +54,7 @@ class Class(BaseModel):
     """Represents a Java class with its methods, properties, and relationships."""
 
     name: str
+    logical_name: str = ""
     file_path: str
     type: Literal["class", "interface", "enum"] = "class"
     methods: list[Method] = []
