@@ -8,9 +8,103 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from src.services.java_parser import parse_java_project
 from src.services.graph_db import GraphDB
+from src.services.sequence_diagram_generator import SequenceDiagramGenerator
 from neo4j import GraphDatabase
+import subprocess
+import tempfile
 
 load_dotenv()
+
+def convert_to_image(diagram_content, output_file, image_format, width, height):
+    """Convert Mermaid diagram to image using mermaid-cli"""
+    # Try different possible locations for mmdc
+    mmdc_commands = ['mmdc', 'mmdc.cmd', r'C:\Users\cjony\AppData\Roaming\npm\mmdc', r'C:\Users\cjony\AppData\Roaming\npm\mmdc.cmd']
+    
+    mmdc_cmd = None
+    for cmd in mmdc_commands:
+        try:
+            subprocess.run([cmd, '--version'], capture_output=True, check=True, timeout=5)
+            mmdc_cmd = cmd
+            break
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    
+    if not mmdc_cmd:
+        click.echo("Error: mermaid-cli is not installed or not found in PATH.")
+        click.echo("Please install it with: npm install -g @mermaid-js/mermaid-cli")
+        click.echo("Or check if it's installed at: C:\\Users\\cjony\\AppData\\Roaming\\npm\\")
+        return
+    
+    try:
+        # Create temporary file for mermaid content
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8', newline='') as temp_file:
+            temp_file.write(diagram_content)
+            temp_file_path = temp_file.name
+        
+        # Determine format from output file extension
+        file_extension = output_file.split('.')[-1].lower()
+        actual_format = file_extension if file_extension in ['png', 'svg', 'pdf'] else image_format
+        
+        # Convert to image using mermaid-cli
+        cmd = [
+            mmdc_cmd,
+            '-i', temp_file_path,
+            '-o', output_file,
+            '-e', actual_format,
+            '-w', str(width),
+            '-H', str(height)
+        ]
+        
+        # Add PDF-specific options
+        if image_format.lower() == 'pdf':
+            # Set background color for PDF
+            cmd.extend(['-b', 'white'])
+            # Add PDF fit option
+            cmd.append('-f')
+        
+        click.echo(f"Running command: {' '.join(cmd)}")
+        
+        # Set environment variables for UTF-8 encoding
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['LANG'] = 'en_US.UTF-8'
+        env['LC_ALL'] = 'en_US.UTF-8'
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8', errors='ignore', env=env)
+        
+        # Clean up temporary file
+        os.unlink(temp_file_path)
+        
+        # Check if the expected output file was created
+        if os.path.exists(output_file):
+            actual_format = output_file.split('.')[-1].upper()
+            click.echo(f"Image saved to: {output_file}")
+            click.echo(f"Format: {actual_format}, Size: {width}x{height}")
+        else:
+            # Check for files with similar names (mermaid-cli sometimes adds numbers)
+            import glob
+            pattern = output_file.replace('.pdf', '-*.pdf').replace('.png', '-*.png').replace('.svg', '-*.svg')
+            matching_files = glob.glob(pattern)
+            if matching_files:
+                actual_file = matching_files[0]
+                actual_format = actual_file.split('.')[-1].upper()
+                click.echo(f"Image saved to: {actual_file}")
+                click.echo(f"Format: {actual_format}, Size: {width}x{height}")
+                click.echo(f"Note: mermaid-cli created {actual_file} instead of {output_file}")
+            else:
+                click.echo(f"Warning: Expected file {output_file} not found")
+        
+        click.echo(f"Command output: {result.stdout}")
+        
+    except subprocess.CalledProcessError as e:
+        click.echo(f"Error converting to image: {e}")
+        click.echo(f"Error output: {e.stderr}")
+        if os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+    except Exception as e:
+        click.echo(f"Unexpected error: {e}")
+        if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
 
 @click.group()
 def cli():
@@ -30,12 +124,23 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dr
         exit(1)
 
     click.echo(f"Parsing Java project at: {java_source_folder}")
-    packages_to_add, classes_to_add, class_to_package_map = parse_java_project(java_source_folder)
+    packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
+    
+    click.echo(f"Project name: {project_name}")
     
     click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
     
     if dry_run:
         click.echo("Dry run mode - not connecting to database.")
+        click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+        click.echo(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
+        click.echo(f"Found {len(endpoints)} REST API endpoints.")
+        click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
+        click.echo(f"Found {len(jpa_entities)} JPA entities.")
+        click.echo(f"Found {len(config_files)} configuration files.")
+        click.echo(f"Found {len(test_classes)} test classes.")
+        click.echo(f"Found {len(sql_statements)} SQL statements.")
+        
         for package_node in packages_to_add:
             click.echo(f"Package: {package_node.name}")
         for class_node in classes_to_add:
@@ -57,7 +162,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dr
 
         click.echo("Adding packages to database...")
         for package_node in packages_to_add:
-            db.add_package(package_node)
+            db.add_package(package_node, project_name)
         
         click.echo("Adding classes to database...")
         for class_node in classes_to_add:
@@ -72,7 +177,51 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dr
                         package_name = pkg_name
                         break
             
-            db.add_class(class_node, package_name)
+            db.add_class(class_node, package_name, project_name)
+        
+        # Add Spring Boot analysis results
+        if beans:
+            click.echo(f"Adding {len(beans)} Spring Beans to database...")
+            for bean in beans:
+                db.add_bean(bean, project_name)
+        
+        if dependencies:
+            click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
+            for dependency in dependencies:
+                db.add_bean_dependency(dependency, project_name)
+        
+        if endpoints:
+            click.echo(f"Adding {len(endpoints)} REST API endpoints to database...")
+            for endpoint in endpoints:
+                db.add_endpoint(endpoint, project_name)
+        
+        if mybatis_mappers:
+            click.echo(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
+            for mapper in mybatis_mappers:
+                db.add_mybatis_mapper(mapper, project_name)
+        
+        if jpa_entities:
+            click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
+            for entity in jpa_entities:
+                db.add_jpa_entity(entity, project_name)
+        
+        if config_files:
+            click.echo(f"Adding {len(config_files)} configuration files to database...")
+            for config_file in config_files:
+                db.add_config_file(config_file, project_name)
+        
+        if test_classes:
+            click.echo(f"Adding {len(test_classes)} test classes to database...")
+            for test_class in test_classes:
+                db.add_test_class(test_class, project_name)
+        
+        if sql_statements:
+            click.echo(f"Adding {len(sql_statements)} SQL statements to database...")
+            for sql_statement in sql_statements:
+                db.add_sql_statement(sql_statement, project_name)
+                # Create relationship between mapper and SQL statement
+                with db._driver.session() as session:
+                    session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, project_name)
         
         db.close()
         click.echo("Analysis complete.")
@@ -205,6 +354,254 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
             
     except Exception as e:
         click.echo(f"Error executing query: {e}")
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--class-name', required=True, help='Name of the class to analyze')
+@click.option('--method-name', help='Specific method to analyze (optional)')
+@click.option('--max-depth', default=3, help='Maximum depth of call chain to follow (default: 3)')
+@click.option('--include-external', is_flag=True, help='Include calls to external libraries')
+@click.option('--method-focused', is_flag=True, help='Generate method-focused diagram (shows only the specified method and its direct calls)')
+@click.option('--output-file', help='Output file to save the diagram (optional)')
+@click.option('--output-image', help='Output image file (PNG/SVG/PDF) - requires mermaid-cli')
+@click.option('--image-format', default='png', type=click.Choice(['png', 'svg', 'pdf']), help='Image format (default: png)')
+@click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
+@click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
+def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, method_focused, output_file, output_image, image_format, image_width, image_height):
+    """Generate sequence diagram for a specific class and optionally a method."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        generator = SequenceDiagramGenerator(driver)
+        
+        # Generate the sequence diagram
+        click.echo(f"Generating sequence diagram for class: {class_name}")
+        if method_name:
+            click.echo(f"Focusing on method: {method_name}")
+        if method_focused:
+            click.echo("Method-focused mode: showing only direct calls from the specified method")
+        
+        diagram = generator.generate_sequence_diagram(
+            class_name=class_name,
+            method_name=method_name,
+            max_depth=max_depth if not method_focused else 1,  # Method-focused uses depth 1
+            include_external_calls=include_external,
+            method_focused=method_focused
+        )
+        
+        click.echo(f"Diagram generated (length: {len(diagram)})")
+        
+        # Check if diagram contains error message
+        if diagram.startswith("Error:"):
+            click.echo(f"Error: {diagram}")
+            return
+        
+        # Output the diagram
+        if output_file:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(diagram)
+            click.echo(f"Sequence diagram saved to: {output_file}")
+        else:
+            # Default: save to {class_name}.md
+            default_filename = f"{class_name}.md"
+            with open(default_filename, 'w', encoding='utf-8') as f:
+                f.write(diagram)
+            click.echo(f"Sequence diagram saved to: {default_filename}")
+            
+            click.echo("\n" + "="*50)
+            click.echo("SEQUENCE DIAGRAM")
+            click.echo("="*50)
+            click.echo(diagram)
+            click.echo("="*50)
+        
+        # Convert to image if requested
+        if output_image:
+            convert_to_image(diagram, output_image, image_format, image_width, image_height)
+        
+    except Exception as e:
+        click.echo(f"Error generating sequence diagram: {e}")
+        import traceback
+        click.echo(f"Traceback: {traceback.format_exc()}")
+        exit(1)
+    finally:
+        if 'driver' in locals():
+            driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+def list_classes(neo4j_uri, neo4j_user):
+    """List all available classes in the database."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        generator = SequenceDiagramGenerator(driver)
+        
+        classes = generator.get_available_classes()
+        
+        if not classes:
+            click.echo("No classes found in the database.")
+            return
+        
+        click.echo("Available classes:")
+        click.echo("=" * 80)
+        click.echo(f"{'Class Name':<30} {'Package':<30} {'Type':<10}")
+        click.echo("-" * 80)
+        
+        for cls in classes:
+            click.echo(f"{cls['name']:<30} {cls['package_name']:<30} {cls['type']:<10}")
+        
+        click.echo(f"\nTotal: {len(classes)} classes found.")
+        
+    except Exception as e:
+        click.echo(f"Error listing classes: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--class-name', required=True, help='Name of the class to list methods for')
+def list_methods(neo4j_uri, neo4j_user, class_name):
+    """List all methods for a specific class."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        generator = SequenceDiagramGenerator(driver)
+        
+        methods = generator.get_class_methods(class_name)
+        
+        if not methods:
+            click.echo(f"No methods found for class '{class_name}'.")
+            return
+        
+        click.echo(f"Methods for class '{class_name}':")
+        click.echo("=" * 80)
+        click.echo(f"{'Method Name':<30} {'Return Type':<20} {'Logical Name':<30}")
+        click.echo("-" * 80)
+        
+        for method in methods:
+            click.echo(f"{method['name']:<30} {method['return_type']:<20} {method['logical_name']:<30}")
+        
+        click.echo(f"\nTotal: {len(methods)} methods found.")
+        
+    except Exception as e:
+        click.echo(f"Error listing methods: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', help='Project name to filter by (optional)')
+def crud_matrix(neo4j_uri, neo4j_user, project_name):
+    """Show CRUD matrix for classes and tables."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        db = GraphDB(neo4j_uri, neo4j_user, neo4j_password)
+        
+        click.echo("CRUD Matrix - Class to Table Operations")
+        click.echo("=" * 80)
+        
+        matrix = db.get_crud_matrix(project_name)
+        
+        if not matrix:
+            click.echo("No CRUD operations found.")
+            return
+        
+        click.echo(f"{'Class Name':<30} {'Package':<25} {'Tables':<20} {'Operations':<15}")
+        click.echo("-" * 80)
+        
+        for row in matrix:
+            class_name = row['class_name']
+            package_name = row['package_name'] or 'N/A'
+            tables = ', '.join(row['tables']) if row['tables'] else 'None'
+            operations = ', '.join(row['operations']) if row['operations'] else 'None'
+            
+            click.echo(f"{class_name:<30} {package_name:<25} {tables:<20} {operations:<15}")
+        
+        click.echo(f"\nTotal: {len(matrix)} classes with CRUD operations.")
+        
+    except Exception as e:
+        click.echo(f"Error getting CRUD matrix: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', help='Project name to filter by (optional)')
+def table_summary(neo4j_uri, neo4j_user, project_name):
+    """Show CRUD summary for each table."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        db = GraphDB(neo4j_uri, neo4j_user, neo4j_password)
+        
+        click.echo("Table CRUD Summary")
+        click.echo("=" * 60)
+        
+        summary = db.get_table_crud_summary(project_name)
+        
+        if not summary:
+            click.echo("No tables found.")
+            return
+        
+        for row in summary:
+            table_name = row['table_name']
+            operations = row['operations']
+            
+            click.echo(f"\nTable: {table_name}")
+            click.echo("-" * 40)
+            
+            for op in operations:
+                operation = op['operation']
+                count = op['count']
+                click.echo(f"  {operation}: {count} statements")
+        
+        click.echo(f"\nTotal: {len(summary)} tables.")
+        
+    except Exception as e:
+        click.echo(f"Error getting table summary: {e}")
+        exit(1)
     finally:
         driver.close()
 

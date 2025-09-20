@@ -4,3 +4,4 @@ javalang
 click
 pydantic
 python-dotenv
+PyYAML

@@ -1,13 +1,1613 @@
 import os
+import yaml
+import re
+from pathlib import Path
 
 import javalang
 
-from src.models.graph_entities import Class, Method, MethodCall, Property, Package
+from src.models.graph_entities import Class, Method, MethodCall, Property, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration
+from src.utils.logger import get_logger
 from typing import Optional, List, Literal
 
 
-def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str]]:
-    """Parses all Java files in a directory and returns a tuple of (packages, classes, class_to_package_map)."""
+def extract_project_name(java_source_folder: str) -> str:
+    """
+    JAVA_SOURCE_FOLDER 경로에서 프로젝트 이름을 추출합니다.
+    
+    Args:
+        java_source_folder: Java 소스 폴더 경로
+        
+    Returns:
+        프로젝트 이름 (마지막 디렉토리명)
+    """
+    # 경로를 정규화하고 마지막 디렉토리명 추출
+    path = Path(java_source_folder).resolve()
+    return path.name
+
+
+def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], project_name: str) -> list[SqlStatement]:
+    """
+    MyBatis mappers에서 SQL statements를 추출합니다.
+    
+    Args:
+        mybatis_mappers: MyBatis mapper 객체들의 리스트
+        project_name: 프로젝트 이름
+        
+    Returns:
+        SqlStatement 객체들의 리스트
+    """
+    sql_statements = []
+    
+    for mapper in mybatis_mappers:
+        for sql_dict in mapper.sql_statements:
+            # MyBatisSqlStatement를 SqlStatement로 변환
+            sql_statement = SqlStatement(
+                id=sql_dict.get('id', ''),
+                sql_type=sql_dict.get('sql_type', ''),
+                sql_content=sql_dict.get('sql_content', ''),
+                parameter_type=sql_dict.get('parameter_type', ''),
+                result_type=sql_dict.get('result_type', ''),
+                result_map=sql_dict.get('result_map', ''),
+                mapper_name=mapper.name,
+                annotations=[],  # TODO: annotations를 파싱하여 추가
+                project_name=project_name
+            )
+            sql_statements.append(sql_statement)
+    
+    return sql_statements
+
+
+def parse_annotations(annotations, target_type: str = "class") -> list[Annotation]:
+    """Parse Java annotations into Annotation objects.
+    
+    Args:
+        annotations: List of annotation nodes from javalang
+        target_type: Type of target ("class", "method", "field")
+    """
+    result = []
+    for annotation in annotations:
+        annotation_name = annotation.name
+        parameters = {}
+        
+        # Parse annotation parameters if they exist
+        if hasattr(annotation, 'element') and annotation.element:
+            for element in annotation.element:
+                if hasattr(element, 'name') and hasattr(element, 'value'):
+                    parameters[element.name] = element.value.value if hasattr(element.value, 'value') else str(element.value)
+        
+        result.append(Annotation(
+            name=annotation_name,
+            parameters=parameters,
+            target_type=target_type,
+            category=classify_springboot_annotation(annotation_name)
+        ))
+    
+    return result
+
+
+def classify_springboot_annotation(annotation_name: str) -> str:
+    """Classify SpringBoot annotations into categories.
+    
+    Args:
+        annotation_name: Name of the annotation (e.g., "@Component", "@Service")
+        
+    Returns:
+        Category of the annotation
+    """
+    # Component annotations
+    component_annotations = {
+        "Component", "Service", "Repository", "Controller", 
+        "RestController", "Configuration", "Bean"
+    }
+    
+    # Injection annotations
+    injection_annotations = {
+        "Autowired", "Resource", "Value", "Qualifier", "Primary"
+    }
+    
+    # Web annotations
+    web_annotations = {
+        "RequestMapping", "GetMapping", "PostMapping", "PutMapping", 
+        "DeleteMapping", "PatchMapping", "RequestParam", "PathVariable",
+        "RequestBody", "ResponseBody", "ResponseStatus"
+    }
+    
+    # JPA annotations
+    jpa_annotations = {
+        "Entity", "Table", "Id", "Column", "OneToMany", "ManyToOne",
+        "OneToOne", "ManyToMany", "JoinColumn", "GeneratedValue"
+    }
+    
+    # Test annotations
+    test_annotations = {
+        "Test", "SpringBootTest", "DataJpaTest", "WebMvcTest",
+        "MockBean", "SpyBean", "TestPropertySource"
+    }
+    
+    # Security annotations
+    security_annotations = {
+        "PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed",
+        "EnableWebSecurity", "EnableGlobalMethodSecurity"
+    }
+    
+    # Validation annotations
+    validation_annotations = {
+        "Valid", "NotNull", "NotBlank", "NotEmpty", "Size", "Min", "Max",
+        "Pattern", "Email", "AssertTrue", "AssertFalse"
+    }
+    
+    # MyBatis annotations
+    mybatis_annotations = {
+        "Mapper", "Select", "Insert", "Update", "Delete", "SelectProvider",
+        "InsertProvider", "UpdateProvider", "DeleteProvider", "Results",
+        "Result", "One", "Many", "MapKey", "Options", "SelectKey"
+    }
+    
+    if annotation_name in component_annotations:
+        return "component"
+    elif annotation_name in injection_annotations:
+        return "injection"
+    elif annotation_name in web_annotations:
+        return "web"
+    elif annotation_name in jpa_annotations:
+        return "jpa"
+    elif annotation_name in test_annotations:
+        return "test"
+    elif annotation_name in security_annotations:
+        return "security"
+    elif annotation_name in validation_annotations:
+        return "validation"
+    elif annotation_name in mybatis_annotations:
+        return "mybatis"
+    else:
+        return "other"
+
+
+def classify_test_annotation(annotation_name: str) -> str:
+    """Classify test annotations into categories.
+    
+    Args:
+        annotation_name: Name of the annotation
+        
+    Returns:
+        Category of the test annotation
+    """
+    # JUnit annotations
+    junit_annotations = {
+        "Test", "BeforeEach", "AfterEach", "BeforeAll", "AfterAll",
+        "DisplayName", "ParameterizedTest", "ValueSource", "CsvSource",
+        "MethodSource", "Timeout", "Disabled", "Nested", "RepeatedTest",
+        "Order", "TestMethodOrder", "TestInstance", "TestClassOrder"
+    }
+    
+    # Spring Boot Test annotations
+    spring_test_annotations = {
+        "SpringBootTest", "WebMvcTest", "DataJpaTest", "DataJdbcTest",
+        "JdbcTest", "JsonTest", "RestClientTest", "WebFluxTest",
+        "MockBean", "SpyBean", "TestConfiguration", "ActiveProfiles",
+        "TestPropertySource", "DirtiesContext", "Transactional",
+        "Rollback", "Commit", "Sql", "SqlGroup", "AutoConfigureTestDatabase",
+        "AutoConfigureMockMvc", "AutoConfigureWebMvc", "AutoConfigureWebClient",
+        "MockMvc", "TestEntityManager", "TestContainers", "DynamicPropertySource"
+    }
+    
+    # TestNG annotations
+    testng_annotations = {
+        "TestNG", "BeforeMethod", "AfterMethod", "BeforeClass", "AfterClass",
+        "BeforeSuite", "AfterSuite", "BeforeGroups", "AfterGroups",
+        "DataProvider", "Parameters", "Groups", "Priority", "DependsOnMethods",
+        "DependsOnGroups", "ExpectedExceptions", "InvocationCount",
+        "SuccessPercentage", "TimeOut"
+    }
+    
+    # Mockito annotations
+    mockito_annotations = {
+        "Mock", "Spy", "InjectMocks", "Captor", "MockedStatic"
+    }
+    
+    # AssertJ annotations
+    assertj_annotations = {
+        "AssertJ"
+    }
+    
+    # Other test annotations
+    other_test_annotations = {
+        "Ignore", "Category", "RunWith", "ExtendWith", "ContextConfiguration"
+    }
+    
+    if annotation_name in junit_annotations:
+        return "junit"
+    elif annotation_name in spring_test_annotations:
+        return "spring_test"
+    elif annotation_name in testng_annotations:
+        return "testng"
+    elif annotation_name in mockito_annotations:
+        return "mockito"
+    elif annotation_name in assertj_annotations:
+        return "assertj"
+    elif annotation_name in other_test_annotations:
+        return "other_test"
+    else:
+        return "other"
+
+
+def extract_beans_from_classes(classes: list[Class]) -> list[Bean]:
+    """Extract Spring Beans from parsed classes.
+    
+    Args:
+        classes: List of parsed Class objects
+        
+    Returns:
+        List of Bean objects
+    """
+    beans = []
+    
+    for cls in classes:
+        # Check if class has Spring component annotations
+        component_annotations = [ann for ann in cls.annotations if ann.category == "component"]
+        
+        # Also check for @Repository on interfaces
+        has_repository_annotation = any(ann.name == "Repository" for ann in cls.annotations)
+        
+        if component_annotations or has_repository_annotation:
+            # Determine bean type based on annotations
+            bean_type = "component"  # default
+            if any(ann.name in ["Service", "Service"] for ann in cls.annotations):
+                bean_type = "service"
+            elif any(ann.name in ["Repository", "Repository"] for ann in cls.annotations):
+                bean_type = "repository"
+            elif any(ann.name in ["Controller", "RestController"] for ann in cls.annotations):
+                bean_type = "controller"
+            elif any(ann.name in ["Configuration", "Configuration"] for ann in cls.annotations):
+                bean_type = "configuration"
+            
+            # Determine scope (default is singleton)
+            scope = "singleton"
+            for ann in cls.annotations:
+                if ann.name == "Scope":
+                    if "value" in ann.parameters:
+                        scope = ann.parameters["value"]
+                    elif "prototype" in str(ann.parameters):
+                        scope = "prototype"
+                    elif "request" in str(ann.parameters):
+                        scope = "request"
+                    elif "session" in str(ann.parameters):
+                        scope = "session"
+            
+            # Create bean name (use class name with first letter lowercase)
+            bean_name = cls.name[0].lower() + cls.name[1:] if cls.name else cls.name
+            
+            # Check for @Bean methods in configuration classes
+            bean_methods = []
+            if bean_type == "configuration":
+                for method in cls.methods:
+                    if any(ann.name == "Bean" for ann in method.annotations):
+                        bean_methods.append(method)
+            
+            bean = Bean(
+                name=bean_name,
+                type=bean_type,
+                scope=scope,
+                class_name=cls.name,
+                package_name=cls.package_name,
+                annotation_names=[ann.name for ann in cls.annotations] if cls.annotations else [],
+                method_count=len(bean_methods) if bean_type == "configuration" else len(cls.methods) if cls.methods else 0,
+                property_count=len(cls.properties) if cls.properties else 0
+            )
+            beans.append(bean)
+    
+    return beans
+
+
+def analyze_bean_dependencies(classes: list[Class], beans: list[Bean]) -> list[BeanDependency]:
+    """Analyze dependencies between Spring Beans.
+    
+    Args:
+        classes: List of parsed Class objects
+        beans: List of Bean objects
+        
+    Returns:
+        List of BeanDependency objects
+    """
+    dependencies = []
+    
+    # Create a mapping from class names to bean names
+    class_to_bean = {}
+    for bean in beans:
+        class_to_bean[bean.class_name] = bean.name
+    
+    for cls in classes:
+        # Check if this class is a bean
+        if cls.name not in class_to_bean:
+            continue
+            
+        source_bean = class_to_bean[cls.name]
+        
+        # Analyze field injections (@Autowired, @Resource, @Value)
+        for prop in cls.properties:
+            if any(ann.category == "injection" for ann in prop.annotations):
+                # Try to determine target bean from field type
+                target_bean = None
+                field_type = prop.type
+                
+                # Look for exact class name match
+                if field_type in class_to_bean:
+                    target_bean = class_to_bean[field_type]
+                else:
+                    # Look for interface implementations (simplified - just check if type matches any bean class name)
+                    for bean in beans:
+                        if field_type == bean.class_name:
+                            target_bean = bean.name
+                            break
+                
+                if target_bean:
+                    injection_type = "field"
+                    for ann in prop.annotations:
+                        if ann.name == "Autowired":
+                            injection_type = "field"
+                        elif ann.name == "Resource":
+                            injection_type = "field"
+                        elif ann.name == "Value":
+                            injection_type = "field"
+                    
+                    dependency = BeanDependency(
+                        source_bean=source_bean,
+                        target_bean=target_bean,
+                        injection_type=injection_type,
+                        field_name=prop.name
+                    )
+                    dependencies.append(dependency)
+        
+        # Analyze constructor injections
+        for method in cls.methods:
+            if method.name == cls.name:  # Constructor
+                for param in method.parameters:
+                    if any(ann.category == "injection" for ann in param.annotations):
+                        target_bean = None
+                        param_type = param.type
+                        
+                        if param_type in class_to_bean:
+                            target_bean = class_to_bean[param_type]
+                        else:
+                            # Look for interface implementations (simplified)
+                            for bean in beans:
+                                if param_type == bean.class_name:
+                                    target_bean = bean.name
+                                    break
+                        
+                        if target_bean:
+                            dependency = BeanDependency(
+                                source_bean=source_bean,
+                                target_bean=target_bean,
+                                injection_type="constructor",
+                                parameter_name=param.name
+                            )
+                            dependencies.append(dependency)
+        
+        # Analyze setter injections
+        for method in cls.methods:
+            if method.name.startswith("set") and len(method.parameters) == 1:
+                if any(ann.category == "injection" for ann in method.annotations):
+                    param = method.parameters[0]
+                    target_bean = None
+                    param_type = param.type
+                    
+                    if param_type in class_to_bean:
+                        target_bean = class_to_bean[param_type]
+                    else:
+                        # Look for interface implementations (simplified)
+                        for bean in beans:
+                            if param_type == bean.class_name:
+                                target_bean = bean.name
+                                break
+                    
+                    if target_bean:
+                        dependency = BeanDependency(
+                            source_bean=source_bean,
+                            target_bean=target_bean,
+                            injection_type="setter",
+                            method_name=method.name,
+                            parameter_name=param.name
+                        )
+                        dependencies.append(dependency)
+    
+    return dependencies
+
+
+def extract_endpoints_from_classes(classes: list[Class]) -> list[Endpoint]:
+    """Extract REST API endpoints from controller classes.
+    
+    Args:
+        classes: List of parsed Class objects
+        
+    Returns:
+        List of Endpoint objects
+    """
+    endpoints = []
+    
+    for cls in classes:
+        # Check if class is a controller
+        is_controller = any(ann.name in ["Controller", "RestController"] for ann in cls.annotations)
+        
+        if not is_controller:
+            continue
+            
+        # Get class-level path mapping
+        class_path = ""
+        for ann in cls.annotations:
+            if ann.name == "RequestMapping":
+                if "value" in ann.parameters:
+                    class_path = ann.parameters["value"]
+                break
+        
+        # Process each method in the controller
+        for method in cls.methods:
+            # Skip constructors
+            if method.name == cls.name:
+                continue
+                
+            # Check if method has web mapping annotations
+            web_annotations = [ann for ann in method.annotations if ann.category == "web"]
+            
+            if not web_annotations:
+                continue
+            
+            # Extract endpoint information
+            endpoint_path = ""
+            http_method = "GET"  # default
+            
+            for ann in web_annotations:
+                if ann.name in ["RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"]:
+                    # Extract path
+                    if "value" in ann.parameters:
+                        endpoint_path = ann.parameters["value"]
+                    elif "path" in ann.parameters:
+                        endpoint_path = ann.parameters["path"]
+                    
+                    # Extract HTTP method
+                    if ann.name == "GetMapping":
+                        http_method = "GET"
+                    elif ann.name == "PostMapping":
+                        http_method = "POST"
+                    elif ann.name == "PutMapping":
+                        http_method = "PUT"
+                    elif ann.name == "DeleteMapping":
+                        http_method = "DELETE"
+                    elif ann.name == "PatchMapping":
+                        http_method = "PATCH"
+                    elif ann.name == "RequestMapping":
+                        if "method" in ann.parameters:
+                            method_value = ann.parameters["method"]
+                            if isinstance(method_value, list) and len(method_value) > 0:
+                                http_method = method_value[0]
+                            else:
+                                http_method = str(method_value)
+                        else:
+                            http_method = "GET"  # default for RequestMapping
+                    break
+            
+            # Build full path
+            full_path = class_path
+            if endpoint_path:
+                if full_path and not full_path.endswith("/") and not endpoint_path.startswith("/"):
+                    full_path += "/"
+                full_path += endpoint_path
+            elif not full_path:
+                full_path = "/"
+            
+            # Extract method parameters
+            parameters = []
+            for param in method.parameters:
+                param_info = {
+                    "name": param.name,
+                    "type": param.type,
+                    "annotations": [ann.name for ann in param.annotations if ann.category == "web"]
+                }
+                parameters.append(param_info)
+            
+            # Extract return type
+            return_type = method.return_type if method.return_type != "constructor" else "void"
+            
+            # Create endpoint
+            endpoint = Endpoint(
+                path=endpoint_path or "/",
+                method=http_method,
+                controller_class=cls.name,
+                handler_method=method.name,
+                parameters=parameters,
+                return_type=return_type,
+                annotations=[ann.name for ann in web_annotations],
+                full_path=full_path
+            )
+            endpoints.append(endpoint)
+    
+    return endpoints
+
+
+def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMapper]:
+    """Extract MyBatis Mappers from parsed classes.
+    
+    Args:
+        classes: List of parsed Class objects
+        
+    Returns:
+        List of MyBatisMapper objects
+    """
+    mappers = []
+    
+    for cls in classes:
+        # Check if class is a MyBatis Mapper interface
+        is_mapper = any(ann.name == "Mapper" for ann in cls.annotations)
+        
+        if not is_mapper:
+            continue
+        
+        # Extract mapper methods with MyBatis annotations
+        mapper_methods = []
+        sql_statements = []
+        
+        for method in cls.methods:
+            # Skip constructors
+            if method.name == cls.name:
+                continue
+            
+            # Check if method has MyBatis annotations
+            mybatis_annotations = [ann for ann in method.annotations if ann.category == "mybatis"]
+            
+            if not mybatis_annotations:
+                continue
+            
+            # Extract SQL statement information
+            sql_type = "SELECT"  # default
+            sql_content = ""
+            parameter_type = ""
+            result_type = ""
+            result_map = ""
+            
+            for ann in mybatis_annotations:
+                if ann.name in ["Select", "SelectProvider"]:
+                    sql_type = "SELECT"
+                    if "value" in ann.parameters:
+                        sql_content = ann.parameters["value"]
+                elif ann.name in ["Insert", "InsertProvider"]:
+                    sql_type = "INSERT"
+                    if "value" in ann.parameters:
+                        sql_content = ann.parameters["value"]
+                elif ann.name in ["Update", "UpdateProvider"]:
+                    sql_type = "UPDATE"
+                    if "value" in ann.parameters:
+                        sql_content = ann.parameters["value"]
+                elif ann.name in ["Delete", "DeleteProvider"]:
+                    sql_type = "DELETE"
+                    if "value" in ann.parameters:
+                        sql_content = ann.parameters["value"]
+                
+                # Extract parameter and result type information
+                if "parameterType" in ann.parameters:
+                    parameter_type = ann.parameters["parameterType"]
+                if "resultType" in ann.parameters:
+                    result_type = ann.parameters["resultType"]
+                if "resultMap" in ann.parameters:
+                    result_map = ann.parameters["resultMap"]
+            
+            # Create method info
+            method_info = {
+                "name": method.name,
+                "return_type": method.return_type,
+                "parameters": [{"name": p.name, "type": p.type} for p in method.parameters],
+                "annotations": [ann.name for ann in mybatis_annotations]
+            }
+            mapper_methods.append(method_info)
+            
+            # Create SQL statement info
+            sql_statement = {
+                "id": method.name,
+                "sql_type": sql_type,
+                "sql_content": sql_content,
+                "parameter_type": parameter_type,
+                "result_type": result_type,
+                "result_map": result_map,
+                "annotations": [ann.name for ann in mybatis_annotations]
+            }
+            sql_statements.append(sql_statement)
+        
+        # Create mapper
+        mapper = MyBatisMapper(
+            name=cls.name,
+            type="interface",
+            namespace=f"{cls.package_name}.{cls.name}",
+            methods=mapper_methods,
+            sql_statements=sql_statements,
+            file_path=cls.file_path,
+            package_name=cls.package_name
+        )
+        mappers.append(mapper)
+    
+    return mappers
+
+
+def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
+    """Parse MyBatis XML mapper file.
+    
+    Args:
+        file_path: Path to the XML mapper file
+        
+    Returns:
+        MyBatisMapper object
+    """
+    import xml.etree.ElementTree as ET
+    
+    try:
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+        
+        # Extract namespace
+        namespace = root.get("namespace", "")
+        
+        # Extract SQL statements
+        sql_statements = []
+        for statement in root.findall(".//*[@id]"):
+            statement_id = statement.get("id")
+            tag_name = statement.tag.lower()
+            
+            # Determine SQL type
+            sql_type = "SELECT"
+            if tag_name == "insert":
+                sql_type = "INSERT"
+            elif tag_name == "update":
+                sql_type = "UPDATE"
+            elif tag_name == "delete":
+                sql_type = "DELETE"
+            
+            # Extract SQL content
+            sql_content = statement.text.strip() if statement.text else ""
+            
+            # Extract parameter and result information
+            parameter_type = statement.get("parameterType", "")
+            result_type = statement.get("resultType", "")
+            result_map = statement.get("resultMap", "")
+            
+            sql_statement = {
+                "id": statement_id,
+                "sql_type": sql_type,
+                "sql_content": sql_content,
+                "parameter_type": parameter_type,
+                "result_type": result_type,
+                "result_map": result_map,
+                "annotations": []
+            }
+            sql_statements.append(sql_statement)
+        
+        # Extract ResultMaps
+        result_maps = []
+        for result_map in root.findall(".//resultMap"):
+            result_map_id = result_map.get("id")
+            result_map_type = result_map.get("type", "")
+            
+            properties = []
+            for property_elem in result_map.findall(".//result"):
+                prop = {
+                    "property": property_elem.get("property", ""),
+                    "column": property_elem.get("column", ""),
+                    "jdbc_type": property_elem.get("jdbcType", "")
+                }
+                properties.append(prop)
+            
+            result_map_info = {
+                "id": result_map_id,
+                "type": result_map_type,
+                "properties": properties,
+                "associations": [],
+                "collections": []
+            }
+            result_maps.append(result_map_info)
+        
+        # Create mapper
+        mapper_name = namespace.split(".")[-1] if namespace else os.path.basename(file_path).replace(".xml", "")
+        package_name = ".".join(namespace.split(".")[:-1]) if namespace else ""
+        
+        mapper = MyBatisMapper(
+            name=mapper_name,
+            type="xml",
+            namespace=namespace,
+            methods=[],  # XML mappers don't have Java methods
+            sql_statements=sql_statements,
+            file_path=file_path,
+            package_name=package_name
+        )
+        
+        return mapper
+        
+    except ET.ParseError as e:
+        print(f"Error parsing XML file {file_path}: {e}")
+        return None
+    except Exception as e:
+        print(f"Error reading XML file {file_path}: {e}")
+        return None
+
+
+def extract_mybatis_xml_mappers(directory: str) -> list[MyBatisMapper]:
+    """Extract MyBatis XML mappers from directory.
+    
+    Args:
+        directory: Directory to search for XML mapper files
+        
+    Returns:
+        List of MyBatisMapper objects
+    """
+    mappers = []
+    
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith("Mapper.xml") or file.endswith("Dao.xml"):
+                file_path = os.path.join(root, file)
+                mapper = parse_mybatis_xml_file(file_path)
+                if mapper:
+                    mappers.append(mapper)
+    
+    return mappers
+
+
+def extract_jpa_entities_from_classes(classes: list[Class]) -> list[JpaEntity]:
+    """Extract JPA Entities from parsed classes.
+    
+    Args:
+        classes: List of parsed Class objects
+        
+    Returns:
+        List of JpaEntity objects
+    """
+    entities = []
+    
+    for cls in classes:
+        # Check if class is a JPA Entity
+        is_entity = any(ann.name == "Entity" for ann in cls.annotations)
+        
+        if not is_entity:
+            continue
+        
+        # Extract table name
+        table_name = cls.name.lower()  # default table name
+        for ann in cls.annotations:
+            if ann.name == "Table":
+                if "name" in ann.parameters:
+                    table_name = ann.parameters["name"]
+                break
+        
+        # Extract columns from properties
+        columns = []
+        relationships = []
+        
+        for prop in cls.properties:
+            # Check if property has JPA column annotations
+            jpa_annotations = [ann for ann in prop.annotations if ann.category == "jpa"]
+            
+            if jpa_annotations:
+                # Extract column information
+                column_name = prop.name  # default column name
+                nullable = True
+                unique = False
+                length = 0
+                precision = 0
+                scale = 0
+                
+                for ann in jpa_annotations:
+                    if ann.name == "Column":
+                        if "name" in ann.parameters:
+                            column_name = ann.parameters["name"]
+                        if "nullable" in ann.parameters:
+                            nullable = ann.parameters["nullable"]
+                        if "unique" in ann.parameters:
+                            unique = ann.parameters["unique"]
+                        if "length" in ann.parameters:
+                            length = ann.parameters["length"]
+                        if "precision" in ann.parameters:
+                            precision = ann.parameters["precision"]
+                        if "scale" in ann.parameters:
+                            scale = ann.parameters["scale"]
+                    elif ann.name == "Id":
+                        column_name = "id"  # Primary key column
+                        nullable = False
+                        unique = True
+                    elif ann.name == "JoinColumn":
+                        if "name" in ann.parameters:
+                            column_name = ann.parameters["name"]
+                
+                # Check for relationship annotations
+                relationship_type = None
+                target_entity = ""
+                mapped_by = ""
+                join_column = ""
+                join_table = ""
+                cascade = []
+                fetch = "LAZY"
+                
+                for ann in jpa_annotations:
+                    if ann.name in ["OneToOne", "OneToMany", "ManyToOne", "ManyToMany"]:
+                        relationship_type = ann.name
+                        if "targetEntity" in ann.parameters:
+                            target_entity = ann.parameters["targetEntity"]
+                        if "mappedBy" in ann.parameters:
+                            mapped_by = ann.parameters["mappedBy"]
+                        if "cascade" in ann.parameters:
+                            cascade = ann.parameters["cascade"] if isinstance(ann.parameters["cascade"], list) else [ann.parameters["cascade"]]
+                        if "fetch" in ann.parameters:
+                            fetch = ann.parameters["fetch"]
+                    elif ann.name == "JoinColumn":
+                        if "name" in ann.parameters:
+                            join_column = ann.parameters["name"]
+                    elif ann.name == "JoinTable":
+                        if "name" in ann.parameters:
+                            join_table = ann.parameters["name"]
+                
+                # Create column info
+                column_info = {
+                    "property_name": prop.name,
+                    "column_name": column_name,
+                    "data_type": prop.type,
+                    "nullable": nullable,
+                    "unique": unique,
+                    "length": length,
+                    "precision": precision,
+                    "scale": scale,
+                    "annotations": [ann.name for ann in jpa_annotations]
+                }
+                columns.append(column_info)
+                
+                # Create relationship info if it's a relationship
+                if relationship_type:
+                    relationship_info = {
+                        "type": relationship_type,
+                        "target_entity": target_entity,
+                        "mapped_by": mapped_by,
+                        "join_column": join_column,
+                        "join_table": join_table,
+                        "cascade": cascade,
+                        "fetch": fetch,
+                        "annotations": [ann.name for ann in jpa_annotations]
+                    }
+                    relationships.append(relationship_info)
+        
+        # Create entity
+        entity = JpaEntity(
+            name=cls.name,
+            table_name=table_name,
+            columns=columns,
+            relationships=relationships,
+            annotations=[ann.name for ann in cls.annotations if ann.category == "jpa"],
+            package_name=cls.package_name,
+            file_path=cls.file_path
+        )
+        entities.append(entity)
+    
+    return entities
+
+
+def parse_yaml_config(file_path: str) -> ConfigFile:
+    """Parse YAML configuration file.
+    
+    Args:
+        file_path: Path to the YAML file
+        
+    Returns:
+        ConfigFile object
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = yaml.safe_load(f)
+        
+        if not content:
+            content = {}
+        
+        # Extract file info
+        file_name = os.path.basename(file_path)
+        file_type = "yaml" if file_path.endswith('.yaml') else "yml"
+        
+        # Extract profiles
+        profiles = []
+        if 'spring' in content and 'profiles' in content['spring']:
+            if 'active' in content['spring']['profiles']:
+                profiles = content['spring']['profiles']['active']
+                if isinstance(profiles, str):
+                    profiles = [profiles]
+        
+        # Determine environment
+        environment = "dev"  # default
+        if profiles:
+            environment = profiles[0]
+        
+        # Extract sections
+        sections = []
+        for key, value in content.items():
+            if isinstance(value, dict):
+                sections.append({
+                    "name": key,
+                    "properties": value,
+                    "type": "section"
+                })
+        
+        return ConfigFile(
+            name=file_name,
+            file_path=file_path,
+            file_type=file_type,
+            properties=content,
+            sections=sections,
+            profiles=profiles,
+            environment=environment
+        )
+    
+    except Exception as e:
+        print(f"Error parsing YAML file {file_path}: {e}")
+        return ConfigFile(
+            name=os.path.basename(file_path),
+            file_path=file_path,
+            file_type="yaml",
+            properties={},
+            sections=[],
+            profiles=[],
+            environment=""
+        )
+
+
+def parse_properties_config(file_path: str) -> ConfigFile:
+    """Parse Properties configuration file.
+    
+    Args:
+        file_path: Path to the properties file
+        
+    Returns:
+        ConfigFile object
+    """
+    try:
+        properties = {}
+        sections = []
+        profiles = []
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Parse key=value pairs
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Remove quotes if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                    elif value.startswith("'") and value.endswith("'"):
+                        value = value[1:-1]
+                    
+                    properties[key] = value
+                    
+                    # Check for profiles
+                    if key == 'spring.profiles.active':
+                        profiles = [p.strip() for p in value.split(',')]
+        
+        # Group properties by section
+        section_map = {}
+        for key, value in properties.items():
+            if '.' in key:
+                section = key.split('.')[0]
+                if section not in section_map:
+                    section_map[section] = {}
+                section_map[section][key] = value
+            else:
+                if 'root' not in section_map:
+                    section_map['root'] = {}
+                section_map['root'][key] = value
+        
+        for section_name, section_props in section_map.items():
+            sections.append({
+                "name": section_name,
+                "properties": section_props,
+                "type": "section"
+            })
+        
+        # Determine environment
+        environment = "dev"  # default
+        if profiles:
+            environment = profiles[0]
+        
+        return ConfigFile(
+            name=os.path.basename(file_path),
+            file_path=file_path,
+            file_type="properties",
+            properties=properties,
+            sections=sections,
+            profiles=profiles,
+            environment=environment
+        )
+    
+    except Exception as e:
+        print(f"Error parsing Properties file {file_path}: {e}")
+        return ConfigFile(
+            name=os.path.basename(file_path),
+            file_path=file_path,
+            file_type="properties",
+            properties={},
+            sections=[],
+            profiles=[],
+            environment=""
+        )
+
+
+def extract_database_config(config_file: ConfigFile) -> DatabaseConfig:
+    """Extract database configuration from config file.
+    
+    Args:
+        config_file: ConfigFile object
+        
+    Returns:
+        DatabaseConfig object
+    """
+    db_config = DatabaseConfig()
+    
+    if config_file.file_type in ["yaml", "yml"]:
+        # YAML format
+        spring_config = config_file.properties.get('spring', {})
+        datasource_config = spring_config.get('datasource', {})
+        jpa_config = spring_config.get('jpa', {})
+        
+        db_config.driver = datasource_config.get('driver-class-name', '')
+        db_config.url = datasource_config.get('url', '')
+        db_config.username = datasource_config.get('username', '')
+        db_config.password = datasource_config.get('password', '')
+        db_config.dialect = jpa_config.get('database-platform', '')
+        db_config.hibernate_ddl_auto = jpa_config.get('hibernate', {}).get('ddl-auto', '')
+        db_config.show_sql = jpa_config.get('show-sql', False)
+        db_config.format_sql = jpa_config.get('properties', {}).get('hibernate', {}).get('format_sql', False)
+        
+        # Store additional JPA properties
+        if 'properties' in jpa_config:
+            db_config.jpa_properties = jpa_config['properties']
+    
+    else:
+        # Properties format
+        props = config_file.properties
+        
+        db_config.driver = props.get('spring.datasource.driver-class-name', '')
+        db_config.url = props.get('spring.datasource.url', '')
+        db_config.username = props.get('spring.datasource.username', '')
+        db_config.password = props.get('spring.datasource.password', '')
+        db_config.dialect = props.get('spring.jpa.database-platform', '')
+        db_config.hibernate_ddl_auto = props.get('spring.jpa.hibernate.ddl-auto', '')
+        db_config.show_sql = props.get('spring.jpa.show-sql', 'false').lower() == 'true'
+        db_config.format_sql = props.get('spring.jpa.properties.hibernate.format_sql', 'false').lower() == 'true'
+        
+        # Store additional JPA properties
+        jpa_props = {}
+        for key, value in props.items():
+            if key.startswith('spring.jpa.properties.'):
+                jpa_props[key] = value
+        db_config.jpa_properties = jpa_props
+    
+    return db_config
+
+
+def extract_server_config(config_file: ConfigFile) -> ServerConfig:
+    """Extract server configuration from config file.
+    
+    Args:
+        config_file: ConfigFile object
+        
+    Returns:
+        ServerConfig object
+    """
+    server_config = ServerConfig()
+    
+    if config_file.file_type in ["yaml", "yml"]:
+        # YAML format
+        server_props = config_file.properties.get('server', {})
+        
+        server_config.port = server_props.get('port', 8080)
+        server_config.context_path = server_props.get('servlet', {}).get('context-path', '')
+        server_config.servlet_path = server_props.get('servlet', {}).get('path', '')
+        
+        # SSL configuration
+        ssl_config = server_props.get('ssl', {})
+        server_config.ssl_enabled = bool(ssl_config)
+        server_config.ssl_key_store = ssl_config.get('key-store', '')
+        server_config.ssl_key_store_password = ssl_config.get('key-store-password', '')
+        server_config.ssl_key_store_type = ssl_config.get('key-store-type', '')
+    
+    else:
+        # Properties format
+        props = config_file.properties
+        
+        server_config.port = int(props.get('server.port', '8080'))
+        server_config.context_path = props.get('server.servlet.context-path', '')
+        server_config.servlet_path = props.get('server.servlet.path', '')
+        
+        # SSL configuration
+        server_config.ssl_enabled = any(key.startswith('server.ssl.') for key in props.keys())
+        server_config.ssl_key_store = props.get('server.ssl.key-store', '')
+        server_config.ssl_key_store_password = props.get('server.ssl.key-store-password', '')
+        server_config.ssl_key_store_type = props.get('server.ssl.key-store-type', '')
+    
+    return server_config
+
+
+def extract_security_config(config_file: ConfigFile) -> SecurityConfig:
+    """Extract security configuration from config file.
+    
+    Args:
+        config_file: ConfigFile object
+        
+    Returns:
+        SecurityConfig object
+    """
+    security_config = SecurityConfig()
+    
+    if config_file.file_type in ["yaml", "yml"]:
+        # YAML format
+        security_props = config_file.properties.get('security', {})
+        jwt_props = security_props.get('jwt', {})
+        cors_props = security_props.get('cors', {})
+        
+        security_config.enabled = bool(security_props)
+        security_config.authentication_type = security_props.get('authentication-type', '')
+        security_config.jwt_secret = jwt_props.get('secret', '')
+        security_config.jwt_expiration = jwt_props.get('expiration', 0)
+        security_config.cors_allowed_origins = cors_props.get('allowed-origins', [])
+        security_config.cors_allowed_methods = cors_props.get('allowed-methods', [])
+        security_config.cors_allowed_headers = cors_props.get('allowed-headers', [])
+    
+    else:
+        # Properties format
+        props = config_file.properties
+        
+        security_config.enabled = any(key.startswith('security.') for key in props.keys())
+        security_config.authentication_type = props.get('security.authentication-type', '')
+        security_config.jwt_secret = props.get('security.jwt.secret', '')
+        security_config.jwt_expiration = int(props.get('security.jwt.expiration', '0'))
+        
+        # CORS configuration
+        origins = props.get('security.cors.allowed-origins', '')
+        if origins:
+            security_config.cors_allowed_origins = [o.strip() for o in origins.split(',')]
+        
+        methods = props.get('security.cors.allowed-methods', '')
+        if methods:
+            security_config.cors_allowed_methods = [m.strip() for m in methods.split(',')]
+        
+        headers = props.get('security.cors.allowed-headers', '')
+        if headers:
+            security_config.cors_allowed_headers = [h.strip() for h in headers.split(',')]
+    
+    return security_config
+
+
+def extract_logging_config(config_file: ConfigFile) -> LoggingConfig:
+    """Extract logging configuration from config file.
+    
+    Args:
+        config_file: ConfigFile object
+        
+    Returns:
+        LoggingConfig object
+    """
+    logging_config = LoggingConfig()
+    
+    if config_file.file_type in ["yaml", "yml"]:
+        # YAML format
+        logging_props = config_file.properties.get('logging', {})
+        
+        logging_config.level = logging_props.get('level', {}).get('root', 'INFO')
+        logging_config.pattern = logging_props.get('pattern', {}).get('console', '')
+        logging_config.file_path = logging_props.get('file', {}).get('name', '')
+        logging_config.max_file_size = logging_props.get('file', {}).get('max-size', '')
+        logging_config.max_history = logging_props.get('file', {}).get('max-history', 0)
+        logging_config.console_output = logging_props.get('console', {}).get('enabled', True)
+    
+    else:
+        # Properties format
+        props = config_file.properties
+        
+        logging_config.level = props.get('logging.level.root', 'INFO')
+        logging_config.pattern = props.get('logging.pattern.console', '')
+        logging_config.file_path = props.get('logging.file.name', '')
+        logging_config.max_file_size = props.get('logging.file.max-size', '')
+        logging_config.max_history = int(props.get('logging.file.max-history', '0'))
+        logging_config.console_output = props.get('logging.console.enabled', 'true').lower() == 'true'
+    
+    return logging_config
+
+
+def extract_config_files(directory: str) -> list[ConfigFile]:
+    """Extract configuration files from directory.
+    
+    Args:
+        directory: Directory to search for config files
+        
+    Returns:
+        List of ConfigFile objects
+    """
+    config_files = []
+    
+    # Common config file patterns
+    config_patterns = [
+        "application.yml",
+        "application.yaml", 
+        "application.properties",
+        "application-*.properties",
+        "bootstrap.yml",
+        "bootstrap.yaml",
+        "bootstrap.properties"
+    ]
+    
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            # Check if file matches any config pattern
+            is_config_file = False
+            for pattern in config_patterns:
+                if pattern == file or (pattern.endswith('*') and file.startswith(pattern[:-1])):
+                    is_config_file = True
+                    break
+            
+            if is_config_file:
+                file_path = os.path.join(root, file)
+                
+                if file.endswith(('.yml', '.yaml')):
+                    config_file = parse_yaml_config(file_path)
+                elif file.endswith('.properties'):
+                    config_file = parse_properties_config(file_path)
+                else:
+                    continue
+                
+                config_files.append(config_file)
+    
+    return config_files
+
+
+def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
+    """Extract test classes from parsed classes.
+    
+    Args:
+        classes: List of parsed Class objects
+        
+    Returns:
+        List of TestClass objects
+    """
+    test_classes = []
+    
+    for cls in classes:
+        # Check if class is a test class
+        test_annotations = [ann for ann in cls.annotations if classify_test_annotation(ann.name) in ["junit", "spring_test", "testng"]]
+        
+        if not test_annotations:
+            continue
+        
+        # Determine test framework and type
+        test_framework = "junit"  # default
+        test_type = "unit"  # default
+        
+        for ann in test_annotations:
+            if ann.name in ["SpringBootTest", "WebMvcTest", "DataJpaTest", "DataJdbcTest", "JdbcTest", "JsonTest", "RestClientTest", "WebFluxTest"]:
+                test_framework = "spring_test"
+                if ann.name == "SpringBootTest":
+                    test_type = "integration"
+                else:
+                    test_type = "slice"
+            elif ann.name in ["TestNG", "BeforeMethod", "AfterMethod", "BeforeClass", "AfterClass"]:
+                test_framework = "testng"
+            elif ann.name in ["Test", "BeforeEach", "AfterEach", "BeforeAll", "AfterAll"]:
+                test_framework = "junit"
+        
+        # Extract test methods
+        test_methods = []
+        setup_methods = []
+        
+        for method in cls.methods:
+            method_annotations = [ann.name for ann in method.annotations if classify_test_annotation(ann.name) in ["junit", "spring_test", "testng"]]
+            
+            if method_annotations:
+                # Check if it's a setup/teardown method
+                if any(ann in method_annotations for ann in ["BeforeEach", "AfterEach", "BeforeAll", "AfterAll", "BeforeMethod", "AfterMethod", "BeforeClass", "AfterClass", "BeforeSuite", "AfterSuite"]):
+                    setup_methods.append({
+                        "name": method.name,
+                        "annotations": method_annotations,
+                        "return_type": method.return_type,
+                        "parameters": [{"name": p.name, "type": p.type} for p in method.parameters]
+                    })
+                else:
+                    # Regular test method
+                    test_method_info = {
+                        "name": method.name,
+                        "annotations": method_annotations,
+                        "return_type": method.return_type,
+                        "parameters": [{"name": p.name, "type": p.type} for p in method.parameters],
+                        "assertions": [],
+                        "mock_calls": [],
+                        "test_data": [],
+                        "expected_exceptions": [],
+                        "timeout": 0,
+                        "display_name": ""
+                    }
+                    
+                    # Extract display name
+                    for ann in method.annotations:
+                        if ann.name == "DisplayName" and "value" in ann.parameters:
+                            test_method_info["display_name"] = ann.parameters["value"]
+                        elif ann.name == "Timeout" and "value" in ann.parameters:
+                            test_method_info["timeout"] = ann.parameters["value"]
+                    
+                    # Extract expected exceptions
+                    for ann in method.annotations:
+                        if ann.name == "ExpectedExceptions" and "value" in ann.parameters:
+                            test_method_info["expected_exceptions"] = ann.parameters["value"] if isinstance(ann.parameters["value"], list) else [ann.parameters["value"]]
+                    
+                    test_methods.append(test_method_info)
+        
+        # Extract mock dependencies
+        mock_dependencies = []
+        for prop in cls.properties:
+            prop_annotations = [ann.name for ann in prop.annotations if classify_test_annotation(ann.name) in ["mockito", "spring_test"]]
+            if prop_annotations:
+                mock_dependencies.append({
+                    "name": prop.name,
+                    "type": prop.type,
+                    "annotations": prop_annotations,
+                    "mock_type": "mock" if "Mock" in prop_annotations else "spy" if "Spy" in prop_annotations else "bean"
+                })
+        
+        # Extract test configurations
+        test_configurations = []
+        for ann in cls.annotations:
+            if ann.name in ["TestConfiguration", "ActiveProfiles", "TestPropertySource"]:
+                config_info = {
+                    "name": ann.name,
+                    "type": "configuration" if ann.name == "TestConfiguration" else "profile" if ann.name == "ActiveProfiles" else "property",
+                    "properties": ann.parameters,
+                    "active_profiles": ann.parameters.get("value", []) if ann.name == "ActiveProfiles" else [],
+                    "test_slices": [],
+                    "mock_beans": [],
+                    "spy_beans": []
+                }
+                test_configurations.append(config_info)
+        
+        # Create test class
+        test_class = TestClass(
+            name=cls.name,
+            package_name=cls.package_name,
+            test_framework=test_framework,
+            test_type=test_type,
+            annotations=[ann.name for ann in test_annotations],
+            test_methods=test_methods,
+            setup_methods=setup_methods,
+            mock_dependencies=mock_dependencies,
+            test_configurations=test_configurations,
+            file_path=cls.file_path
+        )
+        test_classes.append(test_class)
+    
+    return test_classes
+
+
+def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMethod]:
+    """Analyze test methods for assertions, mock calls, and test data.
+    
+    Args:
+        test_class: TestClass object
+        class_obj: Original Class object
+        
+    Returns:
+        List of analyzed TestMethod objects
+    """
+    test_methods = []
+    
+    for method_info in test_class.test_methods:
+        # Find the corresponding method in the class
+        method_obj = None
+        for method in class_obj.methods:
+            if method.name == method_info["name"]:
+                method_obj = method
+                break
+        
+        if not method_obj:
+            continue
+        
+        # Analyze method source code for assertions and mock calls
+        assertions = []
+        mock_calls = []
+        test_data = []
+        
+        if method_obj.source:
+            source_code = method_obj.source
+            
+            # Find assertions (JUnit, AssertJ, etc.)
+            assertion_patterns = [
+                r'assert\w+\(',  # JUnit assertions
+                r'assertThat\(',  # AssertJ
+                r'assertEquals\(',  # JUnit
+                r'assertTrue\(',  # JUnit
+                r'assertFalse\(',  # JUnit
+                r'assertNotNull\(',  # JUnit
+                r'assertNull\(',  # JUnit
+                r'assertThrows\(',  # JUnit 5
+                r'assertDoesNotThrow\(',  # JUnit 5
+                r'verify\(',  # Mockito verify
+                r'when\(',  # Mockito when
+                r'then\(',  # Mockito then
+                r'given\(',  # BDDMockito given
+                r'willReturn\(',  # Mockito willReturn
+                r'willThrow\(',  # Mockito willThrow
+            ]
+            
+            for pattern in assertion_patterns:
+                matches = re.findall(pattern, source_code)
+                for match in matches:
+                    assertions.append({
+                        "type": match,
+                        "line": source_code.find(match) + 1
+                    })
+            
+            # Find mock calls
+            mock_call_patterns = [
+                r'(\w+)\.(\w+)\(',  # Method calls on objects
+                r'mock\(',  # Mockito mock creation
+                r'spy\(',  # Mockito spy creation
+                r'@Mock\s+(\w+)',  # @Mock annotation
+                r'@Spy\s+(\w+)',  # @Spy annotation
+                r'@InjectMocks\s+(\w+)',  # @InjectMocks annotation
+            ]
+            
+            for pattern in mock_call_patterns:
+                matches = re.findall(pattern, source_code)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        mock_calls.append({
+                            "object": match[0],
+                            "method": match[1],
+                            "type": "method_call"
+                        })
+                    else:
+                        mock_calls.append({
+                            "type": match,
+                            "line": source_code.find(match) + 1
+                        })
+            
+            # Find test data setup
+            test_data_patterns = [
+                r'new\s+(\w+)\(',  # Object creation
+                r'(\w+)\s*=\s*new\s+(\w+)\(',  # Variable assignment with new
+                r'@ValueSource\(',  # JUnit 5 @ValueSource
+                r'@CsvSource\(',  # JUnit 5 @CsvSource
+                r'@MethodSource\(',  # JUnit 5 @MethodSource
+            ]
+            
+            for pattern in test_data_patterns:
+                matches = re.findall(pattern, source_code)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        test_data.append({
+                            "variable": match[0],
+                            "type": match[1],
+                            "pattern": "object_creation"
+                        })
+                    else:
+                        test_data.append({
+                            "type": match,
+                            "pattern": "annotation"
+                        })
+        
+        # Create TestMethod object
+        test_method = TestMethod(
+            name=method_info["name"],
+            return_type=method_info["return_type"],
+            annotations=method_info["annotations"],
+            assertions=assertions,
+            mock_calls=mock_calls,
+            test_data=test_data,
+            expected_exceptions=method_info["expected_exceptions"],
+            timeout=method_info["timeout"],
+            display_name=method_info["display_name"]
+        )
+        test_methods.append(test_method)
+    
+    return test_methods
+
+
+def generate_lombok_methods(properties: list[Property], class_name: str, package_name: str) -> list[Method]:
+    """Generate Lombok @Data methods (getters, setters, equals, hashCode, toString) for properties."""
+    methods = []
+    
+    # Generate getters and setters for each property
+    for prop in properties:
+        # Getter
+        getter_name = f"get{prop.name[0].upper()}{prop.name[1:]}"
+        if prop.type == "Boolean" and prop.name.startswith("is"):
+            # For boolean fields starting with 'is', use the field name as getter
+            getter_name = prop.name
+        
+        getter = Method(
+            name=getter_name,
+            logical_name=f"{package_name}.{class_name}.{getter_name}",
+            return_type=prop.type,
+            parameters=[],
+            modifiers=["public"],
+            source="",  # Generated method, no source
+            package_name=package_name,
+            annotations=[]
+        )
+        methods.append(getter)
+        
+        # Setter
+        setter_name = f"set{prop.name[0].upper()}{prop.name[1:]}"
+        setter_param = Property(
+            name=prop.name,
+            logical_name=f"{package_name}.{class_name}.{prop.name}",
+            type=prop.type,
+            package_name=package_name,
+            class_name=class_name
+        )
+        
+        setter = Method(
+            name=setter_name,
+            logical_name=f"{package_name}.{class_name}.{setter_name}",
+            return_type="void",
+            parameters=[setter_param],
+            modifiers=["public"],
+            source="",  # Generated method, no source
+            package_name=package_name,
+            annotations=[]
+        )
+        methods.append(setter)
+    
+    # Generate equals method
+    equals_method = Method(
+        name="equals",
+        logical_name=f"{package_name}.{class_name}.equals",
+        return_type="boolean",
+        parameters=[Property(name="obj", logical_name=f"{package_name}.{class_name}.obj", type="Object", package_name=package_name, class_name=class_name)],
+        modifiers=["public"],
+        source="",  # Generated method, no source
+        package_name=package_name,
+        annotations=[]
+    )
+    methods.append(equals_method)
+    
+    # Generate hashCode method
+    hashcode_method = Method(
+        name="hashCode",
+        logical_name=f"{package_name}.{class_name}.hashCode",
+        return_type="int",
+        parameters=[],
+        modifiers=["public"],
+        source="",  # Generated method, no source
+        package_name=package_name,
+        annotations=[]
+    )
+    methods.append(hashcode_method)
+    
+    # Generate toString method
+    tostring_method = Method(
+        name="toString",
+        logical_name=f"{package_name}.{class_name}.toString",
+        return_type="String",
+        parameters=[],
+        modifiers=["public"],
+        source="",  # Generated method, no source
+        package_name=package_name,
+        annotations=[]
+    )
+    methods.append(tostring_method)
+    
+    return methods
+
+
+def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
+    """Parse Java project and return parsed entities."""
+    logger = get_logger(__name__)
+    """Parses all Java files in a directory and returns a tuple of (packages, classes, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name)."""
+    
+    # Extract project name from directory path
+    project_name = extract_project_name(directory)
     packages = {}
     classes = {}
     class_to_package_map = {}  # Maps class_key to package_name
@@ -46,17 +1646,28 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                         class_name = class_declaration.name
                         class_key = f"{package_name}.{class_name}"
                         
+                        # Debug: Check if this is the User class
+                        if "User" in class_name:
+                            logger.debug(f"Found User class - {class_key}")
+                            logger.debug(f"Methods count: {len(class_declaration.methods)}")
+                            logger.debug(f"Constructors count: {len(class_declaration.constructors)}")
+                        
                         # Extract class source code - use the entire file content
                         class_source = file_content
 
 
                         if class_key not in classes:
+                            # Parse class annotations
+                            class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
+                            
                             classes[class_key] = Class(
                                 name=class_name,
                                 logical_name=class_key,  # Add logical_name
                                 file_path=file_path,
                                 type="class", # Simplified for now
-                                source=class_source # Add class source
+                                source=class_source, # Add class source
+                                annotations=class_annotations,
+                                package_name=package_name
                             )
                             class_to_package_map[class_key] = package_name
                         
@@ -92,14 +1703,41 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                         for field_declaration in class_declaration.fields:
                             for declarator in field_declaration.declarators:
                                 field_map[declarator.name] = field_declaration.type.name
+                                
+                                # Parse field annotations
+                                field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
+                                
+                                # Extract initial value if present
+                                initial_value = ""
+                                if hasattr(declarator, 'initializer') and declarator.initializer:
+                                    # Convert the initializer to string representation
+                                    if hasattr(declarator.initializer, 'value'):
+                                        initial_value = str(declarator.initializer.value)
+                                    elif hasattr(declarator.initializer, 'type'):
+                                        initial_value = str(declarator.initializer.type)
+                                    else:
+                                        initial_value = str(declarator.initializer)
+                                
                                 prop = Property(
                                     name=declarator.name,
+                                    logical_name=f"{package_name}.{class_name}.{declarator.name}",
                                     type=field_declaration.type.name,
-                                    modifiers=list(field_declaration.modifiers) # Add modifiers
+                                    modifiers=list(field_declaration.modifiers), # Add modifiers
+                                    package_name=package_name,
+                                    class_name=class_name,
+                                    annotations=field_annotations,
+                                    initial_value=initial_value
                                 )
                                 classes[class_key].properties.append(prop)
 
                         all_declarations = class_declaration.methods + class_declaration.constructors
+                        
+                        # Debug: Check User class method processing
+                        if "User" in class_name:
+                            logger.debug(f"Processing User class methods - total declarations: {len(all_declarations)}")
+                            for i, decl in enumerate(all_declarations):
+                                logger.debug(f"Declaration {i}: {type(decl).__name__} - {decl.name}")
+                        
                         for declaration in all_declarations:
                             local_var_map = field_map.copy()
                             params = []
@@ -108,7 +1746,7 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 if hasattr(param.type, 'name'):
                                     param_type_name = param.type.name
                                 local_var_map[param.name] = param_type_name
-                                params.append(Property(name=param.name, type=param_type_name))
+                                params.append(Property(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
 
                             if declaration.body:
                                 for _, var_decl in declaration.filter(javalang.tree.LocalVariableDeclaration):
@@ -122,6 +1760,9 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
 
                             # Extract modifiers
                             modifiers = list(declaration.modifiers)
+                            
+                            # Parse method annotations
+                            method_annotations = parse_annotations(declaration.annotations, "method") if hasattr(declaration, 'annotations') else []
 
                             # Extract method source code
                             method_source = ""
@@ -153,22 +1794,27 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 return_type=return_type,
                                 parameters=params,
                                 modifiers=modifiers,
-                                source=method_source # Add method source
+                                source=method_source, # Add method source
+                                package_name=package_name,
+                                annotations=method_annotations
                             )
                             classes[class_key].methods.append(method)
 
+                            # Extract method calls with order information
+                            call_order = 0
                             for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
+                                target_class_name = None
+                                resolved_target_package = ""
+                                resolved_target_class_name = ""
+                                
                                 if invocation.qualifier:
-                                    target_class_name = None
+                                    # External method call
                                     if invocation.qualifier in local_var_map:
                                         target_class_name = local_var_map[invocation.qualifier]
                                     else:
                                         target_class_name = invocation.qualifier
-
+                                    
                                     if target_class_name:
-                                        resolved_target_package = ""
-                                        resolved_target_class_name = target_class_name
-
                                         if target_class_name == "System.out":
                                             resolved_target_package = "java.io"
                                             resolved_target_class_name = "PrintStream"
@@ -177,16 +1823,37 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                                 resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
                                             else:
                                                 resolved_target_package = package_name
+                                                resolved_target_class_name = target_class_name
+                                else:
+                                    # Same class method call
+                                    resolved_target_package = package_name
+                                    resolved_target_class_name = class_name
 
-                                        call = MethodCall(
-                                            source_package=package_name,
-                                            source_class=class_name,
-                                            source_method=declaration.name,
-                                            target_package=resolved_target_package,
-                                            target_class=resolved_target_class_name,
-                                            target_method=invocation.member
-                                        )
-                                        classes[class_key].calls.append(call)
+                                if resolved_target_class_name:
+                                    # Get line number from invocation position
+                                    line_number = invocation.position.line if invocation.position else 0
+
+                                    call = MethodCall(
+                                        source_package=package_name,
+                                        source_class=class_name,
+                                        source_method=declaration.name,
+                                        target_package=resolved_target_package,
+                                        target_class=resolved_target_class_name,
+                                        target_method=invocation.member,
+                                        call_order=call_order,
+                                        line_number=line_number,
+                                        return_type="void"  # Default return type, can be enhanced later
+                                    )
+                                    classes[class_key].calls.append(call)
+                                    call_order += 1
+                        
+                        # Check for Lombok @Data annotation and generate methods
+                        has_data_annotation = any(ann.name == "Data" for ann in classes[class_key].annotations)
+                        if has_data_annotation:
+                            logger.debug(f"Found @Data annotation on {class_name}, generating Lombok methods")
+                            lombok_methods = generate_lombok_methods(classes[class_key].properties, class_name, package_name)
+                            classes[class_key].methods.extend(lombok_methods)
+                            logger.debug(f"Generated {len(lombok_methods)} Lombok methods for {class_name}")
                 except javalang.parser.JavaSyntaxError as e:
                     print(f"Syntax error in {file_path}: {e}")
                     continue
@@ -194,4 +1861,21 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                     print(f"Error parsing {file_path}: {e}")
                     continue
     
-    return list(packages.values()), list(classes.values()), class_to_package_map
+    # Extract beans, analyze dependencies, extract endpoints, extract MyBatis mappers, extract JPA entities, extract config files, and extract test classes
+    classes_list = list(classes.values())
+    beans = extract_beans_from_classes(classes_list)
+    dependencies = analyze_bean_dependencies(classes_list, beans)
+    endpoints = extract_endpoints_from_classes(classes_list)
+    mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
+    jpa_entities = extract_jpa_entities_from_classes(classes_list)
+    config_files = extract_config_files(directory)
+    test_classes = extract_test_classes_from_classes(classes_list)
+    
+    # Also extract XML mappers
+    xml_mappers = extract_mybatis_xml_mappers(directory)
+    mybatis_mappers.extend(xml_mappers)
+    
+    # Extract SQL statements from MyBatis mappers
+    sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
+    
+    return list(packages.values()), classes_list, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name
