@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from neo4j import Driver, GraphDatabase
 
@@ -13,6 +14,11 @@ class GraphDB:
         """Initializes the database driver."""
         self._driver: Driver = GraphDatabase.driver(uri, auth=(user, password))
         self.logger = get_logger(__name__)
+
+    @staticmethod
+    def _get_current_timestamp():
+        """Get current timestamp in YYYY/MM/DD HH24:Mi:SS.sss format."""
+        return datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]  # Remove last 3 digits to get milliseconds
 
     def close(self):
         """Closes the database connection."""
@@ -32,20 +38,26 @@ class GraphDB:
     @staticmethod
     def _create_package_node_tx(tx, package_node: Package, project_name: str):
         """A transaction function to create a package node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         package_query = (
             "MERGE (p:Package {name: $name}) "
-            "SET p.project_name = $project_name"
+            "SET p.project_name = $project_name, p.description = $description, p.ai_description = $ai_description, "
+            "p.updated_at = $updated_at"
         )
         tx.run(
             package_query,
             name=package_node.name,
             project_name=project_name,
+            description=package_node.description or "",
+            ai_description=package_node.ai_description or "",
+            updated_at=current_timestamp,
         )
 
     @staticmethod
     def _create_class_node_tx(tx, class_node: Class, package_name: str, project_name: str):
         """A transaction function to create a class, its properties,
         and its method calls."""
+        current_timestamp = GraphDB._get_current_timestamp()
         # Create or merge the class node itself
         class_query = (
             "MERGE (c:Class {name: $name}) "
@@ -53,7 +65,8 @@ class GraphDB:
             "c.source = $source, c.logical_name = $logical_name, "
             "c.superclass = $superclass, c.interfaces = $interfaces, "
             "c.imports = $imports, c.package_name = $package_name, "
-            "c.project_name = $project_name"  # Add project_name
+            "c.project_name = $project_name, c.description = $description, c.ai_description = $ai_description, "
+            "c.updated_at = $updated_at"  # Add updated_at timestamp
         )
         tx.run(
             class_query,
@@ -67,6 +80,9 @@ class GraphDB:
             imports=class_node.imports,
             package_name=package_name,  # Add package_name
             project_name=project_name,  # Add project_name
+            description=class_node.description or "",  # Add description
+            ai_description=class_node.ai_description or "",  # Add ai_description
+            updated_at=current_timestamp,  # Add updated_at timestamp
         ) # Pass all class properties
 
         # Create relationship between package and class
@@ -173,7 +189,10 @@ class GraphDB:
                 "m.annotations_json = $annotations_json, "
                 "m.source = $source, " # Add m.source
                 "m.package_name = $package_name, " # Add package_name
-                "m.project_name = $project_name " # Add project_name
+                "m.project_name = $project_name, " # Add project_name
+                "m.description = $description, " # Add description
+                "m.ai_description = $ai_description, " # Add ai_description
+                "m.updated_at = $updated_at " # Add updated_at timestamp
                 "MERGE (c)-[:HAS_METHOD]->(m)"
             )
             # Debug logging
@@ -192,6 +211,9 @@ class GraphDB:
                 source=method.source or "", # Handle None values
                 package_name=method.package_name or "", # Handle None values
                 project_name=project_name, # Add project_name
+                description=method.description or "", # Add description
+                ai_description=method.ai_description or "", # Add ai_description
+                updated_at=current_timestamp, # Add updated_at timestamp
             ) # Pass all method properties
         # --- End of new method relationships logic ---
 
@@ -204,15 +226,18 @@ class GraphDB:
             
             prop_query = (
                 "MATCH (c:Class {name: $class_name}) "
-                "MERGE (p:Property {name: $prop_name, type: $prop_type}) "
-                "SET p.logical_name = $prop_logical_name, " # Add logical_name
+                "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name}) "
+                "SET p.type = $prop_type, "
+                "p.logical_name = $prop_logical_name, " # Add logical_name
                 "p.modifiers_json = $prop_modifiers_json, " # Set modifiers as JSON
                 "p.annotations_json = $prop_annotations_json, " # Set annotations as JSON
                 "p.initial_value = $prop_initial_value, " # Set initial value
                 "p.package_name = $package_name, " # Add package_name
-                "p.class_name = $class_name, " # Add class_name
-                "p.project_name = $project_name " # Add project_name
-                "MERGE (c)-[:HAS_PROPERTY]->(p)"
+                "p.project_name = $project_name, " # Add project_name
+                "p.description = $prop_description, " # Add description
+                "p.ai_description = $prop_ai_description, " # Add ai_description
+                "p.updated_at = $updated_at " # Add updated_at timestamp
+                "MERGE (c)-[:HAS_FIELD]->(p)"
             )
             tx.run(
                 prop_query,
@@ -225,6 +250,9 @@ class GraphDB:
                 prop_initial_value=prop.initial_value or "", # Pass initial value
                 package_name=prop.package_name, # Pass package_name
                 project_name=project_name, # Add project_name
+                prop_description=prop.description or "", # Add description
+                prop_ai_description=prop.ai_description or "", # Add ai_description
+                updated_at=current_timestamp, # Add updated_at timestamp
             )
 
         # Create method call relationships (method to method)
@@ -315,12 +343,14 @@ class GraphDB:
     @staticmethod
     def _create_bean_node_tx(tx, bean: Bean, project_name: str):
         """A transaction function to create a Spring Bean node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         bean_query = (
             "MERGE (b:Bean {name: $name}) "
             "SET b.type = $type, b.scope = $scope, b.class_name = $class_name, "
             "b.package_name = $package_name, b.annotation_names = $annotation_names, "
             "b.method_count = $method_count, b.property_count = $property_count, "
-            "b.project_name = $project_name"
+            "b.project_name = $project_name, b.description = $description, b.ai_description = $ai_description, "
+            "b.updated_at = $updated_at"
         )
         tx.run(
             bean_query,
@@ -332,7 +362,10 @@ class GraphDB:
             annotation_names=json.dumps(bean.annotation_names),
             method_count=bean.method_count,
             property_count=bean.property_count,
-            project_name=project_name
+            project_name=project_name,
+            description=bean.description or "",
+            ai_description=bean.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
@@ -365,12 +398,14 @@ class GraphDB:
     @staticmethod
     def _create_endpoint_node_tx(tx, endpoint: Endpoint, project_name: str):
         """A transaction function to create a REST API endpoint node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         endpoint_query = (
             "MERGE (e:Endpoint {path: $path, method: $method}) "
             "SET e.controller_class = $controller_class, e.handler_method = $handler_method, "
             "e.endpoint_parameters = $endpoint_parameters, e.return_type = $return_type, "
             "e.annotations = $annotations, e.full_path = $full_path, "
-            "e.project_name = $project_name"
+            "e.project_name = $project_name, e.description = $description, e.ai_description = $ai_description, "
+            "e.updated_at = $updated_at"
         )
         tx.run(
             endpoint_query,
@@ -382,17 +417,22 @@ class GraphDB:
             return_type=endpoint.return_type,
             annotations=json.dumps(endpoint.annotations),
             full_path=endpoint.full_path,
-            project_name=project_name
+            project_name=project_name,
+            description=endpoint.description or "",
+            ai_description=endpoint.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
     def _create_mybatis_mapper_node_tx(tx, mapper: MyBatisMapper, project_name: str):
         """A transaction function to create a MyBatis mapper node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         mapper_query = (
             "MERGE (m:MyBatisMapper {name: $name}) "
             "SET m.type = $type, m.namespace = $namespace, m.methods = $methods, "
             "m.sql_statements = $sql_statements, m.file_path = $file_path, "
-            "m.package_name = $package_name"
+            "m.package_name = $package_name, m.description = $description, m.ai_description = $ai_description, "
+            "m.updated_at = $updated_at"
         )
         tx.run(
             mapper_query,
@@ -402,17 +442,23 @@ class GraphDB:
             methods=json.dumps(mapper.methods),
             sql_statements=json.dumps(mapper.sql_statements),
             file_path=mapper.file_path,
-            package_name=mapper.package_name
+            package_name=mapper.package_name,
+            description=mapper.description or "",
+            ai_description=mapper.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
     def _create_jpa_entity_node_tx(tx, entity: JpaEntity, project_name: str):
         """A transaction function to create a JPA entity node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         entity_query = (
             "MERGE (e:JpaEntity {name: $name}) "
             "SET e.table_name = $table_name, e.columns = $columns, "
             "e.relationships = $relationships, e.annotations = $annotations, "
-            "e.package_name = $package_name, e.file_path = $file_path"
+            "e.package_name = $package_name, e.file_path = $file_path, "
+            "e.description = $description, e.ai_description = $ai_description, "
+            "e.updated_at = $updated_at"
         )
         tx.run(
             entity_query,
@@ -422,17 +468,23 @@ class GraphDB:
             relationships=json.dumps(entity.relationships),
             annotations=json.dumps(entity.annotations),
             package_name=entity.package_name,
-            file_path=entity.file_path
+            file_path=entity.file_path,
+            description=entity.description or "",
+            ai_description=entity.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
     def _create_config_file_node_tx(tx, config_file: ConfigFile, project_name: str):
         """A transaction function to create a configuration file node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         config_query = (
             "MERGE (c:ConfigFile {name: $name}) "
             "SET c.file_path = $file_path, c.file_type = $file_type, "
             "c.properties = $properties, c.sections = $sections, "
-            "c.profiles = $profiles, c.environment = $environment"
+            "c.profiles = $profiles, c.environment = $environment, "
+            "c.description = $description, c.ai_description = $ai_description, "
+            "c.updated_at = $updated_at"
         )
         tx.run(
             config_query,
@@ -442,19 +494,25 @@ class GraphDB:
             properties=json.dumps(config_file.properties),
             sections=json.dumps(config_file.sections),
             profiles=json.dumps(config_file.profiles),
-            environment=config_file.environment
+            environment=config_file.environment,
+            description=config_file.description or "",
+            ai_description=config_file.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
     def _create_test_class_node_tx(tx, test_class: TestClass, project_name: str):
         """A transaction function to create a test class node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         test_query = (
             "MERGE (t:TestClass {name: $name}) "
             "SET t.package_name = $package_name, t.test_framework = $test_framework, "
             "t.test_type = $test_type, t.annotations = $annotations, "
             "t.test_methods = $test_methods, t.setup_methods = $setup_methods, "
             "t.mock_dependencies = $mock_dependencies, t.test_configurations = $test_configurations, "
-            "t.file_path = $file_path, t.project_name = $project_name"
+            "t.file_path = $file_path, t.project_name = $project_name, "
+            "t.description = $description, t.ai_description = $ai_description, "
+            "t.updated_at = $updated_at"
         )
         tx.run(
             test_query,
@@ -468,18 +526,23 @@ class GraphDB:
             mock_dependencies=json.dumps(test_class.mock_dependencies),
             test_configurations=json.dumps(test_class.test_configurations),
             file_path=test_class.file_path,
-            project_name=project_name
+            project_name=project_name,
+            description=test_class.description or "",
+            ai_description=test_class.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
     def _create_sql_statement_node_tx(tx, sql_statement: SqlStatement, project_name: str):
         """A transaction function to create a SQL statement node."""
+        current_timestamp = GraphDB._get_current_timestamp()
         sql_query = (
             "MERGE (s:SqlStatement {id: $id, mapper_name: $mapper_name}) "
             "SET s.sql_type = $sql_type, s.sql_content = $sql_content, "
             "s.parameter_type = $parameter_type, s.result_type = $result_type, "
             "s.result_map = $result_map, s.annotations = $annotations, "
-            "s.project_name = $project_name"
+            "s.project_name = $project_name, s.description = $description, s.ai_description = $ai_description, "
+            "s.updated_at = $updated_at"
         )
         tx.run(
             sql_query,
@@ -491,7 +554,10 @@ class GraphDB:
             result_type=sql_statement.result_type,
             result_map=sql_statement.result_map,
             annotations=json.dumps([a.dict() for a in sql_statement.annotations]),
-            project_name=project_name
+            project_name=project_name,
+            description=sql_statement.description or "",
+            ai_description=sql_statement.ai_description or "",
+            updated_at=current_timestamp
         )
 
     @staticmethod
@@ -550,3 +616,78 @@ class GraphDB:
         with self._driver.session() as session:
             result = session.run(query, project_name=project_name)
             return [record.data() for record in result]
+
+    def delete_class_and_related_data(self, class_name: str, project_name: str):
+        """Delete a specific class and all its related data from the database."""
+        with self._driver.session() as session:
+            session.execute_write(self._delete_class_and_related_data_tx, class_name, project_name)
+
+    @staticmethod
+    def _delete_class_and_related_data_tx(tx, class_name: str, project_name: str):
+        """Transaction function to delete a class and all its related data."""
+        
+        # Use DETACH DELETE to remove nodes and all their relationships at once
+        # This is more robust and handles all relationship types automatically
+        
+        # 1. Delete methods of this class (with all their relationships)
+        delete_methods_query = """
+        MATCH (m:Method {class_name: $class_name})
+        DETACH DELETE m
+        """
+        tx.run(delete_methods_query, class_name=class_name)
+        
+        # 2. Delete fields of this class (with all their relationships)
+        delete_fields_query = """
+        MATCH (f:Field {class_name: $class_name, project_name: $project_name})
+        DETACH DELETE f
+        """
+        tx.run(delete_fields_query, class_name=class_name, project_name=project_name)
+        
+        # 3. Delete beans related to this class (with all their relationships)
+        delete_beans_query = """
+        MATCH (b:Bean {class_name: $class_name, project_name: $project_name})
+        DETACH DELETE b
+        """
+        tx.run(delete_beans_query, class_name=class_name, project_name=project_name)
+        
+        # 4. Delete endpoints related to this class (with all their relationships)
+        delete_endpoints_query = """
+        MATCH (e:Endpoint {controller_class: $class_name, project_name: $project_name})
+        DETACH DELETE e
+        """
+        tx.run(delete_endpoints_query, class_name=class_name, project_name=project_name)
+        
+        # 5. Delete MyBatis mappers related to this class (with all their relationships)
+        delete_mappers_query = """
+        MATCH (m:MyBatisMapper {name: $class_name, project_name: $project_name})
+        DETACH DELETE m
+        """
+        tx.run(delete_mappers_query, class_name=class_name, project_name=project_name)
+        
+        # 6. Delete SQL statements related to this class (with all their relationships)
+        delete_sql_statements_query = """
+        MATCH (s:SqlStatement {mapper_name: $class_name, project_name: $project_name})
+        DETACH DELETE s
+        """
+        tx.run(delete_sql_statements_query, class_name=class_name, project_name=project_name)
+        
+        # 7. Delete JPA entities related to this class (with all their relationships)
+        delete_jpa_entities_query = """
+        MATCH (e:JpaEntity {name: $class_name, project_name: $project_name})
+        DETACH DELETE e
+        """
+        tx.run(delete_jpa_entities_query, class_name=class_name, project_name=project_name)
+        
+        # 8. Delete test classes related to this class (with all their relationships)
+        delete_test_classes_query = """
+        MATCH (t:TestClass {name: $class_name, project_name: $project_name})
+        DETACH DELETE t
+        """
+        tx.run(delete_test_classes_query, class_name=class_name, project_name=project_name)
+        
+        # 9. Finally, delete the class itself (with all its relationships)
+        delete_class_query = """
+        MATCH (c:Class {name: $class_name, project_name: $project_name})
+        DETACH DELETE c
+        """
+        tx.run(delete_class_query, class_name=class_name, project_name=project_name)

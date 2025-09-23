@@ -116,13 +116,254 @@ def cli():
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--neo4j-password', default=os.getenv("NEO4J_PASSWORD"), help='Neo4j password')
 @click.option('--clean', is_flag=True, help='Wipe the database before analysis.')
+@click.option('--class-name', help='Analyze only a specific class (delete existing data for this class first)')
+@click.option('--update', is_flag=True, help='Update all classes individually without clearing database')
 @click.option('--dry-run', is_flag=True, help='Parse Java files without connecting to database.')
-def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, dry_run):
+def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, class_name, update, dry_run):
     """Analyzes a Java project and populates a Neo4j database."""
     if not java_source_folder:
         click.echo("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required.", err=True)
         exit(1)
 
+    # Extract project name from directory path
+    from pathlib import Path
+    project_name = Path(java_source_folder).resolve().name
+
+    # If analyzing a specific class
+    if class_name:
+        click.echo(f"Analyzing specific class: {class_name}")
+        
+        # Find the Java file for this class
+        java_file_path = None
+        for root, _, files in os.walk(java_source_folder):
+            for file in files:
+                if file.endswith(".java") and file.replace(".java", "") == class_name:
+                    java_file_path = os.path.join(root, file)
+                    break
+            if java_file_path:
+                break
+        
+        if not java_file_path:
+            click.echo(f"Error: Could not find Java file for class '{class_name}'", err=True)
+            exit(1)
+        
+        click.echo(f"Found Java file: {java_file_path}")
+        
+        try:
+            # Parse the single Java file
+            from src.services.java_parser import parse_single_java_file, extract_beans_from_classes, analyze_bean_dependencies, extract_endpoints_from_classes, extract_mybatis_mappers_from_classes, extract_jpa_entities_from_classes, extract_test_classes_from_classes, extract_sql_statements_from_mappers
+            
+            package_node, class_node, package_name = parse_single_java_file(java_file_path, project_name)
+            
+            click.echo(f"Parsed class: {class_node.name}")
+            click.echo(f"Package: {package_name}")
+            click.echo(f"Methods: {len(class_node.methods)}")
+            click.echo(f"Properties: {len(class_node.properties)}")
+            click.echo(f"Method calls: {len(class_node.calls)}")
+            
+            if dry_run:
+                click.echo("Dry run mode - not connecting to database.")
+                click.echo("Analysis complete (dry run).")
+                return
+            
+            # Connect to database
+            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+            
+            # Delete existing data for this class
+            click.echo(f"Deleting existing data for class '{class_name}'...")
+            db.delete_class_and_related_data(class_name, project_name)
+            
+            # Add package
+            click.echo("Adding package to database...")
+            db.add_package(package_node, project_name)
+            
+            # Add class
+            click.echo("Adding class to database...")
+            db.add_class(class_node, package_name, project_name)
+            
+            # Extract and add related Spring Boot analysis results for this class only
+            classes_list = [class_node]
+            beans = extract_beans_from_classes(classes_list)
+            dependencies = analyze_bean_dependencies(classes_list, beans)
+            endpoints = extract_endpoints_from_classes(classes_list)
+            mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
+            jpa_entities = extract_jpa_entities_from_classes(classes_list)
+            test_classes = extract_test_classes_from_classes(classes_list)
+            
+            # Extract SQL statements from MyBatis mappers
+            sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
+            
+            # Add Spring Boot analysis results
+            if beans:
+                click.echo(f"Adding {len(beans)} Spring Beans to database...")
+                for bean in beans:
+                    db.add_bean(bean, project_name)
+            
+            if dependencies:
+                click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
+                for dependency in dependencies:
+                    db.add_bean_dependency(dependency, project_name)
+            
+            if endpoints:
+                click.echo(f"Adding {len(endpoints)} REST API endpoints to database...")
+                for endpoint in endpoints:
+                    db.add_endpoint(endpoint, project_name)
+            
+            if mybatis_mappers:
+                click.echo(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
+                for mapper in mybatis_mappers:
+                    db.add_mybatis_mapper(mapper, project_name)
+            
+            if jpa_entities:
+                click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
+                for entity in jpa_entities:
+                    db.add_jpa_entity(entity, project_name)
+            
+            if test_classes:
+                click.echo(f"Adding {len(test_classes)} test classes to database...")
+                for test_class in test_classes:
+                    db.add_test_class(test_class, project_name)
+            
+            if sql_statements:
+                click.echo(f"Adding {len(sql_statements)} SQL statements to database...")
+                for sql_statement in sql_statements:
+                    db.add_sql_statement(sql_statement, project_name)
+                    # Create relationship between mapper and SQL statement
+                    with db._driver.session() as session:
+                        session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, project_name)
+            
+            db.close()
+            click.echo("Class analysis complete.")
+            
+        except Exception as e:
+            click.echo(f"Error analyzing class: {e}")
+            click.echo("Use --dry-run flag to parse without database connection.")
+            exit(1)
+        
+        return
+
+    # If updating all classes individually
+    if update:
+        click.echo("Updating all classes individually...")
+        
+        # Find all Java files
+        java_files = []
+        for root, _, files in os.walk(java_source_folder):
+            for file in files:
+                if file.endswith(".java"):
+                    java_files.append(os.path.join(root, file))
+        
+        if not java_files:
+            click.echo("No Java files found in the specified directory.", err=True)
+            exit(1)
+        
+        click.echo(f"Found {len(java_files)} Java files to process.")
+        
+        if dry_run:
+            click.echo("Dry run mode - not connecting to database.")
+            for java_file in java_files:
+                try:
+                    from src.services.java_parser import parse_single_java_file
+                    package_node, class_node, package_name = parse_single_java_file(java_file, project_name)
+                    click.echo(f"  {class_node.name} ({package_name}) - Methods: {len(class_node.methods)}, Properties: {len(class_node.properties)}")
+                except Exception as e:
+                    click.echo(f"  Error parsing {java_file}: {e}")
+            click.echo("Update analysis complete (dry run).")
+            return
+        
+        try:
+            # Connect to database
+            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+            
+            processed_count = 0
+            error_count = 0
+            
+            for java_file in java_files:
+                try:
+                    click.echo(f"Processing: {java_file}")
+                    
+                    # Parse the single Java file
+                    from src.services.java_parser import parse_single_java_file, extract_beans_from_classes, analyze_bean_dependencies, extract_endpoints_from_classes, extract_mybatis_mappers_from_classes, extract_jpa_entities_from_classes, extract_test_classes_from_classes, extract_sql_statements_from_mappers
+                    
+                    package_node, class_node, package_name = parse_single_java_file(java_file, project_name)
+                    
+                    click.echo(f"  Parsed class: {class_node.name} (Package: {package_name})")
+                    
+                    # Delete existing data for this class
+                    click.echo(f"  Deleting existing data for class '{class_node.name}'...")
+                    db.delete_class_and_related_data(class_node.name, project_name)
+                    
+                    # Add package
+                    db.add_package(package_node, project_name)
+                    
+                    # Add class
+                    db.add_class(class_node, package_name, project_name)
+                    
+                    # Extract and add related Spring Boot analysis results for this class only
+                    classes_list = [class_node]
+                    beans = extract_beans_from_classes(classes_list)
+                    dependencies = analyze_bean_dependencies(classes_list, beans)
+                    endpoints = extract_endpoints_from_classes(classes_list)
+                    mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
+                    jpa_entities = extract_jpa_entities_from_classes(classes_list)
+                    test_classes = extract_test_classes_from_classes(classes_list)
+                    
+                    # Extract SQL statements from MyBatis mappers
+                    sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
+                    
+                    # Add Spring Boot analysis results
+                    if beans:
+                        for bean in beans:
+                            db.add_bean(bean, project_name)
+                    
+                    if dependencies:
+                        for dependency in dependencies:
+                            db.add_bean_dependency(dependency, project_name)
+                    
+                    if endpoints:
+                        for endpoint in endpoints:
+                            db.add_endpoint(endpoint, project_name)
+                    
+                    if mybatis_mappers:
+                        for mapper in mybatis_mappers:
+                            db.add_mybatis_mapper(mapper, project_name)
+                    
+                    if jpa_entities:
+                        for entity in jpa_entities:
+                            db.add_jpa_entity(entity, project_name)
+                    
+                    if test_classes:
+                        for test_class in test_classes:
+                            db.add_test_class(test_class, project_name)
+                    
+                    if sql_statements:
+                        for sql_statement in sql_statements:
+                            db.add_sql_statement(sql_statement, project_name)
+                            # Create relationship between mapper and SQL statement
+                            with db._driver.session() as session:
+                                session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, project_name)
+                    
+                    processed_count += 1
+                    click.echo(f"  [OK] Successfully processed {class_node.name}")
+                    
+                except Exception as e:
+                    error_count += 1
+                    click.echo(f"  [ERROR] Error processing {java_file}: {e}")
+                    continue
+            
+            db.close()
+            click.echo(f"Update complete. Processed: {processed_count}, Errors: {error_count}")
+            
+        except Exception as e:
+            click.echo(f"Error during update: {e}")
+            click.echo("Use --dry-run flag to parse without database connection.")
+            exit(1)
+        
+        return
+
+    # Original full project analysis
     click.echo(f"Parsing Java project at: {java_source_folder}")
     packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
     
@@ -257,7 +498,7 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
         'detailed': """
         MATCH (c:Class)
         OPTIONAL MATCH (c)-[:HAS_METHOD]->(m:Method)
-        OPTIONAL MATCH (c)-[:HAS_PROPERTY]->(p:Property)
+        OPTIONAL MATCH (c)-[:HAS_FIELD]->(p:Field)
         OPTIONAL MATCH (pkg:Package)-[:CONTAINS]->(c)
         RETURN 
             c.name AS class_name,
@@ -284,7 +525,7 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
         'package': """
         MATCH (pkg:Package)-[:CONTAINS]->(c:Class)
         OPTIONAL MATCH (c)-[:HAS_METHOD]->(m:Method)
-        OPTIONAL MATCH (c)-[:HAS_PROPERTY]->(p:Property)
+        OPTIONAL MATCH (c)-[:HAS_FIELD]->(p:Field)
         RETURN 
             pkg.name AS package_name,
             pkg.logical_name AS package_logical_name,

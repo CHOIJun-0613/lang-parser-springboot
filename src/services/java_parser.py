@@ -5,7 +5,7 @@ from pathlib import Path
 
 import javalang
 
-from src.models.graph_entities import Class, Method, MethodCall, Property, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration
+from src.models.graph_entities import Class, Method, MethodCall, Field, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration
 from src.utils.logger import get_logger
 from typing import Optional, List, Literal
 
@@ -1513,7 +1513,7 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
     return test_methods
 
 
-def generate_lombok_methods(properties: list[Property], class_name: str, package_name: str) -> list[Method]:
+def generate_lombok_methods(properties: list[Field], class_name: str, package_name: str) -> list[Method]:
     """Generate Lombok @Data methods (getters, setters, equals, hashCode, toString) for properties."""
     methods = []
     
@@ -1533,13 +1533,15 @@ def generate_lombok_methods(properties: list[Property], class_name: str, package
             modifiers=["public"],
             source="",  # Generated method, no source
             package_name=package_name,
-            annotations=[]
+            annotations=[],
+            description=f"Generated getter for {prop.name} field",  # Generated method description
+            ai_description=""  # TODO: Generate AI description using LLM
         )
         methods.append(getter)
         
         # Setter
         setter_name = f"set{prop.name[0].upper()}{prop.name[1:]}"
-        setter_param = Property(
+        setter_param = Field(
             name=prop.name,
             logical_name=f"{package_name}.{class_name}.{prop.name}",
             type=prop.type,
@@ -1555,7 +1557,9 @@ def generate_lombok_methods(properties: list[Property], class_name: str, package
             modifiers=["public"],
             source="",  # Generated method, no source
             package_name=package_name,
-            annotations=[]
+            annotations=[],
+            description=f"Generated setter for {prop.name} field",  # Generated method description
+            ai_description=""  # TODO: Generate AI description using LLM
         )
         methods.append(setter)
     
@@ -1564,11 +1568,13 @@ def generate_lombok_methods(properties: list[Property], class_name: str, package
         name="equals",
         logical_name=f"{package_name}.{class_name}.equals",
         return_type="boolean",
-        parameters=[Property(name="obj", logical_name=f"{package_name}.{class_name}.obj", type="Object", package_name=package_name, class_name=class_name)],
+        parameters=[Field(name="obj", logical_name=f"{package_name}.{class_name}.obj", type="Object", package_name=package_name, class_name=class_name)],
         modifiers=["public"],
         source="",  # Generated method, no source
         package_name=package_name,
-        annotations=[]
+        annotations=[],
+        description="Generated equals method for object comparison",  # Generated method description
+        ai_description=""  # TODO: Generate AI description using LLM
     )
     methods.append(equals_method)
     
@@ -1581,7 +1587,9 @@ def generate_lombok_methods(properties: list[Property], class_name: str, package
         modifiers=["public"],
         source="",  # Generated method, no source
         package_name=package_name,
-        annotations=[]
+        annotations=[],
+        description="Generated hashCode method for object hashing",  # Generated method description
+        ai_description=""  # TODO: Generate AI description using LLM
     )
     methods.append(hashcode_method)
     
@@ -1594,11 +1602,244 @@ def generate_lombok_methods(properties: list[Property], class_name: str, package
         modifiers=["public"],
         source="",  # Generated method, no source
         package_name=package_name,
-        annotations=[]
+        annotations=[],
+        description="Generated toString method for string representation",  # Generated method description
+        ai_description=""  # TODO: Generate AI description using LLM
     )
     methods.append(tostring_method)
     
     return methods
+
+
+def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, Class, str]:
+    """Parse a single Java file and return parsed entities."""
+    logger = get_logger(__name__)
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        file_content = f.read()
+    
+    try:
+        tree = javalang.parse.parse(file_content)
+        package_name = tree.package.name if tree.package else ""
+        
+        # Create package node
+        if package_name:
+            package_node = Package(name=package_name)
+        else:
+            # Handle classes without package (default package)
+            package_name = "default"
+            package_node = Package(name=package_name)
+        
+        import_map = {}
+        for imp in tree.imports:
+            class_name = imp.path.split('.')[-1]
+            import_map[class_name] = imp.path
+
+        for _, class_declaration in tree.filter(javalang.tree.ClassDeclaration):
+            class_name = class_declaration.name
+            class_key = f"{package_name}.{class_name}"
+            
+            # Extract class source code
+            class_source = file_content
+
+            # Parse class annotations
+            class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
+            
+            class_node = Class(
+                name=class_name,
+                logical_name=class_key,
+                file_path=file_path,
+                type="class",
+                source=class_source,
+                annotations=class_annotations,
+                package_name=package_name,
+                description="",
+                ai_description=""
+            )
+            
+            # Add imports
+            for imp in tree.imports:
+                class_node.imports.append(imp.path)
+
+            # Handle inheritance
+            if class_declaration.extends:
+                superclass_name = class_declaration.extends.name
+                if superclass_name in import_map:
+                    class_node.superclass = import_map[superclass_name]
+                else:
+                    class_node.superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
+
+            if class_declaration.implements:
+                for impl_ref in class_declaration.implements:
+                    interface_name = impl_ref.name
+                    if interface_name in import_map:
+                        class_node.interfaces.append(import_map[interface_name])
+                    else:
+                        class_node.interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
+
+            # Parse fields
+            field_map = {}
+            for field_declaration in class_declaration.fields:
+                for declarator in field_declaration.declarators:
+                    field_map[declarator.name] = field_declaration.type.name
+                    
+                    # Parse field annotations
+                    field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
+                    
+                    # Extract initial value if present
+                    initial_value = ""
+                    if hasattr(declarator, 'initializer') and declarator.initializer:
+                        if hasattr(declarator.initializer, 'value'):
+                            initial_value = str(declarator.initializer.value)
+                        elif hasattr(declarator.initializer, 'type'):
+                            initial_value = str(declarator.initializer.type)
+                        else:
+                            initial_value = str(declarator.initializer)
+                    
+                    prop = Field(
+                        name=declarator.name,
+                        logical_name=f"{package_name}.{class_name}.{declarator.name}",
+                        type=field_declaration.type.name,
+                        modifiers=list(field_declaration.modifiers),
+                        package_name=package_name,
+                        class_name=class_name,
+                        annotations=field_annotations,
+                        initial_value=initial_value,
+                        description="",
+                        ai_description=""
+                    )
+                    class_node.properties.append(prop)
+
+            # Parse methods and constructors
+            all_declarations = class_declaration.methods + class_declaration.constructors
+            
+            for declaration in all_declarations:
+                local_var_map = field_map.copy()
+                params = []
+                for param in declaration.parameters:
+                    param_type_name = 'Unknown'
+                    if hasattr(param.type, 'name'):
+                        param_type_name = param.type.name
+                    local_var_map[param.name] = param_type_name
+                    params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
+
+                if declaration.body:
+                    for _, var_decl in declaration.filter(javalang.tree.LocalVariableDeclaration):
+                        for declarator in var_decl.declarators:
+                            local_var_map[declarator.name] = var_decl.type.name
+                
+                if isinstance(declaration, javalang.tree.MethodDeclaration):
+                    return_type = declaration.return_type.name if declaration.return_type else "void"
+                else: # ConstructorDeclaration
+                    return_type = "constructor"
+
+                # Extract modifiers
+                modifiers = list(declaration.modifiers)
+                
+                # Parse method annotations
+                method_annotations = parse_annotations(declaration.annotations, "method") if hasattr(declaration, 'annotations') else []
+
+                # Extract method source code
+                method_source = ""
+                if declaration.position:
+                    lines = file_content.splitlines(keepends=True)
+                    start_line = declaration.position.line - 1
+                    
+                    # Find the end of the method by matching braces
+                    brace_count = 0
+                    end_line = start_line
+                    for i in range(start_line, len(lines)):
+                        line = lines[i]
+                        for char in line:
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    end_line = i
+                                    break
+                        if brace_count == 0:
+                            break
+                    
+                    method_source = "".join(lines[start_line:end_line + 1])
+
+                method = Method(
+                    name=declaration.name,
+                    logical_name=f"{class_key}.{declaration.name}",
+                    return_type=return_type,
+                    parameters=params,
+                    modifiers=modifiers,
+                    source=method_source,
+                    package_name=package_name,
+                    annotations=method_annotations,
+                    description="",
+                    ai_description=""
+                )
+                class_node.methods.append(method)
+
+                # Extract method calls with order information
+                call_order = 0
+                for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
+                    target_class_name = None
+                    resolved_target_package = ""
+                    resolved_target_class_name = ""
+                    
+                    if invocation.qualifier:
+                        # External method call
+                        if invocation.qualifier in local_var_map:
+                            target_class_name = local_var_map[invocation.qualifier]
+                        else:
+                            target_class_name = invocation.qualifier
+                        
+                        if target_class_name:
+                            if target_class_name == "System.out":
+                                resolved_target_package = "java.io"
+                                resolved_target_class_name = "PrintStream"
+                            else:
+                                if target_class_name in import_map:
+                                    resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                else:
+                                    resolved_target_package = package_name
+                                    resolved_target_class_name = target_class_name
+                    else:
+                        # Same class method call
+                        resolved_target_package = package_name
+                        resolved_target_class_name = class_name
+
+                    if resolved_target_class_name:
+                        # Get line number from invocation position
+                        line_number = invocation.position.line if invocation.position else 0
+
+                        call = MethodCall(
+                            source_package=package_name,
+                            source_class=class_name,
+                            source_method=declaration.name,
+                            target_package=resolved_target_package,
+                            target_class=resolved_target_class_name,
+                            target_method=invocation.member,
+                            call_order=call_order,
+                            line_number=line_number,
+                            return_type="void"
+                        )
+                        class_node.calls.append(call)
+                        call_order += 1
+            
+            # Check for Lombok @Data annotation and generate methods
+            has_data_annotation = any(ann.name == "Data" for ann in class_node.annotations)
+            if has_data_annotation:
+                logger.debug(f"Found @Data annotation on {class_name}, generating Lombok methods")
+                lombok_methods = generate_lombok_methods(class_node.properties, class_name, package_name)
+                class_node.methods.extend(lombok_methods)
+                logger.debug(f"Generated {len(lombok_methods)} Lombok methods for {class_name}")
+            
+            return package_node, class_node, package_name
+            
+    except javalang.parser.JavaSyntaxError as e:
+        logger.error(f"Syntax error in {file_path}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error parsing {file_path}: {e}")
+        raise
 
 
 def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
@@ -1667,7 +1908,9 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 type="class", # Simplified for now
                                 source=class_source, # Add class source
                                 annotations=class_annotations,
-                                package_name=package_name
+                                package_name=package_name,
+                                description="",  # TODO: Extract description from comments or annotations
+                                ai_description=""  # TODO: Generate AI description using LLM
                             )
                             class_to_package_map[class_key] = package_name
                         
@@ -1718,7 +1961,7 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                     else:
                                         initial_value = str(declarator.initializer)
                                 
-                                prop = Property(
+                                prop = Field(
                                     name=declarator.name,
                                     logical_name=f"{package_name}.{class_name}.{declarator.name}",
                                     type=field_declaration.type.name,
@@ -1726,7 +1969,9 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                     package_name=package_name,
                                     class_name=class_name,
                                     annotations=field_annotations,
-                                    initial_value=initial_value
+                                    initial_value=initial_value,
+                                    description="",  # TODO: Extract description from comments or annotations
+                                    ai_description=""  # TODO: Generate AI description using LLM
                                 )
                                 classes[class_key].properties.append(prop)
 
@@ -1746,7 +1991,7 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 if hasattr(param.type, 'name'):
                                     param_type_name = param.type.name
                                 local_var_map[param.name] = param_type_name
-                                params.append(Property(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
+                                params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
 
                             if declaration.body:
                                 for _, var_decl in declaration.filter(javalang.tree.LocalVariableDeclaration):
@@ -1796,7 +2041,9 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 modifiers=modifiers,
                                 source=method_source, # Add method source
                                 package_name=package_name,
-                                annotations=method_annotations
+                                annotations=method_annotations,
+                                description="",  # TODO: Extract description from comments or annotations
+                                ai_description=""  # TODO: Generate AI description using LLM
                             )
                             classes[class_key].methods.append(method)
 

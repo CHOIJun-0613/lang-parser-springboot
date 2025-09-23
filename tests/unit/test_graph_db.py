@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import json # Added import for json
 
 from src.services.graph_db import GraphDB
-from src.models.graph_entities import Class, Property, Method, MethodCall # Import Method and Property
+from src.models.graph_entities import Class, Field, Method, MethodCall # Import Method and Field
 
 @pytest.fixture
 def mock_db():
@@ -27,7 +27,7 @@ def test_add_class(mock_db):
         package="com.test",
         file_path="/path/to/TestClass.java",
         type="class",
-        properties=[Property(name="testProp", type="int")],
+        properties=[Field(name="testProp", type="int", description="Test property", ai_description="AI-generated description for testProp")],
         calls=[
             MethodCall(
                 source_package="com.test",
@@ -63,7 +63,7 @@ def test_add_class(mock_db):
     # Check the MERGE query for the property
     prop_query_found = False
     for i, query in enumerate(executed_queries):
-        if "MERGE (p:Property {name: $prop_name, type: $prop_type})" in query:
+        if "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name})" in query:
             assert executed_params[i]['prop_name'] == "testProp"
             prop_query_found = True
             break
@@ -92,11 +92,11 @@ def test_add_class_with_fields(mock_db):
     mock_driver.session.return_value.__enter__.return_value = mock_session
     mock_session.write_transaction.side_effect = lambda func, *args: func(mock_tx, *args)
 
-    test_field_private = Property(
-        name="greeting", type="String", modifiers=["private"]
+    test_field_private = Field(
+        name="greeting", type="String", modifiers=["private"], description="Private greeting field", ai_description="AI-generated description for greeting field"
     )
-    test_field_public_static_final = Property(
-        name="MAX_VALUE", type="int", modifiers=["public", "static", "final"]
+    test_field_public_static_final = Field(
+        name="MAX_VALUE", type="int", modifiers=["public", "static", "final"], description="Public static final constant", ai_description="AI-generated description for MAX_VALUE constant"
     )
     test_class = Class(
         name="Greeter",
@@ -118,7 +118,7 @@ def test_add_class_with_fields(mock_db):
     # Check the MERGE query for the first property (greeting)
     prop1_merge_call = mock_tx.run.call_args_list[1]
     assert (
-        "MERGE (p:Property {name: $prop_name, type: $prop_type}) "
+        "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name}) "
         "SET p.modifiers = $prop_modifiers "
         "MERGE (c)-[:HAS_FIELD]->(p)"
     ) in prop1_merge_call[0][0]
@@ -129,7 +129,7 @@ def test_add_class_with_fields(mock_db):
     # Check the MERGE query for the second property (MAX_VALUE)
     prop2_merge_call = mock_tx.run.call_args_list[2]
     assert (
-        "MERGE (p:Property {name: $prop_name, type: $prop_type}) "
+        "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name}) "
         "SET p.modifiers = $prop_modifiers "
         "MERGE (c)-[:HAS_FIELD]->(p)"
     ) in prop2_merge_call[0][0]

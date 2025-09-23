@@ -12,6 +12,8 @@ class Annotation(BaseModel):
     parameters: dict[str, Any] = {}
     target_type: str = "class"  # "class", "method", "field"
     category: str = "other"  # "component", "injection", "web", "jpa", "test", "security", "validation", "other"
+    description: str = ""  # Brief description of the annotation
+    ai_description: str = ""  # AI-generated description of the annotation
 
 
 class Package(BaseModel):
@@ -19,9 +21,11 @@ class Package(BaseModel):
 
     name: str
     logical_name: str = ""
+    description: str = ""  # Brief description of the package
+    ai_description: str = ""  # AI-generated description of the package
 
 
-class Property(BaseModel):
+class Field(BaseModel):
     """Represents a field or property within a class."""
 
     name: str
@@ -31,7 +35,9 @@ class Property(BaseModel):
     package_name: str = ""
     class_name: str = ""
     annotations: list[Annotation] = []
-    initial_value: str = ""  # Initial value of the property
+    initial_value: str = ""  # Initial value of the field
+    description: str = ""  # Brief description of the field
+    ai_description: str = ""  # AI-generated description of the field
 
 
 class Method(BaseModel):
@@ -40,11 +46,13 @@ class Method(BaseModel):
     name: str
     logical_name: str = ""
     return_type: str
-    parameters: list[Property] = []
+    parameters: list[Field] = []
     modifiers: list[str] = []
     source: str = ""
     package_name: str = ""
     annotations: list[Annotation] = []
+    description: str = ""  # Brief description of the method
+    ai_description: str = ""  # AI-generated description of the method
 
 
 class MethodCall(BaseModel):
@@ -59,6 +67,8 @@ class MethodCall(BaseModel):
     call_order: int = 0  # 순서 정보 (0부터 시작)
     line_number: int = 0  # 소스 코드에서의 라인 번호
     return_type: str = "void"  # 피호출 메서드의 return type
+    description: str = ""  # Brief description of the method call
+    ai_description: str = ""  # AI-generated description of the method call
 
     def dict(self):
         """Convert to dictionary for JSON serialization."""
@@ -86,6 +96,8 @@ class Bean(BaseModel):
     annotation_names: list[str] = []  # Just store annotation names
     method_count: int = 0  # Number of methods
     property_count: int = 0  # Number of properties
+    description: str = ""  # Brief description of the bean
+    ai_description: str = ""  # AI-generated description of the bean
 
 
 class BeanDependency(BaseModel):
@@ -97,6 +109,8 @@ class BeanDependency(BaseModel):
     field_name: str = ""
     method_name: str = ""
     parameter_name: str = ""
+    description: str = ""  # Brief description of the dependency
+    ai_description: str = ""  # AI-generated description of the dependency
 
 
 class Endpoint(BaseModel):
@@ -110,6 +124,8 @@ class Endpoint(BaseModel):
     return_type: str = ""
     annotations: list[str] = []  # Web annotations on the method
     full_path: str = ""  # Complete URL path including class-level mapping
+    description: str = ""  # Brief description of the endpoint
+    ai_description: str = ""  # AI-generated description of the endpoint
 
 
 class MyBatisMapper(BaseModel):
@@ -122,6 +138,8 @@ class MyBatisMapper(BaseModel):
     sql_statements: list[dict] = []  # SQL statements
     file_path: str = ""
     package_name: str = ""
+    description: str = ""  # Brief description of the mapper
+    ai_description: str = ""  # AI-generated description of the mapper
 
 
 class MyBatisSqlStatement(BaseModel):
@@ -135,6 +153,8 @@ class MyBatisSqlStatement(BaseModel):
     result_map: str = ""
     mapper_name: str = ""
     annotations: list[str] = []  # MyBatis annotations
+    description: str = ""  # Brief description of the SQL statement
+    ai_description: str = ""  # AI-generated description of the SQL statement
 
 
 class SqlStatement(BaseModel):
@@ -149,6 +169,8 @@ class SqlStatement(BaseModel):
     mapper_name: str = ""
     annotations: list[Annotation] = []  # MyBatis annotations as Annotation objects
     project_name: str = ""
+    description: str = ""  # Brief description of the SQL statement
+    ai_description: str = ""  # AI-generated description of the SQL statement
 
 
 class MyBatisResultMap(BaseModel):
@@ -160,6 +182,8 @@ class MyBatisResultMap(BaseModel):
     associations: list[dict] = []  # Association mappings
     collections: list[dict] = []  # Collection mappings
     mapper_name: str = ""
+    description: str = ""  # Brief description of the result map
+    ai_description: str = ""  # AI-generated description of the result map
 
 
 class JpaEntity(BaseModel):
@@ -172,6 +196,8 @@ class JpaEntity(BaseModel):
     annotations: list[str] = []  # JPA annotations
     package_name: str = ""
     file_path: str = ""
+    description: str = ""  # Brief description of the entity
+    ai_description: str = ""  # AI-generated description of the entity
 
 
 class JpaColumn(BaseModel):
@@ -186,6 +212,8 @@ class JpaColumn(BaseModel):
     precision: int = 0
     scale: int = 0
     annotations: list[str] = []  # Column annotations
+    description: str = ""  # Brief description of the column
+    ai_description: str = ""  # AI-generated description of the column
 
 
 class JpaRelationship(BaseModel):
@@ -199,6 +227,8 @@ class JpaRelationship(BaseModel):
     cascade: list[str] = []  # Cascade types
     fetch: str = "LAZY"  # Fetch type
     annotations: list[str] = []  # Relationship annotations
+    description: str = ""  # Brief description of the relationship
+    ai_description: str = ""  # AI-generated description of the relationship
 
 
 class ConfigFile(BaseModel):
@@ -211,6 +241,8 @@ class ConfigFile(BaseModel):
     sections: list[dict] = []  # Configuration sections
     profiles: list[str] = []  # Active profiles
     environment: str = ""  # Environment (dev, prod, test)
+    description: str = ""  # Brief description of the config file
+    ai_description: str = ""  # AI-generated description of the config file
 
 
 class DatabaseConfig(BaseModel):
@@ -225,6 +257,8 @@ class DatabaseConfig(BaseModel):
     show_sql: bool = False
     format_sql: bool = False
     jpa_properties: dict[str, Any] = {}
+    description: str = ""  # Brief description of the database config
+    ai_description: str = ""  # AI-generated description of the database config
 
 
 class ServerConfig(BaseModel):
@@ -237,6 +271,8 @@ class ServerConfig(BaseModel):
     ssl_key_store: str = ""
     ssl_key_store_password: str = ""
     ssl_key_store_type: str = ""
+    description: str = ""  # Brief description of the server config
+    ai_description: str = ""  # AI-generated description of the server config
 
 
 class SecurityConfig(BaseModel):
@@ -249,6 +285,8 @@ class SecurityConfig(BaseModel):
     cors_allowed_origins: list[str] = []
     cors_allowed_methods: list[str] = []
     cors_allowed_headers: list[str] = []
+    description: str = ""  # Brief description of the security config
+    ai_description: str = ""  # AI-generated description of the security config
 
 
 class LoggingConfig(BaseModel):
@@ -260,6 +298,8 @@ class LoggingConfig(BaseModel):
     max_file_size: str = ""
     max_history: int = 0
     console_output: bool = True
+    description: str = ""  # Brief description of the logging config
+    ai_description: str = ""  # AI-generated description of the logging config
 
 
 class TestClass(BaseModel):
@@ -275,6 +315,8 @@ class TestClass(BaseModel):
     mock_dependencies: list[dict] = []  # Mocked dependencies
     test_configurations: list[dict] = []  # Test configurations
     file_path: str = ""
+    description: str = ""  # Brief description of the test class
+    ai_description: str = ""  # AI-generated description of the test class
 
 
 class TestMethod(BaseModel):
@@ -289,6 +331,8 @@ class TestMethod(BaseModel):
     expected_exceptions: list[str] = []  # Expected exceptions
     timeout: int = 0  # Test timeout
     display_name: str = ""  # @DisplayName value
+    description: str = ""  # Brief description of the test method
+    ai_description: str = ""  # AI-generated description of the test method
 
 
 class TestConfiguration(BaseModel):
@@ -301,6 +345,8 @@ class TestConfiguration(BaseModel):
     test_slices: list[str] = []  # @WebMvcTest, @DataJpaTest, etc.
     mock_beans: list[dict] = []  # @MockBean definitions
     spy_beans: list[dict] = []  # @SpyBean definitions
+    description: str = ""  # Brief description of the test configuration
+    ai_description: str = ""  # AI-generated description of the test configuration
 
 
 class Class(BaseModel):
@@ -311,7 +357,7 @@ class Class(BaseModel):
     file_path: str
     type: Literal["class", "interface", "enum"] = "class"
     methods: list[Method] = []
-    properties: list[Property] = []
+    properties: list[Field] = []
     calls: list[MethodCall] = []
     source: str = ""
     superclass: str | None = None
@@ -319,4 +365,6 @@ class Class(BaseModel):
     imports: list[str] = []
     annotations: list[Annotation] = []
     package_name: str = ""
+    description: str = ""  # Brief description of the class
+    ai_description: str = ""  # AI-generated description of the class
 

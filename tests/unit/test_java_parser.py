@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, mock_open
 from src.services.java_parser import parse_java_project
-from src.models.graph_entities import Class, Property, Method, MethodCall
+from src.models.graph_entities import Class, Field, Method, MethodCall
 
 @patch("os.walk")
 @patch("builtins.open", new_callable=mock_open, read_data='''
