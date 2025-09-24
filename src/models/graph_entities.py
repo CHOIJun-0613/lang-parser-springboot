@@ -349,6 +349,67 @@ class TestConfiguration(BaseModel):
     ai_description: str = ""  # AI-generated description of the test configuration
 
 
+class Database(BaseModel):
+    """Represents a database."""
+    
+    name: str
+    version: str = ""
+    environment: str = ""  # "development", "production", "test"
+    description: str = ""
+    ai_description: str = ""
+    updated_at: str = ""
+
+
+class Table(BaseModel):
+    """Represents a database table."""
+    
+    name: str
+    schema: str = "public"
+    comment: str = ""
+    ai_description: str = ""
+    updated_at: str = ""
+
+
+class Column(BaseModel):
+    """Represents a database column."""
+    
+    name: str
+    data_type: str
+    nullable: bool = True
+    unique: bool = False
+    primary_key: bool = False
+    default_value: str = ""
+    constraints: list[str] = []
+    table_name: str = ""  # Add table_name for relationship
+    comment: str = ""
+    ai_description: str = ""
+    updated_at: str = ""
+
+
+class Index(BaseModel):
+    """Represents a database index."""
+    
+    name: str
+    type: str = "B-tree"  # "B-tree", "UNIQUE", "GIN", "GIST" 등
+    columns: list[str] = []
+    table_name: str = ""  # Add table_name for relationship
+    description: str = ""
+    ai_description: str = ""
+    updated_at: str = ""
+
+
+class Constraint(BaseModel):
+    """Represents a database constraint."""
+    
+    name: str
+    type: str  # "CHECK", "FOREIGN KEY", "UNIQUE", "PRIMARY KEY" 등
+    definition: str = ""
+    table_name: str = ""  # Add table_name for relationship
+    description: str = ""
+    ai_description: str = ""
+    updated_at: str = ""
+
+
 class Class(BaseModel):
     """Represents a Java class with its methods, properties, and relationships."""
 

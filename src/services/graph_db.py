@@ -3,7 +3,7 @@ from datetime import datetime
 
 from neo4j import Driver, GraphDatabase
 
-from src.models.graph_entities import Class, Package, Bean, BeanDependency, Endpoint, MyBatisMapper, SqlStatement, JpaEntity, ConfigFile, TestClass
+from src.models.graph_entities import Class, Package, Bean, BeanDependency, Endpoint, MyBatisMapper, SqlStatement, JpaEntity, ConfigFile, TestClass, Database, Table, Column, Index, Constraint
 from src.utils.logger import get_logger
 
 
@@ -340,6 +340,31 @@ class GraphDB:
         with self._driver.session() as session:
             session.execute_write(self._create_sql_statement_node_tx, sql_statement, project_name)
 
+    def add_database(self, database: Database, project_name: str):
+        """Adds a database to the graph."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_database_node_tx, database, project_name)
+
+    def add_table(self, table: Table, database_name: str, project_name: str):
+        """Adds a table to the graph."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_table_node_tx, table, database_name, project_name)
+
+    def add_column(self, column: Column, table_name: str, project_name: str):
+        """Adds a column to the graph."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_column_node_tx, column, table_name, project_name)
+
+    def add_index(self, index: Index, table_name: str, project_name: str):
+        """Adds an index to the graph."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_index_node_tx, index, table_name, project_name)
+
+    def add_constraint(self, constraint: Constraint, table_name: str, project_name: str):
+        """Adds a constraint to the graph."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_constraint_node_tx, constraint, table_name, project_name)
+
     @staticmethod
     def _create_bean_node_tx(tx, bean: Bean, project_name: str):
         """A transaction function to create a Spring Bean node."""
@@ -573,6 +598,182 @@ class GraphDB:
             mapper_name=mapper_name,
             sql_id=sql_id,
             project_name=project_name
+        )
+
+    @staticmethod
+    def _create_database_node_tx(tx, database: Database, project_name: str):
+        """A transaction function to create a Database node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        database_query = (
+            "MERGE (d:Database {name: $name}) "
+            "SET d.version = $version, d.environment = $environment, "
+            "d.project_name = $project_name, d.description = $description, "
+            "d.ai_description = $ai_description, d.updated_at = $updated_at"
+        )
+        tx.run(
+            database_query,
+            name=database.name,
+            version=database.version,
+            environment=database.environment,
+            project_name=project_name,
+            description=database.description or "",
+            ai_description=database.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+    @staticmethod
+    def _create_table_node_tx(tx, table: Table, database_name: str, project_name: str):
+        """A transaction function to create a Table node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        table_query = (
+            "MERGE (t:Table {name: $name}) "
+            "SET t.schema = $schema, t.database_name = $database_name, "
+            "t.project_name = $project_name, t.comment = $comment, "
+            "t.ai_description = $ai_description, t.updated_at = $updated_at"
+        )
+        tx.run(
+            table_query,
+            name=table.name,
+            schema=table.schema,
+            database_name=database_name,
+            project_name=project_name,
+            comment=table.comment or "",
+            ai_description=table.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+        # Create relationship between database and table
+        db_table_query = (
+            "MATCH (d:Database {name: $database_name}) "
+            "MATCH (t:Table {name: $table_name}) "
+            "MERGE (d)-[:CONTAINS]->(t)"
+        )
+        tx.run(
+            db_table_query,
+            database_name=database_name,
+            table_name=table.name
+        )
+
+    @staticmethod
+    def _create_column_node_tx(tx, column: Column, table_name: str, project_name: str):
+        """A transaction function to create a Column node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        column_query = (
+            "MERGE (c:Column {name: $name, table_name: $table_name}) "
+            "SET c.data_type = $data_type, c.nullable = $nullable, "
+            "c.unique = $unique, c.primary_key = $primary_key, "
+            "c.default_value = $default_value, c.constraints = $constraints, "
+            "c.project_name = $project_name, c.comment = $comment, "
+            "c.ai_description = $ai_description, c.updated_at = $updated_at"
+        )
+        tx.run(
+            column_query,
+            name=column.name,
+            table_name=table_name,
+            data_type=column.data_type,
+            nullable=column.nullable,
+            unique=column.unique,
+            primary_key=column.primary_key,
+            default_value=column.default_value or "",
+            constraints=json.dumps(column.constraints),
+            project_name=project_name,
+            comment=column.comment or "",
+            ai_description=column.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+        # Create relationship between table and column
+        table_column_query = (
+            "MATCH (t:Table {name: $table_name}) "
+            "MATCH (c:Column {name: $column_name, table_name: $table_name}) "
+            "MERGE (t)-[:HAS_COLUMN]->(c)"
+        )
+        tx.run(
+            table_column_query,
+            table_name=table_name,
+            column_name=column.name
+        )
+
+    @staticmethod
+    def _create_index_node_tx(tx, index: Index, table_name: str, project_name: str):
+        """A transaction function to create an Index node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        index_query = (
+            "MERGE (i:Index {name: $name, table_name: $table_name}) "
+            "SET i.type = $type, i.columns = $columns, "
+            "i.project_name = $project_name, i.description = $description, "
+            "i.ai_description = $ai_description, i.updated_at = $updated_at"
+        )
+        tx.run(
+            index_query,
+            name=index.name,
+            table_name=table_name,
+            type=index.type,
+            columns=json.dumps(index.columns),
+            project_name=project_name,
+            description=index.description or "",
+            ai_description=index.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+        # Create relationship between table and index
+        table_index_query = (
+            "MATCH (t:Table {name: $table_name}) "
+            "MATCH (i:Index {name: $index_name, table_name: $table_name}) "
+            "MERGE (t)-[:HAS_INDEX]->(i)"
+        )
+        tx.run(
+            table_index_query,
+            table_name=table_name,
+            index_name=index.name
+        )
+
+        # Create relationships between index and columns
+        for column_name in index.columns:
+            index_column_query = (
+                "MATCH (i:Index {name: $index_name, table_name: $table_name}) "
+                "MATCH (c:Column {name: $column_name, table_name: $table_name}) "
+                "MERGE (i)-[:INCLUDES]->(c)"
+            )
+            tx.run(
+                index_column_query,
+                index_name=index.name,
+                table_name=table_name,
+                column_name=column_name
+            )
+
+    @staticmethod
+    def _create_constraint_node_tx(tx, constraint: Constraint, table_name: str, project_name: str):
+        """A transaction function to create a Constraint node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        constraint_query = (
+            "MERGE (c:Constraint {name: $name, table_name: $table_name}) "
+            "SET c.type = $type, c.definition = $definition, "
+            "c.project_name = $project_name, c.description = $description, "
+            "c.ai_description = $ai_description, c.updated_at = $updated_at"
+        )
+        tx.run(
+            constraint_query,
+            name=constraint.name,
+            table_name=table_name,
+            type=constraint.type,
+            definition=constraint.definition or "",
+            project_name=project_name,
+            description=constraint.description or "",
+            ai_description=constraint.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+        # Create relationship between table and constraint
+        table_constraint_query = (
+            "MATCH (t:Table {name: $table_name}) "
+            "MATCH (c:Constraint {name: $constraint_name, table_name: $table_name}) "
+            "MERGE (t)-[:HAS_CONSTRAINT]->(c)"
+        )
+        tx.run(
+            table_constraint_query,
+            table_name=table_name,
+            constraint_name=constraint.name
         )
 
     def get_crud_matrix(self, project_name: str = None):

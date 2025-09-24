@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from src.services.java_parser import parse_java_project
 from src.services.graph_db import GraphDB
 from src.services.sequence_diagram_generator import SequenceDiagramGenerator
+from src.services.db_parser import DBParser
 from neo4j import GraphDatabase
 import subprocess
 import tempfile
@@ -118,8 +119,10 @@ def cli():
 @click.option('--clean', is_flag=True, help='Wipe the database before analysis.')
 @click.option('--class-name', help='Analyze only a specific class (delete existing data for this class first)')
 @click.option('--update', is_flag=True, help='Update all classes individually without clearing database')
+@click.option('--db_object', is_flag=True, help='Analyze database objects from DDL scripts')
+@click.option('--java_object', is_flag=True, help='Analyze Java objects from source code')
 @click.option('--dry-run', is_flag=True, help='Parse Java files without connecting to database.')
-def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, class_name, update, dry_run):
+def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, class_name, update, db_object, java_object, dry_run):
     """Analyzes a Java project and populates a Neo4j database."""
     if not java_source_folder:
         click.echo("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required.", err=True)
@@ -128,6 +131,224 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
     # Extract project name from directory path
     from pathlib import Path
     project_name = Path(java_source_folder).resolve().name
+
+    # Handle Java object analysis
+    if java_object:
+        click.echo("Analyzing Java objects from source code...")
+        
+        if not java_source_folder:
+            click.echo("Error: JAVA_SOURCE_FOLDER environment variable is required for --java_object option.", err=True)
+            click.echo("Please set JAVA_SOURCE_FOLDER in your .env file or environment variables.")
+            exit(1)
+        
+        if not os.path.exists(java_source_folder):
+            click.echo(f"Error: Java source folder {java_source_folder} does not exist.", err=True)
+            exit(1)
+        
+        try:
+            # Parse Java project
+            click.echo(f"Parsing Java project at: {java_source_folder}")
+            packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
+            
+            click.echo(f"Project name: {project_name}")
+            click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+            
+            if dry_run:
+                click.echo("Dry run mode - not connecting to database.")
+                click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+                click.echo(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
+                click.echo(f"Found {len(endpoints)} REST API endpoints.")
+                click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
+                click.echo(f"Found {len(jpa_entities)} JPA entities.")
+                click.echo(f"Found {len(config_files)} configuration files.")
+                click.echo(f"Found {len(test_classes)} test classes.")
+                click.echo(f"Found {len(sql_statements)} SQL statements.")
+                click.echo("Java object analysis complete (dry run).")
+                return
+            
+            # Connect to database
+            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+            
+            if clean:
+                click.echo("Cleaning Java objects...")
+                with db._driver.session() as session:
+                    # Delete only Java-related nodes
+                    session.run("MATCH (n:Package) DETACH DELETE n")
+                    session.run("MATCH (n:Class) DETACH DELETE n")
+                    session.run("MATCH (n:Method) DETACH DELETE n")
+                    session.run("MATCH (n:Field) DETACH DELETE n")
+                    session.run("MATCH (n:Bean) DETACH DELETE n")
+                    session.run("MATCH (n:Endpoint) DETACH DELETE n")
+                    session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
+                    session.run("MATCH (n:JpaEntity) DETACH DELETE n")
+                    session.run("MATCH (n:ConfigFile) DETACH DELETE n")
+                    session.run("MATCH (n:TestClass) DETACH DELETE n")
+                    session.run("MATCH (n:SqlStatement) DETACH DELETE n")
+            
+            # Add packages
+            click.echo("Adding packages to database...")
+            for package_node in packages_to_add:
+                db.add_package(package_node, project_name)
+            
+            # Add classes
+            click.echo("Adding classes to database...")
+            for class_node in classes_to_add:
+                # Find the package for this class using the mapping
+                class_key = f"{class_to_package_map.get(class_node.name, '')}.{class_node.name}"
+                package_name = class_to_package_map.get(class_key, None)
+                
+                if not package_name:
+                    # Fallback: try to find package by class name
+                    for key, pkg_name in class_to_package_map.items():
+                        if key.endswith(f".{class_node.name}"):
+                            package_name = pkg_name
+                            break
+                
+                db.add_class(class_node, package_name, project_name)
+            
+            # Add Spring Boot analysis results
+            if beans:
+                click.echo(f"Adding {len(beans)} Spring Beans to database...")
+                for bean in beans:
+                    db.add_bean(bean, project_name)
+            
+            if dependencies:
+                click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
+                for dependency in dependencies:
+                    db.add_bean_dependency(dependency, project_name)
+            
+            if endpoints:
+                click.echo(f"Adding {len(endpoints)} REST API endpoints to database...")
+                for endpoint in endpoints:
+                    db.add_endpoint(endpoint, project_name)
+            
+            if mybatis_mappers:
+                click.echo(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
+                for mapper in mybatis_mappers:
+                    db.add_mybatis_mapper(mapper, project_name)
+            
+            if jpa_entities:
+                click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
+                for entity in jpa_entities:
+                    db.add_jpa_entity(entity, project_name)
+            
+            if config_files:
+                click.echo(f"Adding {len(config_files)} configuration files to database...")
+                for config_file in config_files:
+                    db.add_config_file(config_file, project_name)
+            
+            if test_classes:
+                click.echo(f"Adding {len(test_classes)} test classes to database...")
+                for test_class in test_classes:
+                    db.add_test_class(test_class, project_name)
+            
+            if sql_statements:
+                click.echo(f"Adding {len(sql_statements)} SQL statements to database...")
+                for sql_statement in sql_statements:
+                    db.add_sql_statement(sql_statement, project_name)
+                    # Create relationship between mapper and SQL statement
+                    with db._driver.session() as session:
+                        session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, project_name)
+            
+            db.close()
+            click.echo("Java object analysis complete.")
+            return
+            
+        except Exception as e:
+            click.echo(f"Error analyzing Java objects: {e}")
+            click.echo("Use --dry-run flag to parse without database connection.")
+            exit(1)
+
+    # Handle DB object analysis
+    if db_object:
+        click.echo("Analyzing database objects from DDL scripts...")
+        
+        # Get DB script folder from environment variable
+        db_script_folder = os.getenv("DB_SCRIPT_FOLDER")
+        if not db_script_folder:
+            click.echo("Error: DB_SCRIPT_FOLDER environment variable is required for --db_object option.", err=True)
+            click.echo("Please set DB_SCRIPT_FOLDER in your .env file or environment variables.")
+            exit(1)
+        
+        if not os.path.exists(db_script_folder):
+            click.echo(f"Error: DB script folder {db_script_folder} does not exist.", err=True)
+            exit(1)
+        
+        try:
+            # Parse DDL files
+            db_parser = DBParser()
+            all_db_objects = db_parser.parse_ddl_directory(db_script_folder, project_name)
+            
+            if not all_db_objects:
+                click.echo("No DDL files found or parsed successfully.")
+                return
+            
+            click.echo(f"Found {len(all_db_objects)} DDL files to process.")
+            
+            if dry_run:
+                click.echo("Dry run mode - not connecting to database.")
+                for i, db_objects in enumerate(all_db_objects):
+                    click.echo(f"DDL file {i+1}:")
+                    click.echo(f"  Database: {db_objects['database'].name}")
+                    click.echo(f"  Tables: {len(db_objects['tables'])}")
+                    click.echo(f"  Columns: {len(db_objects['columns'])}")
+                    click.echo(f"  Indexes: {len(db_objects['indexes'])}")
+                    click.echo(f"  Constraints: {len(db_objects['constraints'])}")
+                click.echo("DB object analysis complete (dry run).")
+                return
+            
+            # Connect to database
+            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+            
+            if clean:
+                click.echo("Cleaning database objects...")
+                with db._driver.session() as session:
+                    # Delete only database-related nodes
+                    session.run("MATCH (n:Database) DETACH DELETE n")
+                    session.run("MATCH (n:Table) DETACH DELETE n")
+                    session.run("MATCH (n:Column) DETACH DELETE n")
+                    session.run("MATCH (n:Index) DETACH DELETE n")
+                    session.run("MATCH (n:Constraint) DETACH DELETE n")
+            
+            # Process each DDL file's objects
+            for i, db_objects in enumerate(all_db_objects):
+                click.echo(f"Processing DDL file {i+1}...")
+                
+                # Add database
+                click.echo(f"Adding database: {db_objects['database'].name}")
+                db.add_database(db_objects['database'], project_name)
+                
+                # Add tables
+                for table_obj in db_objects['tables']:
+                    click.echo(f"Adding table: {table_obj.name}")
+                    db.add_table(table_obj, db_objects['database'].name, project_name)
+                
+                # Add columns
+                for column_obj in db_objects['columns']:
+                    table_name = getattr(column_obj, 'table_name', 'unknown')
+                    click.echo(f"Adding column: {column_obj.name} to table {table_name}")
+                    db.add_column(column_obj, table_name, project_name)
+                
+                # Add indexes
+                for index_obj, table_name in db_objects['indexes']:
+                    click.echo(f"Adding index: {index_obj.name} to table {table_name}")
+                    db.add_index(index_obj, table_name, project_name)
+                
+                # Add constraints
+                for constraint_obj, table_name in db_objects['constraints']:
+                    click.echo(f"Adding constraint: {constraint_obj.name} to table {table_name}")
+                    db.add_constraint(constraint_obj, table_name, project_name)
+            
+            db.close()
+            click.echo("DB object analysis complete.")
+            return
+            
+        except Exception as e:
+            click.echo(f"Error analyzing DB objects: {e}")
+            click.echo("Use --dry-run flag to parse without database connection.")
+            exit(1)
 
     # If analyzing a specific class
     if class_name:
@@ -363,113 +584,114 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
         
         return
 
-    # Original full project analysis
-    click.echo(f"Parsing Java project at: {java_source_folder}")
-    packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
+    # Original full project analysis (when no specific object type is specified)
+    if not java_object and not db_object:
+        click.echo(f"Parsing Java project at: {java_source_folder}")
+        packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
     
-    click.echo(f"Project name: {project_name}")
-    
-    click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
-    
-    if dry_run:
-        click.echo("Dry run mode - not connecting to database.")
+        click.echo(f"Project name: {project_name}")
+        
         click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
-        click.echo(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
-        click.echo(f"Found {len(endpoints)} REST API endpoints.")
-        click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
-        click.echo(f"Found {len(jpa_entities)} JPA entities.")
-        click.echo(f"Found {len(config_files)} configuration files.")
-        click.echo(f"Found {len(test_classes)} test classes.")
-        click.echo(f"Found {len(sql_statements)} SQL statements.")
         
-        for package_node in packages_to_add:
-            click.echo(f"Package: {package_node.name}")
-        for class_node in classes_to_add:
-            click.echo(f"Class: {class_node.name}")
-            click.echo(f"  Methods: {len(class_node.methods)}")
-            click.echo(f"  Properties: {len(class_node.properties)}")
-            click.echo(f"  Method calls: {len(class_node.calls)}")
-        click.echo("Analysis complete (dry run).")
-        return
-
-    try:
-        click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
-        db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
-
-        if clean:
-            click.echo("Cleaning database...")
-            with db._driver.session() as session:
-                session.run("MATCH (n) DETACH DELETE n")
-
-        click.echo("Adding packages to database...")
-        for package_node in packages_to_add:
-            db.add_package(package_node, project_name)
-        
-        click.echo("Adding classes to database...")
-        for class_node in classes_to_add:
-            # Find the package for this class using the mapping
-            class_key = f"{class_to_package_map.get(class_node.name, '')}.{class_node.name}"
-            package_name = class_to_package_map.get(class_key, None)
+        if dry_run:
+            click.echo("Dry run mode - not connecting to database.")
+            click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+            click.echo(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
+            click.echo(f"Found {len(endpoints)} REST API endpoints.")
+            click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
+            click.echo(f"Found {len(jpa_entities)} JPA entities.")
+            click.echo(f"Found {len(config_files)} configuration files.")
+            click.echo(f"Found {len(test_classes)} test classes.")
+            click.echo(f"Found {len(sql_statements)} SQL statements.")
             
-            if not package_name:
-                # Fallback: try to find package by class name
-                for key, pkg_name in class_to_package_map.items():
-                    if key.endswith(f".{class_node.name}"):
-                        package_name = pkg_name
-                        break
-            
-            db.add_class(class_node, package_name, project_name)
-        
-        # Add Spring Boot analysis results
-        if beans:
-            click.echo(f"Adding {len(beans)} Spring Beans to database...")
-            for bean in beans:
-                db.add_bean(bean, project_name)
-        
-        if dependencies:
-            click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
-            for dependency in dependencies:
-                db.add_bean_dependency(dependency, project_name)
-        
-        if endpoints:
-            click.echo(f"Adding {len(endpoints)} REST API endpoints to database...")
-            for endpoint in endpoints:
-                db.add_endpoint(endpoint, project_name)
-        
-        if mybatis_mappers:
-            click.echo(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
-            for mapper in mybatis_mappers:
-                db.add_mybatis_mapper(mapper, project_name)
-        
-        if jpa_entities:
-            click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
-            for entity in jpa_entities:
-                db.add_jpa_entity(entity, project_name)
-        
-        if config_files:
-            click.echo(f"Adding {len(config_files)} configuration files to database...")
-            for config_file in config_files:
-                db.add_config_file(config_file, project_name)
-        
-        if test_classes:
-            click.echo(f"Adding {len(test_classes)} test classes to database...")
-            for test_class in test_classes:
-                db.add_test_class(test_class, project_name)
-        
-        if sql_statements:
-            click.echo(f"Adding {len(sql_statements)} SQL statements to database...")
-            for sql_statement in sql_statements:
-                db.add_sql_statement(sql_statement, project_name)
-                # Create relationship between mapper and SQL statement
+            for package_node in packages_to_add:
+                click.echo(f"Package: {package_node.name}")
+            for class_node in classes_to_add:
+                click.echo(f"Class: {class_node.name}")
+                click.echo(f"  Methods: {len(class_node.methods)}")
+                click.echo(f"  Properties: {len(class_node.properties)}")
+                click.echo(f"  Method calls: {len(class_node.calls)}")
+            click.echo("Analysis complete (dry run).")
+            return
+
+        try:
+            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+
+            if clean:
+                click.echo("Cleaning database...")
                 with db._driver.session() as session:
-                    session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, project_name)
+                    session.run("MATCH (n) DETACH DELETE n")
+
+            click.echo("Adding packages to database...")
+            for package_node in packages_to_add:
+                db.add_package(package_node, project_name)
         
-        db.close()
-        click.echo("Analysis complete.")
-    except Exception as e:
-        click.echo(f"Error connecting to database: {e}")
-        click.echo("Use --dry-run flag to parse without database connection.")
-        exit(1)
+            click.echo("Adding classes to database...")
+            for class_node in classes_to_add:
+                # Find the package for this class using the mapping
+                class_key = f"{class_to_package_map.get(class_node.name, '')}.{class_node.name}"
+                package_name = class_to_package_map.get(class_key, None)
+                
+                if not package_name:
+                    # Fallback: try to find package by class name
+                    for key, pkg_name in class_to_package_map.items():
+                        if key.endswith(f".{class_node.name}"):
+                            package_name = pkg_name
+                            break
+                
+                db.add_class(class_node, package_name, project_name)
+        
+            # Add Spring Boot analysis results
+            if beans:
+                click.echo(f"Adding {len(beans)} Spring Beans to database...")
+                for bean in beans:
+                    db.add_bean(bean, project_name)
+        
+            if dependencies:
+                click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
+                for dependency in dependencies:
+                    db.add_bean_dependency(dependency, project_name)
+        
+            if endpoints:
+                click.echo(f"Adding {len(endpoints)} REST API endpoints to database...")
+                for endpoint in endpoints:
+                    db.add_endpoint(endpoint, project_name)
+        
+            if mybatis_mappers:
+                click.echo(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
+                for mapper in mybatis_mappers:
+                    db.add_mybatis_mapper(mapper, project_name)
+        
+            if jpa_entities:
+                click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
+                for entity in jpa_entities:
+                    db.add_jpa_entity(entity, project_name)
+        
+            if config_files:
+                click.echo(f"Adding {len(config_files)} configuration files to database...")
+                for config_file in config_files:
+                    db.add_config_file(config_file, project_name)
+        
+            if test_classes:
+                click.echo(f"Adding {len(test_classes)} test classes to database...")
+                for test_class in test_classes:
+                    db.add_test_class(test_class, project_name)
+        
+            if sql_statements:
+                click.echo(f"Adding {len(sql_statements)} SQL statements to database...")
+                for sql_statement in sql_statements:
+                    db.add_sql_statement(sql_statement, project_name)
+                    # Create relationship between mapper and SQL statement
+                    with db._driver.session() as session:
+                        session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, project_name)
+        
+            db.close()
+            click.echo("Analysis complete.")
+        except Exception as e:
+            click.echo(f"Error connecting to database: {e}")
+            click.echo("Use --dry-run flag to parse without database connection.")
+            exit(1)
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
