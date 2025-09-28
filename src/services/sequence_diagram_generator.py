@@ -20,7 +20,7 @@ class SequenceDiagramGenerator:
     def generate_sequence_diagram(self, 
                                 class_name: str, 
                                 method_name: Optional[str] = None,
-                                max_depth: int = 3,
+                                max_depth: int = 10,
                                 include_external_calls: bool = True,
                                 method_focused: bool = False) -> str:
         """
@@ -306,7 +306,7 @@ class SequenceDiagramGenerator:
             'javax.servlet', 'org.springframework', 'org.apache',
             'com.fasterxml.jackson', 'org.slf4j', 'org.apache.logging'
         }
-        
+          
         return any(package_name.startswith(ext_pkg) for ext_pkg in external_packages)
     
     def get_available_classes(self) -> List[Dict]:
