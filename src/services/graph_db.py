@@ -3,7 +3,7 @@ from datetime import datetime
 
 from neo4j import Driver, GraphDatabase
 
-from src.models.graph_entities import Class, Package, Bean, BeanDependency, Endpoint, MyBatisMapper, SqlStatement, JpaEntity, ConfigFile, TestClass, Database, Table, Column, Index, Constraint
+from src.models.graph_entities import Class, Package, Bean, BeanDependency, Endpoint, MyBatisMapper, SqlStatement, JpaEntity, JpaRepository, JpaQuery, ConfigFile, TestClass, Database, Table, Column, Index, Constraint
 from src.utils.logger import get_logger
 
 
@@ -32,8 +32,14 @@ class GraphDB:
     def add_class(self, class_node: Class, package_name: str, project_name: str):
         """Adds a class and its relationships to the database
         in a single transaction."""
-        with self._driver.session() as session:
-            session.execute_write(self._create_class_node_tx, class_node, package_name, project_name)
+        self.logger.debug(f"Adding class: {class_node.name}, package: {package_name}, project: {project_name}")
+        try:
+            with self._driver.session() as session:
+                session.execute_write(self._create_class_node_tx, class_node, package_name, project_name)
+            self.logger.debug(f"Successfully added class: {class_node.name}")
+        except Exception as e:
+            self.logger.error(f"Error adding class {class_node.name}: {e}")
+            raise
 
     @staticmethod
     def _create_package_node_tx(tx, package_node: Package, project_name: str):
@@ -57,6 +63,8 @@ class GraphDB:
     def _create_class_node_tx(tx, class_node: Class, package_name: str, project_name: str):
         """A transaction function to create a class, its properties,
         and its method calls."""
+        logger = get_logger(__name__)
+        logger.debug(f"Creating class node: {class_node.name}")
         current_timestamp = GraphDB._get_current_timestamp()
         # Create or merge the class node itself
         class_query = (
@@ -325,6 +333,16 @@ class GraphDB:
         with self._driver.session() as session:
             session.execute_write(self._create_jpa_entity_node_tx, entity, project_name)
 
+    def add_jpa_repository(self, repository: JpaRepository, project_name: str):
+        """Adds a JPA repository to the database."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_jpa_repository_node_tx, repository, project_name)
+
+    def add_jpa_query(self, query: JpaQuery, project_name: str):
+        """Adds a JPA query to the database."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_jpa_query_node_tx, query, project_name)
+
     def add_config_file(self, config_file: ConfigFile, project_name: str):
         """Adds a configuration file to the database."""
         with self._driver.session() as session:
@@ -453,7 +471,7 @@ class GraphDB:
         """A transaction function to create a MyBatis mapper node."""
         current_timestamp = GraphDB._get_current_timestamp()
         mapper_query = (
-            "MERGE (m:MyBatisMapper {name: $name}) "
+            "MERGE (m:MyBatisMapper {name: $name, project_name: $project_name}) "
             "SET m.type = $type, m.namespace = $namespace, m.methods = $methods, "
             "m.sql_statements = $sql_statements, m.file_path = $file_path, "
             "m.package_name = $package_name, m.description = $description, m.ai_description = $ai_description, "
@@ -462,6 +480,7 @@ class GraphDB:
         tx.run(
             mapper_query,
             name=mapper.name,
+            project_name=project_name,
             type=mapper.type,
             namespace=mapper.namespace,
             methods=json.dumps(mapper.methods),
@@ -494,8 +513,62 @@ class GraphDB:
             annotations=json.dumps(entity.annotations),
             package_name=entity.package_name,
             file_path=entity.file_path,
+            project_name=project_name,
             description=entity.description or "",
             ai_description=entity.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+    @staticmethod
+    def _create_jpa_repository_node_tx(tx, repository: JpaRepository, project_name: str):
+        """A transaction function to create a JPA repository node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        repository_query = (
+            "MERGE (r:JpaRepository {name: $name, project_name: $project_name}) "
+            "SET r.entity_type = $entity_type, r.methods = $methods, "
+            "r.package_name = $package_name, r.file_path = $file_path, "
+            "r.annotations = $annotations, r.description = $description, "
+            "r.ai_description = $ai_description, r.updated_at = $updated_at"
+        )
+        tx.run(
+            repository_query,
+            name=repository.name,
+            project_name=project_name,
+            entity_type=repository.entity_type,
+            methods=json.dumps(repository.methods),
+            package_name=repository.package_name,
+            file_path=repository.file_path,
+            annotations=json.dumps(repository.annotations),
+            description=repository.description or "",
+            ai_description=repository.ai_description or "",
+            updated_at=current_timestamp
+        )
+
+    @staticmethod
+    def _create_jpa_query_node_tx(tx, query: JpaQuery, project_name: str):
+        """A transaction function to create a JPA query node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        query_query = (
+            "MERGE (q:JpaQuery {name: $name, project_name: $project_name}) "
+            "SET q.query_type = $query_type, q.query_content = $query_content, "
+            "q.return_type = $return_type, q.parameters = $parameters, "
+            "q.repository_name = $repository_name, q.method_name = $method_name, "
+            "q.annotations = $annotations, q.description = $description, "
+            "q.ai_description = $ai_description, q.updated_at = $updated_at"
+        )
+        tx.run(
+            query_query,
+            name=query.name,
+            project_name=project_name,
+            query_type=query.query_type,
+            query_content=query.query_content,
+            return_type=query.return_type,
+            parameters=json.dumps(query.parameters),
+            repository_name=query.repository_name,
+            method_name=query.method_name,
+            annotations=json.dumps(query.annotations),
+            description=query.description or "",
+            ai_description=query.ai_description or "",
             updated_at=current_timestamp
         )
 
@@ -567,7 +640,8 @@ class GraphDB:
             "s.parameter_type = $parameter_type, s.result_type = $result_type, "
             "s.result_map = $result_map, s.annotations = $annotations, "
             "s.project_name = $project_name, s.description = $description, s.ai_description = $ai_description, "
-            "s.updated_at = $updated_at"
+            "s.complexity_score = $complexity_score, s.tables = $tables, s.columns = $columns, "
+            "s.sql_analysis = $sql_analysis, s.updated_at = $updated_at"
         )
         tx.run(
             sql_query,
@@ -582,6 +656,10 @@ class GraphDB:
             project_name=project_name,
             description=sql_statement.description or "",
             ai_description=sql_statement.ai_description or "",
+            complexity_score=sql_statement.complexity_score,
+            tables=json.dumps(sql_statement.tables),
+            columns=json.dumps(sql_statement.columns),
+            sql_analysis=json.dumps(sql_statement.sql_analysis),
             updated_at=current_timestamp
         )
 
@@ -779,9 +857,9 @@ class GraphDB:
     def get_crud_matrix(self, project_name: str = None):
         """Get CRUD matrix showing class-table relationships."""
         query = """
-        MATCH (c:Class {project_name: $project_name})
-        OPTIONAL MATCH (c)-[:HAS_METHOD]->(m:Method)
-        OPTIONAL MATCH (m)-[:CALLS]->(s:SqlStatement {project_name: $project_name})
+        MATCH (c:Class {project_name: $project_name})-[:HAS_METHOD]->(m:Method)
+        MATCH (m)-[:CALLS]->(s:SqlStatement {project_name: $project_name})
+        WHERE s.tables IS NOT NULL AND s.tables <> '[]'
         WITH c, m, s, 
              CASE 
                WHEN s.sql_type = 'SELECT' THEN 'R'
@@ -792,31 +870,117 @@ class GraphDB:
              END as crud_operation
         RETURN c.name as class_name,
                c.package_name as package_name,
-               collect(DISTINCT s.mapper_name) as tables,
-               collect(DISTINCT crud_operation) as operations,
-               collect(DISTINCT s.id) as sql_statements
+               s.tables as tables_json,
+               crud_operation as operation,
+               s.id as sql_id
         ORDER BY c.name
         """
         
         with self._driver.session() as session:
             result = session.run(query, project_name=project_name)
-            return [record.data() for record in result]
+            raw_data = [record.data() for record in result]
+            
+            # 클래스별로 그룹화하여 매트릭스 생성
+            class_matrix = {}
+            for row in raw_data:
+                class_name = row['class_name']
+                if class_name not in class_matrix:
+                    class_matrix[class_name] = {
+                        'class_name': class_name,
+                        'package_name': row['package_name'],
+                        'tables': set(),
+                        'operations': set(),
+                        'sql_statements': set()
+                    }
+                
+                # 실제 테이블 정보 파싱
+                try:
+                    tables_json = row['tables_json']
+                    if tables_json and tables_json != '[]':
+                        tables = json.loads(tables_json)
+                        for table_info in tables:
+                            if isinstance(table_info, dict) and 'name' in table_info:
+                                class_matrix[class_name]['tables'].add(table_info['name'])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                
+                class_matrix[class_name]['operations'].add(row['operation'])
+                class_matrix[class_name]['sql_statements'].add(row['sql_id'])
+            
+            # set을 list로 변환
+            return [
+                {
+                    'class_name': data['class_name'],
+                    'package_name': data['package_name'],
+                    'tables': list(data['tables']),
+                    'operations': list(data['operations']),
+                    'sql_statements': list(data['sql_statements'])
+                }
+                for data in class_matrix.values()
+            ]
 
     def get_table_crud_summary(self, project_name: str = None):
         """Get CRUD summary for each table."""
         query = """
         MATCH (s:SqlStatement {project_name: $project_name})
-        WITH s.mapper_name as table_name,
-             s.sql_type as operation,
-             count(s) as count
-        RETURN table_name,
-               collect({operation: operation, count: count}) as operations
-        ORDER BY table_name
+        WHERE s.tables IS NOT NULL AND s.tables <> '[]'
+        RETURN s.tables as tables_json, s.sql_type as operation
         """
         
         with self._driver.session() as session:
             result = session.run(query, project_name=project_name)
-            return [record.data() for record in result]
+            raw_data = [record.data() for record in result]
+            
+            # 테이블별 CRUD 통계 생성
+            table_stats = {}
+            for row in raw_data:
+                try:
+                    tables_json = row['tables_json']
+                    operation = row['operation']
+                    
+                    if tables_json and tables_json != '[]':
+                        tables = json.loads(tables_json)
+                        for table_info in tables:
+                            if isinstance(table_info, dict) and 'name' in table_info:
+                                table_name = table_info['name']
+                                if table_name not in table_stats:
+                                    table_stats[table_name] = {}
+                                if operation not in table_stats[table_name]:
+                                    table_stats[table_name][operation] = 0
+                                table_stats[table_name][operation] += 1
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            
+            # 결과 형식으로 변환
+            return [
+                {
+                    'table_name': table_name,
+                    'operations': [{'operation': op, 'count': count} for op, count in operations.items()]
+                }
+                for table_name, operations in table_stats.items()
+            ]
+
+    def create_method_sql_relationships(self, project_name: str):
+        """Create CALLS relationships between Methods and SqlStatements for MyBatis repositories."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_method_sql_relationships_tx, project_name)
+
+    @staticmethod
+    def _create_method_sql_relationships_tx(tx, project_name: str):
+        """Create CALLS relationships between Repository methods and their corresponding SQL statements."""
+        # MyBatis Repository 메서드와 SqlStatement 간의 관계 생성
+        relationship_query = """
+        MATCH (c:Class {project_name: $project_name})
+        WHERE c.name ENDS WITH 'Repository' OR c.name ENDS WITH 'Mapper'
+        MATCH (c)-[:HAS_METHOD]->(m:Method)
+        MATCH (s:SqlStatement {project_name: $project_name})
+        WHERE s.mapper_name = c.name
+        MERGE (m)-[:CALLS]->(s)
+        RETURN count(*) as relationships_created
+        """
+        
+        result = tx.run(relationship_query, project_name=project_name)
+        return result.single()["relationships_created"]
 
     def delete_class_and_related_data(self, class_name: str, project_name: str):
         """Delete a specific class and all its related data from the database."""
@@ -892,3 +1056,141 @@ class GraphDB:
         DETACH DELETE c
         """
         tx.run(delete_class_query, class_name=class_name, project_name=project_name)
+
+    def get_sql_statistics(self, project_name: str = None) -> dict:
+        """Get SQL statistics for the project."""
+        with self._driver.session() as session:
+            if project_name:
+                query = """
+                MATCH (s:SqlStatement)
+                WHERE s.project_name = $project_name
+                RETURN 
+                    count(s) as total_sql,
+                    sum(CASE WHEN s.sql_type = 'SELECT' THEN 1 ELSE 0 END) as SELECT,
+                    sum(CASE WHEN s.sql_type = 'INSERT' THEN 1 ELSE 0 END) as INSERT,
+                    sum(CASE WHEN s.sql_type = 'UPDATE' THEN 1 ELSE 0 END) as UPDATE,
+                    sum(CASE WHEN s.sql_type = 'DELETE' THEN 1 ELSE 0 END) as DELETE
+                """
+                result = session.run(query, project_name=project_name)
+            else:
+                query = """
+                MATCH (s:SqlStatement)
+                RETURN 
+                    count(s) as total_sql,
+                    sum(CASE WHEN s.sql_type = 'SELECT' THEN 1 ELSE 0 END) as SELECT,
+                    sum(CASE WHEN s.sql_type = 'INSERT' THEN 1 ELSE 0 END) as INSERT,
+                    sum(CASE WHEN s.sql_type = 'UPDATE' THEN 1 ELSE 0 END) as UPDATE,
+                    sum(CASE WHEN s.sql_type = 'DELETE' THEN 1 ELSE 0 END) as DELETE
+                """
+                result = session.run(query)
+            
+            record = result.single()
+            if record:
+                return {
+                    'total_sql': record['total_sql'],
+                    'SELECT': record['SELECT'],
+                    'INSERT': record['INSERT'],
+                    'UPDATE': record['UPDATE'],
+                    'DELETE': record['DELETE']
+                }
+            return {}
+
+    def get_table_usage_statistics(self, project_name: str = None) -> list:
+        """Get table usage statistics."""
+        with self._driver.session() as session:
+            if project_name:
+                query = """
+                MATCH (s:SqlStatement)
+                WHERE s.project_name = $project_name AND s.tables IS NOT NULL
+                UNWIND s.tables as table_info
+                WITH table_info.name as table_name, s.sql_type as operation
+                RETURN 
+                    table_name,
+                    count(*) as access_count,
+                    collect(DISTINCT operation) as operations
+                ORDER BY access_count DESC
+                """
+                result = session.run(query, project_name=project_name)
+            else:
+                query = """
+                MATCH (s:SqlStatement)
+                WHERE s.tables IS NOT NULL
+                UNWIND s.tables as table_info
+                WITH table_info.name as table_name, s.sql_type as operation
+                RETURN 
+                    table_name,
+                    count(*) as access_count,
+                    collect(DISTINCT operation) as operations
+                ORDER BY access_count DESC
+                """
+                result = session.run(query)
+            
+            return [record.data() for record in result]
+
+    def get_sql_complexity_statistics(self, project_name: str = None) -> dict:
+        """Get SQL complexity statistics."""
+        with self._driver.session() as session:
+            if project_name:
+                query = """
+                MATCH (s:SqlStatement)
+                WHERE s.project_name = $project_name AND s.complexity_score IS NOT NULL
+                WITH s.complexity_score as score,
+                     CASE 
+                         WHEN s.complexity_score <= 3 THEN 'simple'
+                         WHEN s.complexity_score <= 7 THEN 'medium'
+                         WHEN s.complexity_score <= 12 THEN 'complex'
+                         ELSE 'very_complex'
+                     END as complexity_level
+                RETURN 
+                    complexity_level,
+                    count(*) as count
+                """
+                result = session.run(query, project_name=project_name)
+            else:
+                query = """
+                MATCH (s:SqlStatement)
+                WHERE s.complexity_score IS NOT NULL
+                WITH s.complexity_score as score,
+                     CASE 
+                         WHEN s.complexity_score <= 3 THEN 'simple'
+                         WHEN s.complexity_score <= 7 THEN 'medium'
+                         WHEN s.complexity_score <= 12 THEN 'complex'
+                         ELSE 'very_complex'
+                     END as complexity_level
+                RETURN 
+                    complexity_level,
+                    count(*) as count
+                """
+                result = session.run(query)
+            
+            stats = {}
+            for record in result:
+                stats[record['complexity_level']] = record['count']
+            return stats
+
+    def get_mapper_sql_distribution(self, project_name: str = None) -> list:
+        """Get mapper SQL distribution."""
+        with self._driver.session() as session:
+            if project_name:
+                query = """
+                MATCH (s:SqlStatement)
+                WHERE s.project_name = $project_name
+                RETURN 
+                    s.mapper_name as mapper_name,
+                    count(*) as sql_count,
+                    collect(DISTINCT s.sql_type) as sql_types
+                ORDER BY sql_count DESC
+                """
+                result = session.run(query, project_name=project_name)
+            else:
+                query = """
+                MATCH (s:SqlStatement)
+                RETURN 
+                    s.mapper_name as mapper_name,
+                    count(*) as sql_count,
+                    collect(DISTINCT s.sql_type) as sql_types
+                ORDER BY sql_count DESC
+                """
+                result = session.run(query)
+            
+            return [record.data() for record in result]

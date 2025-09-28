@@ -171,6 +171,12 @@ class SqlStatement(BaseModel):
     project_name: str = ""
     description: str = ""  # Brief description of the SQL statement
     ai_description: str = ""  # AI-generated description of the SQL statement
+    
+    # SQL 분석 결과 추가 속성들
+    sql_analysis: dict[str, Any] = {}  # SQL 파서 분석 결과
+    tables: list[dict[str, str]] = []  # 테이블 정보
+    columns: list[dict[str, str]] = []  # 컬럼 정보
+    complexity_score: int = 0  # SQL 복잡도 점수
 
 
 class MyBatisResultMap(BaseModel):
@@ -229,6 +235,34 @@ class JpaRelationship(BaseModel):
     annotations: list[str] = []  # Relationship annotations
     description: str = ""  # Brief description of the relationship
     ai_description: str = ""  # AI-generated description of the relationship
+
+
+class JpaRepository(BaseModel):
+    """Represents a JPA Repository interface."""
+    
+    name: str
+    entity_type: str = ""  # The entity type this repository manages
+    methods: list[dict] = []  # Repository methods
+    package_name: str = ""
+    file_path: str = ""
+    annotations: list[str] = []  # Repository annotations
+    description: str = ""  # Brief description of the repository
+    ai_description: str = ""  # AI-generated description of the repository
+
+
+class JpaQuery(BaseModel):
+    """Represents a JPA Query (JPQL, Native SQL, or Method Query)."""
+    
+    name: str
+    query_type: str = ""  # "JPQL", "NATIVE", "METHOD", "NAMED"
+    query_content: str = ""
+    return_type: str = ""
+    parameters: list[dict] = []  # Query parameters
+    repository_name: str = ""
+    method_name: str = ""
+    annotations: list[str] = []  # Query annotations (@Query, @Modifying, etc.)
+    description: str = ""  # Brief description of the query
+    ai_description: str = ""  # AI-generated description of the query
 
 
 class ConfigFile(BaseModel):

@@ -5,9 +5,10 @@ from pathlib import Path
 
 import javalang
 
-from src.models.graph_entities import Class, Method, MethodCall, Field, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration
+from src.models.graph_entities import Class, Method, MethodCall, Field, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, JpaRepository, JpaQuery, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration, Table
+from src.services.sql_parser import SQLParser
 from src.utils.logger import get_logger
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Any
 
 
 def extract_project_name(java_source_folder: str) -> str:
@@ -27,7 +28,7 @@ def extract_project_name(java_source_folder: str) -> str:
 
 def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], project_name: str) -> list[SqlStatement]:
     """
-    MyBatis mappers에서 SQL statements를 추출합니다.
+    MyBatis mappers에서 SQL statements를 추출하고 SQL 파서를 사용하여 분석합니다.
     
     Args:
         mybatis_mappers: MyBatis mapper 객체들의 리스트
@@ -36,15 +37,24 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
     Returns:
         SqlStatement 객체들의 리스트
     """
+    sql_parser = SQLParser()
     sql_statements = []
     
     for mapper in mybatis_mappers:
         for sql_dict in mapper.sql_statements:
+            sql_content = sql_dict.get('sql_content', '')
+            sql_type = sql_dict.get('sql_type', '')
+            
+            # SQL 파서를 사용하여 SQL 분석
+            sql_analysis = None
+            if sql_content and sql_type:
+                sql_analysis = sql_parser.parse_sql_statement(sql_content, sql_type)
+            
             # MyBatisSqlStatement를 SqlStatement로 변환
             sql_statement = SqlStatement(
                 id=sql_dict.get('id', ''),
-                sql_type=sql_dict.get('sql_type', ''),
-                sql_content=sql_dict.get('sql_content', ''),
+                sql_type=sql_type,
+                sql_content=sql_content,
                 parameter_type=sql_dict.get('parameter_type', ''),
                 result_type=sql_dict.get('result_type', ''),
                 result_map=sql_dict.get('result_map', ''),
@@ -52,9 +62,290 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
                 annotations=[],  # TODO: annotations를 파싱하여 추가
                 project_name=project_name
             )
+            
+            # SQL 분석 결과를 추가 속성으로 저장
+            if sql_analysis:
+                sql_statement.sql_analysis = sql_analysis
+                sql_statement.tables = sql_analysis.get('tables', [])
+                sql_statement.columns = sql_analysis.get('columns', [])
+                sql_statement.complexity_score = sql_analysis.get('complexity_score', 0)
+            
             sql_statements.append(sql_statement)
     
     return sql_statements
+
+
+def analyze_mybatis_resultmap_mapping(mybatis_mappers: list[MyBatisMapper], sql_statements: list[SqlStatement]) -> list[dict[str, Any]]:
+    """
+    MyBatis ResultMap과 테이블 컬럼 매핑을 분석합니다.
+    
+    Args:
+        mybatis_mappers: MyBatis mapper 객체들의 리스트
+        sql_statements: SQL statement 객체들의 리스트
+        
+    Returns:
+        ResultMap 매핑 분석 결과 리스트
+    """
+    mapping_analysis = []
+    
+    for mapper in mybatis_mappers:
+        # XML 매퍼에서 ResultMap 추출
+        if mapper.type == "xml":
+            result_maps = getattr(mapper, 'result_maps', [])
+            
+            for result_map in result_maps:
+                result_map_id = result_map.get('id', '')
+                result_map_type = result_map.get('type', '')
+                properties = result_map.get('properties', [])
+                
+                # ResultMap과 관련된 SQL 문 찾기
+                related_sqls = []
+                for sql_stmt in sql_statements:
+                    if sql_stmt.mapper_name == mapper.name and sql_stmt.result_map == result_map_id:
+                        related_sqls.append(sql_stmt)
+                
+                # 매핑 분석
+                mapping_info = {
+                    'result_map_id': result_map_id,
+                    'result_map_type': result_map_type,
+                    'mapper_name': mapper.name,
+                    'properties': properties,
+                    'related_sqls': [sql.id for sql in related_sqls],
+                    'table_column_mapping': {},
+                    'mapping_completeness': 0.0,
+                    'potential_issues': []
+                }
+                
+                # SQL에서 테이블-컬럼 매핑 추출
+                for sql_stmt in related_sqls:
+                    if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
+                        table_column_mapping = sql_stmt.sql_analysis.get('tables', [])
+                        for table_info in table_column_mapping:
+                            table_name = table_info['name']
+                            if table_name not in mapping_info['table_column_mapping']:
+                                mapping_info['table_column_mapping'][table_name] = []
+                            
+                            # SQL에서 사용된 컬럼들 추가
+                            columns = sql_stmt.sql_analysis.get('columns', [])
+                            for col_info in columns:
+                                col_name = col_info['name']
+                                if col_name != '*' and col_name not in mapping_info['table_column_mapping'][table_name]:
+                                    mapping_info['table_column_mapping'][table_name].append(col_name)
+                
+                # 매핑 완성도 계산
+                total_properties = len(properties)
+                mapped_properties = 0
+                
+                for prop in properties:
+                    property_name = prop.get('property', '')
+                    column_name = prop.get('column', '')
+                    
+                    if property_name and column_name:
+                        mapped_properties += 1
+                        
+                        # 매핑 검증
+                        found_in_sql = False
+                        for table_name, columns in mapping_info['table_column_mapping'].items():
+                            if column_name in columns:
+                                found_in_sql = True
+                                break
+                        
+                        if not found_in_sql:
+                            mapping_info['potential_issues'].append(
+                                f"컬럼 '{column_name}'이 SQL에서 사용되지 않음"
+                            )
+                
+                if total_properties > 0:
+                    mapping_info['mapping_completeness'] = mapped_properties / total_properties
+                
+                mapping_analysis.append(mapping_info)
+    
+    return mapping_analysis
+
+
+def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes: list[Class]) -> list[dict[str, Any]]:
+    """
+    SQL 문과 Java 메서드 간의 관계를 분석합니다.
+    
+    Args:
+        sql_statements: SQL statement 객체들의 리스트
+        classes: Java 클래스 객체들의 리스트
+        
+    Returns:
+        SQL-메서드 관계 분석 결과 리스트
+    """
+    relationships = []
+    
+    # 클래스별 메서드 매핑 생성
+    class_method_map = {}
+    for cls in classes:
+        class_method_map[cls.name] = cls.methods
+    
+    for sql_stmt in sql_statements:
+        mapper_name = sql_stmt.mapper_name
+        
+        # 매퍼 클래스 찾기
+        mapper_class = None
+        for cls in classes:
+            if cls.name == mapper_name:
+                mapper_class = cls
+                break
+        
+        if not mapper_class:
+            continue
+        
+        # SQL과 매핑되는 메서드 찾기
+        related_methods = []
+        for method in mapper_class.methods:
+            if method.name == sql_stmt.id:
+                related_methods.append(method)
+        
+        # 관계 분석
+        relationship_info = {
+            'sql_id': sql_stmt.id,
+            'sql_type': sql_stmt.sql_type,
+            'mapper_name': mapper_name,
+            'related_methods': [],
+            'table_access_pattern': {},
+            'parameter_mapping': {},
+            'return_type_mapping': {},
+            'complexity_analysis': {}
+        }
+        
+        # 관련 메서드 정보 수집
+        for method in related_methods:
+            method_info = {
+                'name': method.name,
+                'return_type': method.return_type,
+                'parameters': [{'name': p.name, 'type': p.type} for p in method.parameters],
+                'annotations': [ann.name for ann in method.annotations]
+            }
+            relationship_info['related_methods'].append(method_info)
+        
+        # 테이블 접근 패턴 분석
+        if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
+            tables = sql_stmt.sql_analysis.get('tables', [])
+            for table_info in tables:
+                table_name = table_info['name']
+                relationship_info['table_access_pattern'][table_name] = {
+                    'access_type': sql_stmt.sql_type,
+                    'alias': table_info.get('alias'),
+                    'join_type': table_info.get('type', 'main')
+                }
+        
+        # 파라미터 매핑 분석
+        if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
+            parameters = sql_stmt.sql_analysis.get('parameters', [])
+            for param in parameters:
+                param_name = param['name']
+                relationship_info['parameter_mapping'][param_name] = {
+                    'type': param['type'],
+                    'pattern': param['pattern']
+                }
+        
+        # 복잡도 분석
+        if hasattr(sql_stmt, 'complexity_score'):
+            relationship_info['complexity_analysis'] = {
+                'score': sql_stmt.complexity_score,
+                'level': 'simple' if sql_stmt.complexity_score <= 3 else 
+                        'medium' if sql_stmt.complexity_score <= 7 else
+                        'complex' if sql_stmt.complexity_score <= 12 else 'very_complex'
+            }
+        
+        relationships.append(relationship_info)
+    
+    return relationships
+
+
+def generate_db_call_chain_analysis(sql_statements: list[SqlStatement], classes: list[Class]) -> dict[str, Any]:
+    """
+    데이터베이스 호출 체인을 분석합니다.
+    
+    Args:
+        sql_statements: SQL statement 객체들의 리스트
+        classes: Java 클래스 객체들의 리스트
+        
+    Returns:
+        DB 호출 체인 분석 결과
+    """
+    analysis = {
+        'total_sql_statements': len(sql_statements),
+        'sql_type_distribution': {},
+        'table_usage_statistics': {},
+        'complexity_distribution': {},
+        'mapper_usage_statistics': {},
+        'call_chains': []
+    }
+    
+    # SQL 타입별 분포
+    for sql_stmt in sql_statements:
+        sql_type = sql_stmt.sql_type
+        if sql_type not in analysis['sql_type_distribution']:
+            analysis['sql_type_distribution'][sql_type] = 0
+        analysis['sql_type_distribution'][sql_type] += 1
+    
+    # 테이블 사용 통계
+    for sql_stmt in sql_statements:
+        if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
+            tables = sql_stmt.sql_analysis.get('tables', [])
+            for table_info in tables:
+                table_name = table_info['name']
+                if table_name not in analysis['table_usage_statistics']:
+                    analysis['table_usage_statistics'][table_name] = {
+                        'access_count': 0,
+                        'access_types': set(),
+                        'mappers': set()
+                    }
+                
+                analysis['table_usage_statistics'][table_name]['access_count'] += 1
+                analysis['table_usage_statistics'][table_name]['access_types'].add(sql_stmt.sql_type)
+                analysis['table_usage_statistics'][table_name]['mappers'].add(sql_stmt.mapper_name)
+    
+    # 복잡도 분포
+    for sql_stmt in sql_statements:
+        if hasattr(sql_stmt, 'complexity_score'):
+            score = sql_stmt.complexity_score
+            level = 'simple' if score <= 3 else 'medium' if score <= 7 else 'complex' if score <= 12 else 'very_complex'
+            
+            if level not in analysis['complexity_distribution']:
+                analysis['complexity_distribution'][level] = 0
+            analysis['complexity_distribution'][level] += 1
+    
+    # 매퍼 사용 통계
+    for sql_stmt in sql_statements:
+        mapper_name = sql_stmt.mapper_name
+        if mapper_name not in analysis['mapper_usage_statistics']:
+            analysis['mapper_usage_statistics'][mapper_name] = {
+                'sql_count': 0,
+                'sql_types': set(),
+                'tables_accessed': set()
+            }
+        
+        analysis['mapper_usage_statistics'][mapper_name]['sql_count'] += 1
+        analysis['mapper_usage_statistics'][mapper_name]['sql_types'].add(sql_stmt.sql_type)
+        
+        if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
+            tables = sql_stmt.sql_analysis.get('tables', [])
+            for table_info in tables:
+                analysis['mapper_usage_statistics'][mapper_name]['tables_accessed'].add(table_info['name'])
+    
+    # 호출 체인 생성
+    for sql_stmt in sql_statements:
+        call_chain = {
+            'sql_id': sql_stmt.id,
+            'sql_type': sql_stmt.sql_type,
+            'mapper_name': sql_stmt.mapper_name,
+            'tables': [],
+            'complexity_score': getattr(sql_stmt, 'complexity_score', 0)
+        }
+        
+        if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
+            tables = sql_stmt.sql_analysis.get('tables', [])
+            call_chain['tables'] = [table['name'] for table in tables]
+        
+        analysis['call_chains'].append(call_chain)
+    
+    return analysis
 
 
 def parse_annotations(annotations, target_type: str = "class") -> list[Annotation]:
@@ -114,8 +405,47 @@ def classify_springboot_annotation(annotation_name: str) -> str:
     
     # JPA annotations
     jpa_annotations = {
-        "Entity", "Table", "Id", "Column", "OneToMany", "ManyToOne",
-        "OneToOne", "ManyToMany", "JoinColumn", "GeneratedValue"
+        # Core Entity annotations
+        "Entity", "Table", "MappedSuperclass", "Embeddable", "Embedded",
+        
+        # Primary Key annotations
+        "Id", "GeneratedValue", "SequenceGenerator", "TableGenerator",
+        
+        # Column annotations
+        "Column", "Basic", "Transient", "Enumerated", "Temporal", "Lob",
+        
+        # Relationship annotations
+        "OneToOne", "OneToMany", "ManyToOne", "ManyToMany",
+        "JoinColumn", "JoinColumns", "JoinTable", "PrimaryKeyJoinColumn", "PrimaryKeyJoinColumns",
+        
+        # Collection annotations
+        "ElementCollection", "CollectionTable", "OrderBy", "OrderColumn",
+        "MapKey", "MapKeyClass", "MapKeyColumn", "MapKeyJoinColumn", "MapKeyJoinColumns",
+        "MapKeyTemporal", "MapKeyEnumerated",
+        
+        # Inheritance annotations
+        "Inheritance", "DiscriminatorColumn", "DiscriminatorValue",
+        
+        # Secondary table annotations
+        "SecondaryTable", "SecondaryTables", "AttributeOverride", "AttributeOverrides",
+        "AssociationOverride", "AssociationOverrides",
+        
+        # Query annotations
+        "NamedQuery", "NamedQueries", "NamedNativeQuery", "NamedNativeQueries",
+        "SqlResultSetMapping", "SqlResultSetMappings", "ConstructorResult", "ColumnResult",
+        "FieldResult", "EntityResult", "EntityResults",
+        
+        # Cache annotations
+        "Cacheable",
+        
+        # Version annotation
+        "Version",
+        
+        # Access annotation
+        "Access",
+        
+        # Table constraints
+        "UniqueConstraint", "Index", "ForeignKey"
     }
     
     # Test annotations
@@ -542,7 +872,7 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
         if not is_mapper:
             continue
         
-        # Extract mapper methods with MyBatis annotations
+        # Extract ALL methods from Mapper interface (not just annotated ones)
         mapper_methods = []
         sql_statements = []
         
@@ -551,11 +881,12 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
             if method.name == cls.name:
                 continue
             
-            # Check if method has MyBatis annotations
+            # Check if method has MyBatis annotations (for annotation-based mapping)
             mybatis_annotations = [ann for ann in method.annotations if ann.category == "mybatis"]
             
-            if not mybatis_annotations:
-                continue
+            # For XML-based mapping, we don't need annotations
+            # All methods in @Mapper interface are potential SQL methods
+            # Process ALL methods, not just annotated ones
             
             # Extract SQL statement information
             sql_type = "SELECT"  # default
@@ -564,31 +895,44 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
             result_type = ""
             result_map = ""
             
-            for ann in mybatis_annotations:
-                if ann.name in ["Select", "SelectProvider"]:
+            # Process MyBatis annotations if present
+            if mybatis_annotations:
+                for ann in mybatis_annotations:
+                    if ann.name in ["Select", "SelectProvider"]:
+                        sql_type = "SELECT"
+                        if "value" in ann.parameters:
+                            sql_content = ann.parameters["value"]
+                    elif ann.name in ["Insert", "InsertProvider"]:
+                        sql_type = "INSERT"
+                        if "value" in ann.parameters:
+                            sql_content = ann.parameters["value"]
+                    elif ann.name in ["Update", "UpdateProvider"]:
+                        sql_type = "UPDATE"
+                        if "value" in ann.parameters:
+                            sql_content = ann.parameters["value"]
+                    elif ann.name in ["Delete", "DeleteProvider"]:
+                        sql_type = "DELETE"
+                        if "value" in ann.parameters:
+                            sql_content = ann.parameters["value"]
+                    
+                    # Extract parameter and result type information
+                    if "parameterType" in ann.parameters:
+                        parameter_type = ann.parameters["parameterType"]
+                    if "resultType" in ann.parameters:
+                        result_type = ann.parameters["resultType"]
+                    if "resultMap" in ann.parameters:
+                        result_map = ann.parameters["resultMap"]
+            else:
+                # For XML-based mapping, infer SQL type from method name
+                method_name_lower = method.name.lower()
+                if any(keyword in method_name_lower for keyword in ['find', 'get', 'select', 'search', 'list']):
                     sql_type = "SELECT"
-                    if "value" in ann.parameters:
-                        sql_content = ann.parameters["value"]
-                elif ann.name in ["Insert", "InsertProvider"]:
+                elif any(keyword in method_name_lower for keyword in ['save', 'insert', 'create', 'add']):
                     sql_type = "INSERT"
-                    if "value" in ann.parameters:
-                        sql_content = ann.parameters["value"]
-                elif ann.name in ["Update", "UpdateProvider"]:
+                elif any(keyword in method_name_lower for keyword in ['update', 'modify', 'change']):
                     sql_type = "UPDATE"
-                    if "value" in ann.parameters:
-                        sql_content = ann.parameters["value"]
-                elif ann.name in ["Delete", "DeleteProvider"]:
+                elif any(keyword in method_name_lower for keyword in ['delete', 'remove']):
                     sql_type = "DELETE"
-                    if "value" in ann.parameters:
-                        sql_content = ann.parameters["value"]
-                
-                # Extract parameter and result type information
-                if "parameterType" in ann.parameters:
-                    parameter_type = ann.parameters["parameterType"]
-                if "resultType" in ann.parameters:
-                    result_type = ann.parameters["resultType"]
-                if "resultMap" in ann.parameters:
-                    result_map = ann.parameters["resultMap"]
             
             # Create method info
             method_info = {
@@ -749,7 +1093,7 @@ def extract_mybatis_xml_mappers(directory: str) -> list[MyBatisMapper]:
 
 
 def extract_jpa_entities_from_classes(classes: list[Class]) -> list[JpaEntity]:
-    """Extract JPA Entities from parsed classes.
+    """Extract JPA Entities from parsed classes with enhanced analysis.
     
     Args:
         classes: List of parsed Class objects
@@ -766,121 +1110,695 @@ def extract_jpa_entities_from_classes(classes: list[Class]) -> list[JpaEntity]:
         if not is_entity:
             continue
         
-        # Extract table name
-        table_name = cls.name.lower()  # default table name
-        for ann in cls.annotations:
-            if ann.name == "Table":
-                if "name" in ann.parameters:
-                    table_name = ann.parameters["name"]
-                break
+        # Extract table information with enhanced analysis
+        table_info = _extract_table_info(cls)
         
-        # Extract columns from properties
+        # Extract columns from properties with enhanced analysis
         columns = []
         relationships = []
         
         for prop in cls.properties:
-            # Check if property has JPA column annotations
+            # Check if property has JPA annotations
             jpa_annotations = [ann for ann in prop.annotations if ann.category == "jpa"]
             
-            if jpa_annotations:
-                # Extract column information
-                column_name = prop.name  # default column name
-                nullable = True
-                unique = False
-                length = 0
-                precision = 0
-                scale = 0
+            if jpa_annotations or _is_jpa_property(prop, cls):
+                # Extract column information with enhanced analysis
+                column_info = _extract_column_info(prop, jpa_annotations)
+                if column_info:
+                    columns.append(column_info)
                 
-                for ann in jpa_annotations:
-                    if ann.name == "Column":
-                        if "name" in ann.parameters:
-                            column_name = ann.parameters["name"]
-                        if "nullable" in ann.parameters:
-                            nullable = ann.parameters["nullable"]
-                        if "unique" in ann.parameters:
-                            unique = ann.parameters["unique"]
-                        if "length" in ann.parameters:
-                            length = ann.parameters["length"]
-                        if "precision" in ann.parameters:
-                            precision = ann.parameters["precision"]
-                        if "scale" in ann.parameters:
-                            scale = ann.parameters["scale"]
-                    elif ann.name == "Id":
-                        column_name = "id"  # Primary key column
-                        nullable = False
-                        unique = True
-                    elif ann.name == "JoinColumn":
-                        if "name" in ann.parameters:
-                            column_name = ann.parameters["name"]
-                
-                # Check for relationship annotations
-                relationship_type = None
-                target_entity = ""
-                mapped_by = ""
-                join_column = ""
-                join_table = ""
-                cascade = []
-                fetch = "LAZY"
-                
-                for ann in jpa_annotations:
-                    if ann.name in ["OneToOne", "OneToMany", "ManyToOne", "ManyToMany"]:
-                        relationship_type = ann.name
-                        if "targetEntity" in ann.parameters:
-                            target_entity = ann.parameters["targetEntity"]
-                        if "mappedBy" in ann.parameters:
-                            mapped_by = ann.parameters["mappedBy"]
-                        if "cascade" in ann.parameters:
-                            cascade = ann.parameters["cascade"] if isinstance(ann.parameters["cascade"], list) else [ann.parameters["cascade"]]
-                        if "fetch" in ann.parameters:
-                            fetch = ann.parameters["fetch"]
-                    elif ann.name == "JoinColumn":
-                        if "name" in ann.parameters:
-                            join_column = ann.parameters["name"]
-                    elif ann.name == "JoinTable":
-                        if "name" in ann.parameters:
-                            join_table = ann.parameters["name"]
-                
-                # Create column info
-                column_info = {
-                    "property_name": prop.name,
-                    "column_name": column_name,
-                    "data_type": prop.type,
-                    "nullable": nullable,
-                    "unique": unique,
-                    "length": length,
-                    "precision": precision,
-                    "scale": scale,
-                    "annotations": [ann.name for ann in jpa_annotations]
-                }
-                columns.append(column_info)
-                
-                # Create relationship info if it's a relationship
-                if relationship_type:
-                    relationship_info = {
-                        "type": relationship_type,
-                        "target_entity": target_entity,
-                        "mapped_by": mapped_by,
-                        "join_column": join_column,
-                        "join_table": join_table,
-                        "cascade": cascade,
-                        "fetch": fetch,
-                        "annotations": [ann.name for ann in jpa_annotations]
-                    }
+                # Extract relationship information
+                relationship_info = _extract_relationship_info(prop, jpa_annotations)
+                if relationship_info:
                     relationships.append(relationship_info)
         
-        # Create entity
+        # Create entity with enhanced information
         entity = JpaEntity(
             name=cls.name,
-            table_name=table_name,
+            table_name=table_info["name"],
             columns=columns,
             relationships=relationships,
             annotations=[ann.name for ann in cls.annotations if ann.category == "jpa"],
             package_name=cls.package_name,
-            file_path=cls.file_path
+            file_path=cls.file_path,
+            description=table_info.get("description", ""),
+            ai_description=table_info.get("ai_description", "")
         )
         entities.append(entity)
     
     return entities
+
+
+def _extract_table_info(cls: Class) -> dict:
+    """Extract table information from entity class annotations."""
+    table_name = cls.name.lower()  # default table name
+    schema = ""
+    catalog = ""
+    unique_constraints = []
+    indexes = []
+    description = ""
+    
+    for ann in cls.annotations:
+        if ann.name == "Table":
+            if "name" in ann.parameters:
+                table_name = ann.parameters["name"]
+            if "schema" in ann.parameters:
+                schema = ann.parameters["schema"]
+            if "catalog" in ann.parameters:
+                catalog = ann.parameters["catalog"]
+            if "uniqueConstraints" in ann.parameters:
+                unique_constraints = ann.parameters["uniqueConstraints"]
+            if "indexes" in ann.parameters:
+                indexes = ann.parameters["indexes"]
+    
+    return {
+        "name": table_name,
+        "schema": schema,
+        "catalog": catalog,
+        "unique_constraints": unique_constraints,
+        "indexes": indexes,
+        "description": description
+    }
+
+
+def _is_jpa_property(prop: Field, cls: Class) -> bool:
+    """Check if a property should be considered as JPA property even without explicit annotations."""
+    # Properties without JPA annotations but part of an entity are considered JPA properties
+    # unless they are explicitly marked as @Transient
+    has_transient = any(ann.name == "Transient" for ann in prop.annotations)
+    return not has_transient
+
+
+def _extract_column_info(prop: Field, jpa_annotations: list[Annotation]) -> dict:
+    """Extract detailed column information from property and annotations."""
+    column_name = prop.name  # default column name
+    nullable = True
+    unique = False
+    length = 0
+    precision = 0
+    scale = 0
+    insertable = True
+    updatable = True
+    column_definition = ""
+    table = ""
+    is_primary_key = False
+    is_version = False
+    is_lob = False
+    is_enumerated = False
+    is_temporal = False
+    temporal_type = ""
+    enum_type = ""
+    
+    # Process JPA annotations
+    for ann in jpa_annotations:
+        if ann.name == "Column":
+            if "name" in ann.parameters:
+                column_name = ann.parameters["name"]
+            if "nullable" in ann.parameters:
+                nullable = ann.parameters["nullable"]
+            if "unique" in ann.parameters:
+                unique = ann.parameters["unique"]
+            if "length" in ann.parameters:
+                length = ann.parameters["length"]
+            if "precision" in ann.parameters:
+                precision = ann.parameters["precision"]
+            if "scale" in ann.parameters:
+                scale = ann.parameters["scale"]
+            if "insertable" in ann.parameters:
+                insertable = ann.parameters["insertable"]
+            if "updatable" in ann.parameters:
+                updatable = ann.parameters["updatable"]
+            if "columnDefinition" in ann.parameters:
+                column_definition = ann.parameters["columnDefinition"]
+            if "table" in ann.parameters:
+                table = ann.parameters["table"]
+                
+        elif ann.name == "Id":
+            column_name = "id"  # Primary key column
+            nullable = False
+            unique = True
+            is_primary_key = True
+            
+        elif ann.name == "Version":
+            is_version = True
+            
+        elif ann.name == "Lob":
+            is_lob = True
+            
+        elif ann.name == "Enumerated":
+            is_enumerated = True
+            if "value" in ann.parameters:
+                enum_type = ann.parameters["value"]
+                
+        elif ann.name == "Temporal":
+            is_temporal = True
+            if "value" in ann.parameters:
+                temporal_type = ann.parameters["value"]
+                
+        elif ann.name == "JoinColumn":
+            if "name" in ann.parameters:
+                column_name = ann.parameters["name"]
+            if "nullable" in ann.parameters:
+                nullable = ann.parameters["nullable"]
+            if "unique" in ann.parameters:
+                unique = ann.parameters["unique"]
+            if "insertable" in ann.parameters:
+                insertable = ann.parameters["insertable"]
+            if "updatable" in ann.parameters:
+                updatable = ann.parameters["updatable"]
+            if "columnDefinition" in ann.parameters:
+                column_definition = ann.parameters["columnDefinition"]
+    
+    return {
+        "property_name": prop.name,
+        "column_name": column_name,
+        "data_type": prop.type,
+        "nullable": nullable,
+        "unique": unique,
+        "length": length,
+        "precision": precision,
+        "scale": scale,
+        "insertable": insertable,
+        "updatable": updatable,
+        "column_definition": column_definition,
+        "table": table,
+        "is_primary_key": is_primary_key,
+        "is_version": is_version,
+        "is_lob": is_lob,
+        "is_enumerated": is_enumerated,
+        "is_temporal": is_temporal,
+        "temporal_type": temporal_type,
+        "enum_type": enum_type,
+        "annotations": [ann.name for ann in jpa_annotations]
+    }
+
+
+def _extract_relationship_info(prop: Field, jpa_annotations: list[Annotation]) -> dict:
+    """Extract relationship information from property and annotations."""
+    relationship_type = None
+    target_entity = ""
+    mapped_by = ""
+    join_column = ""
+    join_columns = []
+    join_table = ""
+    cascade = []
+    fetch = "LAZY"
+    orphan_removal = False
+    optional = True
+    
+    # Process relationship annotations
+    for ann in jpa_annotations:
+        if ann.name in ["OneToOne", "OneToMany", "ManyToOne", "ManyToMany"]:
+            relationship_type = ann.name
+            if "targetEntity" in ann.parameters:
+                target_entity = ann.parameters["targetEntity"]
+            if "mappedBy" in ann.parameters:
+                mapped_by = ann.parameters["mappedBy"]
+            if "cascade" in ann.parameters:
+                cascade = ann.parameters["cascade"] if isinstance(ann.parameters["cascade"], list) else [ann.parameters["cascade"]]
+            if "fetch" in ann.parameters:
+                fetch = ann.parameters["fetch"]
+            if "orphanRemoval" in ann.parameters:
+                orphan_removal = ann.parameters["orphanRemoval"]
+            if "optional" in ann.parameters:
+                optional = ann.parameters["optional"]
+                
+        elif ann.name == "JoinColumn":
+            if "name" in ann.parameters:
+                join_column = ann.parameters["name"]
+            join_columns.append({
+                "name": ann.parameters.get("name", ""),
+                "referencedColumnName": ann.parameters.get("referencedColumnName", ""),
+                "nullable": ann.parameters.get("nullable", True),
+                "unique": ann.parameters.get("unique", False),
+                "insertable": ann.parameters.get("insertable", True),
+                "updatable": ann.parameters.get("updatable", True),
+                "columnDefinition": ann.parameters.get("columnDefinition", ""),
+                "table": ann.parameters.get("table", "")
+            })
+            
+        elif ann.name == "JoinTable":
+            if "name" in ann.parameters:
+                join_table = ann.parameters["name"]
+    
+    if relationship_type:
+        return {
+            "type": relationship_type,
+            "target_entity": target_entity,
+            "mapped_by": mapped_by,
+            "join_column": join_column,
+            "join_columns": join_columns,
+            "join_table": join_table,
+            "cascade": cascade,
+            "fetch": fetch,
+            "orphan_removal": orphan_removal,
+            "optional": optional,
+            "annotations": [ann.name for ann in jpa_annotations]
+        }
+    
+    return None
+
+
+def extract_jpa_repositories_from_classes(classes: list[Class]) -> list[JpaRepository]:
+    """Extract JPA Repositories from parsed classes.
+    
+    Args:
+        classes: List of parsed Class objects
+        
+    Returns:
+        List of JpaRepository objects
+    """
+    repositories = []
+    
+    for cls in classes:
+        # Check if class is a JPA Repository
+        is_repository = _is_jpa_repository(cls)
+        
+        if not is_repository:
+            continue
+        
+        # Extract entity type from generic type parameters
+        entity_type = _extract_entity_type_from_repository(cls)
+        
+        # Extract repository methods
+        methods = _extract_repository_methods(cls)
+        
+        # Create repository
+        repository = JpaRepository(
+            name=cls.name,
+            entity_type=entity_type,
+            methods=methods,
+            package_name=cls.package_name,
+            file_path=cls.file_path,
+            annotations=[ann.name for ann in cls.annotations if ann.category == "jpa"],
+            description="",
+            ai_description=""
+        )
+        repositories.append(repository)
+    
+    return repositories
+
+
+def _is_jpa_repository(cls: Class) -> bool:
+    """Check if a class is a JPA Repository."""
+    # Check if class extends JpaRepository or similar interfaces
+    jpa_repository_interfaces = {
+        "JpaRepository", "CrudRepository", "PagingAndSortingRepository",
+        "JpaSpecificationExecutor", "QueryByExampleExecutor"
+    }
+    
+    # Check interfaces
+    for interface in cls.interfaces:
+        interface_name = interface.split('.')[-1]  # Get simple name
+        if interface_name in jpa_repository_interfaces:
+            return True
+    
+    # Check if class has @Repository annotation
+    has_repository_annotation = any(ann.name == "Repository" for ann in cls.annotations)
+    
+    # Check if class name ends with "Repository"
+    is_repository_by_name = cls.name.endswith("Repository")
+    
+    return has_repository_annotation or is_repository_by_name
+
+
+def _extract_entity_type_from_repository(cls: Class) -> str:
+    """Extract entity type from repository class generic parameters."""
+    # This is a simplified implementation
+    # In a real implementation, you would parse the generic type parameters
+    # from the class declaration
+    
+    # For now, try to infer from the class name
+    # Common patterns: UserRepository -> User, UserEntityRepository -> UserEntity
+    class_name = cls.name
+    
+    if class_name.endswith("Repository"):
+        entity_name = class_name[:-10]  # Remove "Repository"
+        return entity_name
+    elif class_name.endswith("EntityRepository"):
+        entity_name = class_name[:-15]  # Remove "EntityRepository"
+        return entity_name
+    
+    return ""
+
+
+def _extract_repository_methods(cls: Class) -> list[dict]:
+    """Extract repository methods with query analysis."""
+    methods = []
+    
+    for method in cls.methods:
+        method_info = {
+            "name": method.name,
+            "return_type": method.return_type,
+            "parameters": [param.dict() for param in method.parameters],
+            "annotations": [ann.name for ann in method.annotations],
+            "query_info": _analyze_repository_method(method)
+        }
+        methods.append(method_info)
+    
+    return methods
+
+
+def _analyze_repository_method(method: Method) -> dict:
+    """Analyze a repository method to extract query information."""
+    query_info = {
+        "query_type": "METHOD",  # Default to method query
+        "query_content": "",
+        "is_modifying": False,
+        "is_native": False,
+        "is_jpql": False,
+        "is_named": False,
+        "query_name": "",
+        "parameters": []
+    }
+    
+    # Check for @Query annotation
+    for ann in method.annotations:
+        if ann.name == "Query":
+            query_info["query_type"] = "JPQL"
+            query_info["is_jpql"] = True
+            if "value" in ann.parameters:
+                query_info["query_content"] = ann.parameters["value"]
+            if "nativeQuery" in ann.parameters and ann.parameters["nativeQuery"]:
+                query_info["query_type"] = "NATIVE"
+                query_info["is_native"] = True
+                query_info["is_jpql"] = False
+            if "name" in ann.parameters:
+                query_info["query_name"] = ann.parameters["name"]
+                query_info["is_named"] = True
+                
+        elif ann.name == "Modifying":
+            query_info["is_modifying"] = True
+            
+        elif ann.name == "NamedQuery":
+            query_info["query_type"] = "NAMED"
+            query_info["is_named"] = True
+            if "name" in ann.parameters:
+                query_info["query_name"] = ann.parameters["name"]
+            if "query" in ann.parameters:
+                query_info["query_content"] = ann.parameters["query"]
+    
+    # Analyze method name for query derivation
+    if query_info["query_type"] == "METHOD":
+        query_info.update(_analyze_method_name_query(method.name, method.parameters))
+    
+    return query_info
+
+
+def _analyze_method_name_query(method_name: str, parameters: list[Field]) -> dict:
+    """Analyze method name to derive query information."""
+    query_info = {
+        "derived_query": True,
+        "operation": "SELECT",  # Default operation
+        "entity_field": "",
+        "conditions": [],
+        "sorting": [],
+        "paging": False
+    }
+    
+    method_name_lower = method_name.lower()
+    
+    # Determine operation
+    if method_name_lower.startswith("find") or method_name_lower.startswith("get"):
+        query_info["operation"] = "SELECT"
+    elif method_name_lower.startswith("save") or method_name_lower.startswith("insert"):
+        query_info["operation"] = "INSERT"
+    elif method_name_lower.startswith("update"):
+        query_info["operation"] = "UPDATE"
+    elif method_name_lower.startswith("delete") or method_name_lower.startswith("remove"):
+        query_info["operation"] = "DELETE"
+    elif method_name_lower.startswith("count"):
+        query_info["operation"] = "COUNT"
+    elif method_name_lower.startswith("exists"):
+        query_info["operation"] = "EXISTS"
+    
+    # Check for sorting
+    if "orderby" in method_name_lower or "sort" in method_name_lower:
+        query_info["sorting"] = ["field_name"]  # Simplified
+    
+    # Check for paging
+    if "page" in method_name_lower or "pageable" in method_name_lower:
+        query_info["paging"] = True
+    
+    # Extract field names from method name
+    # This is a simplified implementation
+    # In practice, you would need more sophisticated parsing
+    field_patterns = [
+        r"findBy(\w+)",
+        r"getBy(\w+)",
+        r"countBy(\w+)",
+        r"existsBy(\w+)",
+        r"deleteBy(\w+)"
+    ]
+    
+    for pattern in field_patterns:
+        match = re.search(pattern, method_name, re.IGNORECASE)
+        if match:
+            field_name = match.group(1)
+            query_info["entity_field"] = field_name
+            query_info["conditions"].append({
+                "field": field_name,
+                "operator": "=",
+                "parameter": field_name.lower()
+            })
+            break
+    
+    return query_info
+
+
+def extract_jpa_queries_from_repositories(repositories: list[JpaRepository]) -> list[JpaQuery]:
+    """Extract JPA Queries from repository methods.
+    
+    Args:
+        repositories: List of JpaRepository objects
+        
+    Returns:
+        List of JpaQuery objects
+    """
+    queries = []
+    
+    for repository in repositories:
+        for method in repository.methods:
+            query_info = method.get("query_info", {})
+            
+            if query_info.get("query_content") or query_info.get("derived_query"):
+                query = JpaQuery(
+                    name=f"{repository.name}.{method['name']}",
+                    query_type=query_info.get("query_type", "METHOD"),
+                    query_content=query_info.get("query_content", ""),
+                    return_type=method.get("return_type", ""),
+                    parameters=method.get("parameters", []),
+                    repository_name=repository.name,
+                    method_name=method["name"],
+                    annotations=method.get("annotations", []),
+                    description="",
+                    ai_description=""
+                )
+                queries.append(query)
+    
+    return queries
+
+
+def analyze_jpa_entity_table_mapping(jpa_entities: list[JpaEntity], db_tables: list[Table]) -> dict:
+    """Analyze mapping relationships between JPA entities and database tables.
+    
+    Args:
+        jpa_entities: List of JPA entities
+        db_tables: List of database tables
+        
+    Returns:
+        Dictionary containing mapping analysis results
+    """
+    mapping_analysis = {
+        "entity_table_mappings": [],
+        "unmapped_entities": [],
+        "unmapped_tables": [],
+        "mapping_issues": [],
+        "relationship_analysis": []
+    }
+    
+    # Create table name lookup
+    table_lookup = {table.name.lower(): table for table in db_tables}
+    
+    for entity in jpa_entities:
+        entity_table_name = entity.table_name.lower()
+        
+        if entity_table_name in table_lookup:
+            table = table_lookup[entity_table_name]
+            
+            # Analyze column mappings
+            column_mappings = _analyze_column_mappings(entity, table)
+            
+            mapping_analysis["entity_table_mappings"].append({
+                "entity_name": entity.name,
+                "table_name": entity.table_name,
+                "column_mappings": column_mappings,
+                "mapping_accuracy": _calculate_mapping_accuracy(column_mappings),
+                "issues": _identify_mapping_issues(entity, table, column_mappings)
+            })
+        else:
+            mapping_analysis["unmapped_entities"].append({
+                "entity_name": entity.name,
+                "expected_table": entity.table_name,
+                "reason": "Table not found in database schema"
+            })
+    
+    # Find unmapped tables
+    mapped_table_names = {mapping["table_name"].lower() for mapping in mapping_analysis["entity_table_mappings"]}
+    for table in db_tables:
+        if table.name.lower() not in mapped_table_names:
+            mapping_analysis["unmapped_tables"].append({
+                "table_name": table.name,
+                "reason": "No corresponding JPA entity found"
+            })
+    
+    # Analyze entity relationships
+    mapping_analysis["relationship_analysis"] = _analyze_entity_relationships(jpa_entities)
+    
+    return mapping_analysis
+
+
+def _analyze_column_mappings(entity: JpaEntity, table: Table) -> list[dict]:
+    """Analyze column mappings between entity and table."""
+    column_mappings = []
+    
+    # Create column lookup for the table
+    table_columns = {col.name.lower(): col for col in table.columns}
+    
+    for column_info in entity.columns:
+        column_name = column_info["column_name"].lower()
+        
+        if column_name in table_columns:
+            db_column = table_columns[column_name]
+            
+            mapping = {
+                "entity_property": column_info["property_name"],
+                "entity_column": column_info["column_name"],
+                "db_column": db_column.name,
+                "data_type_match": _compare_data_types(column_info["data_type"], db_column.data_type),
+                "nullable_match": column_info["nullable"] == db_column.nullable,
+                "unique_match": column_info["unique"] == db_column.unique,
+                "is_primary_key": column_info.get("is_primary_key", False) == db_column.primary_key,
+                "mapping_quality": "good" if _is_good_mapping(column_info, db_column) else "needs_review"
+            }
+        else:
+            mapping = {
+                "entity_property": column_info["property_name"],
+                "entity_column": column_info["column_name"],
+                "db_column": None,
+                "data_type_match": False,
+                "nullable_match": False,
+                "unique_match": False,
+                "is_primary_key": False,
+                "mapping_quality": "missing"
+            }
+        
+        column_mappings.append(mapping)
+    
+    return column_mappings
+
+
+def _compare_data_types(entity_type: str, db_type: str) -> bool:
+    """Compare entity data type with database column type."""
+    # Simplified type comparison
+    type_mapping = {
+        "String": ["varchar", "char", "text", "clob"],
+        "Integer": ["int", "integer", "number"],
+        "Long": ["bigint", "number"],
+        "Double": ["double", "float", "number"],
+        "Boolean": ["boolean", "bit"],
+        "Date": ["date", "timestamp", "datetime"],
+        "LocalDateTime": ["timestamp", "datetime"],
+        "BigDecimal": ["decimal", "numeric", "number"]
+    }
+    
+    entity_type_simple = entity_type.split('.')[-1]  # Get simple class name
+    
+    if entity_type_simple in type_mapping:
+        db_type_lower = db_type.lower()
+        return any(db_type_lower.startswith(mapped_type) for mapped_type in type_mapping[entity_type_simple])
+    
+    return False
+
+
+def _is_good_mapping(column_info: dict, db_column: Table) -> bool:
+    """Check if the mapping between entity column and DB column is good."""
+    return (
+        _compare_data_types(column_info["data_type"], db_column.data_type) and
+        column_info["nullable"] == db_column.nullable and
+        column_info["unique"] == db_column.unique and
+        column_info.get("is_primary_key", False) == db_column.primary_key
+    )
+
+
+def _calculate_mapping_accuracy(column_mappings: list[dict]) -> float:
+    """Calculate mapping accuracy percentage."""
+    if not column_mappings:
+        return 0.0
+    
+    good_mappings = sum(1 for mapping in column_mappings if mapping["mapping_quality"] == "good")
+    return (good_mappings / len(column_mappings)) * 100
+
+
+def _identify_mapping_issues(entity: JpaEntity, table: Table, column_mappings: list[dict]) -> list[str]:
+    """Identify mapping issues between entity and table."""
+    issues = []
+    
+    for mapping in column_mappings:
+        if mapping["mapping_quality"] == "missing":
+            issues.append(f"Column '{mapping['entity_column']}' not found in table '{table.name}'")
+        elif mapping["mapping_quality"] == "needs_review":
+            if not mapping["data_type_match"]:
+                issues.append(f"Data type mismatch for column '{mapping['entity_column']}'")
+            if not mapping["nullable_match"]:
+                issues.append(f"Nullable constraint mismatch for column '{mapping['entity_column']}'")
+            if not mapping["unique_match"]:
+                issues.append(f"Unique constraint mismatch for column '{mapping['entity_column']}'")
+    
+    return issues
+
+
+def _analyze_entity_relationships(jpa_entities: list[JpaEntity]) -> list[dict]:
+    """Analyze relationships between JPA entities."""
+    relationship_analysis = []
+    
+    for entity in jpa_entities:
+        for relationship in entity.relationships:
+            analysis = {
+                "source_entity": entity.name,
+                "target_entity": relationship.get("target_entity", ""),
+                "relationship_type": relationship.get("type", ""),
+                "mapped_by": relationship.get("mapped_by", ""),
+                "join_column": relationship.get("join_column", ""),
+                "cascade": relationship.get("cascade", []),
+                "fetch_type": relationship.get("fetch", "LAZY"),
+                "is_bidirectional": bool(relationship.get("mapped_by", "")),
+                "relationship_quality": _assess_relationship_quality(relationship)
+            }
+            relationship_analysis.append(analysis)
+    
+    return relationship_analysis
+
+
+def _assess_relationship_quality(relationship: dict) -> str:
+    """Assess the quality of a JPA relationship."""
+    issues = []
+    
+    if not relationship.get("target_entity"):
+        issues.append("Missing target entity")
+    
+    if relationship.get("type") in ["OneToMany", "ManyToMany"] and not relationship.get("mapped_by"):
+        issues.append("Missing mappedBy for collection relationship")
+    
+    if relationship.get("type") in ["OneToOne", "ManyToOne"] and not relationship.get("join_column"):
+        issues.append("Missing join column for single relationship")
+    
+    if not issues:
+        return "good"
+    elif len(issues) == 1:
+        return "needs_review"
+    else:
+        return "needs_attention"
 
 
 def parse_yaml_config(file_path: str) -> ConfigFile:
@@ -894,7 +1812,9 @@ def parse_yaml_config(file_path: str) -> ConfigFile:
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            content = yaml.safe_load(f)
+            # 여러 YAML 문서가 있는 경우 처리
+            documents = list(yaml.safe_load_all(f))
+            content = documents[0] if documents else {}
         
         if not content:
             content = {}
@@ -1620,7 +2540,12 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
     
     try:
         tree = javalang.parse.parse(file_content)
+        print(f"DEBUG: Successfully parsed file: {file_path}")
+        logger.info(f"Successfully parsed file: {file_path}")
+        
         package_name = tree.package.name if tree.package else ""
+        print(f"DEBUG: Parsed package name: {package_name}")
+        logger.info(f"Parsed package name: {package_name}")
         
         # Create package node
         if package_name:
@@ -1635,93 +2560,120 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
             class_name = imp.path.split('.')[-1]
             import_map[class_name] = imp.path
 
-        for _, class_declaration in tree.filter(javalang.tree.ClassDeclaration):
-            class_name = class_declaration.name
-            class_key = f"{package_name}.{class_name}"
+        # 첫 번째 로직 - 주석 처리 (두 번째 로직 사용)
+        # print(f"DEBUG: Searching for class/interface declarations in {file_path}")
+        # logger.info(f"Searching for class/interface declarations in {file_path}")
+        # class_declarations = list(tree.filter(lambda node: isinstance(node, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration))))
+        # print(f"DEBUG: Found {len(class_declarations)} class/interface declarations in {file_path}")
+        # logger.info(f"Found {len(class_declarations)} class/interface declarations in {file_path}")
+        
+        # 첫 번째 로직 - 주석 처리 (두 번째 로직 사용)
+        # all_nodes = list(tree.filter(lambda node: True))
+        # print(f"DEBUG: Total nodes in AST: {len(all_nodes)}")
+        # logger.info(f"Total nodes in AST: {len(all_nodes)}")
+        # 
+        # node_types = {}
+        # for node in all_nodes:
+        #     node_type = type(node).__name__
+        #     node_types[node_type] = node_types.get(node_type, 0) + 1
+        # 
+        # print(f"DEBUG: Node types found: {dict(list(node_types.items())[:10])}")
+        # logger.info(f"Node types found: {dict(list(node_types.items())[:10])}")
+        
+        # 첫 번째 로직 - 주석 처리 (두 번째 로직 사용)
+        # for i, (_, class_declaration) in enumerate(class_declarations):
+        # class_name = class_declaration.name
+        # class_key = f"{package_name}.{class_name}"
+        # class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
+        # logger.info(f"  Processing class {i+1}: {class_name} (type: {class_type})")
             
-            # Extract class source code
-            class_source = file_content
-
-            # Parse class annotations
-            class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
+        # # Extract class source code
+        # class_source = file_content
+        # 
+        # # Parse class annotations
+        # class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
             
-            class_node = Class(
-                name=class_name,
-                logical_name=class_key,
-                file_path=file_path,
-                type="class",
-                source=class_source,
-                annotations=class_annotations,
-                package_name=package_name,
-                description="",
-                ai_description=""
-            )
+        # # 클래스 타입 결정 (클래스 vs 인터페이스)
+        # class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
             
-            # Add imports
-            for imp in tree.imports:
-                class_node.imports.append(imp.path)
+        # class_node = Class(
+        #     name=class_name,
+        #     logical_name=class_key,
+        #     file_path=file_path,
+        #     type=class_type,  # 인터페이스인 경우 "interface"로 설정
+        #     source=class_source,
+        #     annotations=class_annotations,
+        #     package_name=package_name,
+        #     project_name=project_name,  # project_name 추가
+        #     description="",
+        #     ai_description=""
+        # )
+        # 
+        # # Add imports
+        # for imp in tree.imports:
+        #     class_node.imports.append(imp.path)
+        # 
+        # # Handle inheritance
+        # if class_declaration.extends:
+        #     superclass_name = class_declaration.extends.name
+        #     if superclass_name in import_map:
+        #         class_node.superclass = import_map[superclass_name]
+        #     else:
+        #         class_node.superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
+        # 
+        # if class_declaration.implements:
+        #     for impl_ref in class_declaration.implements:
+        #         interface_name = impl_ref.name
+        #         if interface_name in import_map:
+        #             class_node.interfaces.append(import_map[interface_name])
+        #         else:
+        #             class_node.interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
+        # 
+        # # Parse fields
+        # field_map = {}
+        # for field_declaration in class_declaration.fields:
+        #         for declarator in field_declaration.declarators:
+        #             field_map[declarator.name] = field_declaration.type.name
+        #             
+        #             # Parse field annotations
+        #             field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
+        #             
+        #             # Extract initial value if present
+        #             initial_value = ""
+        #             if hasattr(declarator, 'initializer') and declarator.initializer:
+        #                 if hasattr(declarator.initializer, 'value'):
+        #                     initial_value = str(declarator.initializer.value)
+        #                 elif hasattr(declarator.initializer, 'type'):
+        #                     initial_value = str(declarator.initializer.type)
+        #                 else:
+        #                     initial_value = str(declarator.initializer)
+        #             
+        #             prop = Field(
+        #                 name=declarator.name,
+        #                 logical_name=f"{package_name}.{class_name}.{declarator.name}",
+        #                 type=field_declaration.type.name,
+        #                 modifiers=list(field_declaration.modifiers),
+        #                 package_name=package_name,
+        #                 class_name=class_name,
+        #                 annotations=field_annotations,
+        #                 initial_value=initial_value,
+        #                 description="",
+        #                 ai_description=""
+        #             )
+        #             class_node.properties.append(prop)
 
-            # Handle inheritance
-            if class_declaration.extends:
-                superclass_name = class_declaration.extends.name
-                if superclass_name in import_map:
-                    class_node.superclass = import_map[superclass_name]
-                else:
-                    class_node.superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
-
-            if class_declaration.implements:
-                for impl_ref in class_declaration.implements:
-                    interface_name = impl_ref.name
-                    if interface_name in import_map:
-                        class_node.interfaces.append(import_map[interface_name])
-                    else:
-                        class_node.interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
-
-            # Parse fields
-            field_map = {}
-            for field_declaration in class_declaration.fields:
-                for declarator in field_declaration.declarators:
-                    field_map[declarator.name] = field_declaration.type.name
-                    
-                    # Parse field annotations
-                    field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
-                    
-                    # Extract initial value if present
-                    initial_value = ""
-                    if hasattr(declarator, 'initializer') and declarator.initializer:
-                        if hasattr(declarator.initializer, 'value'):
-                            initial_value = str(declarator.initializer.value)
-                        elif hasattr(declarator.initializer, 'type'):
-                            initial_value = str(declarator.initializer.type)
-                        else:
-                            initial_value = str(declarator.initializer)
-                    
-                    prop = Field(
-                        name=declarator.name,
-                        logical_name=f"{package_name}.{class_name}.{declarator.name}",
-                        type=field_declaration.type.name,
-                        modifiers=list(field_declaration.modifiers),
-                        package_name=package_name,
-                        class_name=class_name,
-                        annotations=field_annotations,
-                        initial_value=initial_value,
-                        description="",
-                        ai_description=""
-                    )
-                    class_node.properties.append(prop)
-
-            # Parse methods and constructors
-            all_declarations = class_declaration.methods + class_declaration.constructors
-            
-            for declaration in all_declarations:
-                local_var_map = field_map.copy()
-                params = []
-                for param in declaration.parameters:
-                    param_type_name = 'Unknown'
-                    if hasattr(param.type, 'name'):
-                        param_type_name = param.type.name
-                    local_var_map[param.name] = param_type_name
-                    params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
+        # # Parse methods and constructors
+        # all_declarations = class_declaration.methods + class_declaration.constructors
+        #     
+        #     for declaration in all_declarations:
+        #         local_var_map = field_map.copy()
+        #         params = []
+        #         for param in declaration.parameters:
+        #             param_type_name = 'Unknown'
+        #             if hasattr(param.type, 'name'):
+        #                 param_type_name = param.type.name
+        #             local_var_map[param.name] = param_type_name
+        #             params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
 
                 if declaration.body:
                     for _, var_decl in declaration.filter(javalang.tree.LocalVariableDeclaration):
@@ -1796,10 +2748,53 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
                                 resolved_target_package = "java.io"
                                 resolved_target_class_name = "PrintStream"
                             else:
-                                if target_class_name in import_map:
-                                    resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                # Check if target_class_name is a field type (from local_var_map)
+                                if invocation.qualifier in local_var_map:
+                                    # This is a field call, use the field type directly
+                                    resolved_target_class_name = target_class_name
+                                    # Try to find the package for this class
+                                    if target_class_name in import_map:
+                                        resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                    else:
+                                        # If not in import_map, try to find the class in the current project
+                                        # This is important for field calls like userService.getUserList()
+                                        # where userService is of type UserService
+                                        resolved_target_package = package_name
+                                        
+                                        # Try to find a more specific package by looking at common patterns
+                                        # For example, if we're in com.carcare.domain.user.controller
+                                        # and looking for UserService, it might be in com.carcare.domain.user.service
+                                        if package_name and 'controller' in package_name:
+                                            # Try service package
+                                            service_package = package_name.replace('controller', 'service')
+                                            resolved_target_package = service_package
+                                            logger.debug(f"Trying service package for {target_class_name}: {service_package}")
+                                        
+                                        # Additional pattern matching for common Spring Boot patterns
+                                        elif package_name and 'domain' in package_name:
+                                            # Try to find service in the same domain
+                                            domain_parts = package_name.split('.')
+                                            if len(domain_parts) >= 3:  # com.carcare.domain.user.controller
+                                                domain_base = '.'.join(domain_parts[:3])  # com.carcare.domain
+                                                service_package = f"{domain_base}.{domain_parts[2]}.service"  # com.carcare.domain.user.service
+                                                resolved_target_package = service_package
+                                                logger.debug(f"Trying domain service package for {target_class_name}: {service_package}")
+                                    
+                                    # Debug logging for field calls
+                                    logger.debug(f"Field call: {invocation.qualifier}.{invocation.member} -> {resolved_target_package}.{resolved_target_class_name}")
+                                    
+                                    # Try to resolve generic types and interfaces
+                                    if '<' in target_class_name:
+                                        # Extract base type from generic (e.g., List<User> -> List)
+                                        base_type = target_class_name.split('<')[0]
+                                        resolved_target_class_name = base_type
+                                        logger.debug(f"Resolved generic type: {target_class_name} -> {base_type}")
                                 else:
-                                    resolved_target_package = package_name
+                                    # This is a direct class reference
+                                    if target_class_name in import_map:
+                                        resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                    else:
+                                        resolved_target_package = package_name
                                     resolved_target_class_name = target_class_name
                     else:
                         # Same class method call
@@ -1807,6 +2802,11 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
                         resolved_target_class_name = class_name
 
                     if resolved_target_class_name:
+                        # Skip Stream API methods and other unnecessary calls
+                        method_name = invocation.member
+                        if method_name in {'collect', 'map', 'filter', 'forEach', 'stream', 'reduce', 'findFirst', 'findAny', 'anyMatch', 'allMatch', 'noneMatch', 'count', 'distinct', 'sorted', 'limit', 'skip', 'peek', 'flatMap', 'toArray'}:
+                            continue
+                            
                         # Get line number from invocation position
                         line_number = invocation.position.line if invocation.position else 0
 
@@ -1842,7 +2842,7 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
         raise
 
 
-def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
+def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[JpaRepository], list[JpaQuery], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
     """Parse Java project and return parsed entities."""
     logger = get_logger(__name__)
     """Parses all Java files in a directory and returns a tuple of (packages, classes, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name)."""
@@ -1852,16 +2852,33 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
     packages = {}
     classes = {}
     class_to_package_map = {}  # Maps class_key to package_name
+    
+    logger = get_logger(__name__)
+    logger.info(f"Starting Java project analysis in: {directory}")
+    logger.info(f"Project name: {project_name}")
 
+    java_file_count = 0
+    processed_file_count = 0
+    
     for root, _, files in os.walk(directory):
         for file in files:
             if file.endswith(".java"):
+                java_file_count += 1
                 file_path = os.path.join(root, file)
+                logger.debug(f"Processing Java file {java_file_count}: {file_path}")
+                
                 with open(file_path, 'r', encoding='utf-8') as f:
                     file_content = f.read() # Read file content once
+                
+                # HTML이 포함된 Java 파일 건너뛰기
+                if '<html' in file_content.lower() or '<body' in file_content.lower() or '<div' in file_content.lower():
+                    logger.warning(f"Skipping file with HTML content: {file_path}")
+                    continue
+                
                 try:
                     tree = javalang.parse.parse(file_content)
                     package_name = tree.package.name if tree.package else ""
+                    logger.debug(f"Parsed file: {file_path}, package: {package_name}")
                     
                     # Create or update package node
                     if package_name and package_name not in packages:
@@ -1881,11 +2898,21 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                         class_name = imp.path.split('.')[-1]
                         import_map[class_name] = imp.path
 
-                    for _, class_declaration in tree.filter(
-                        javalang.tree.ClassDeclaration
-                    ):
+                    # 클래스와 인터페이스 모두 처리
+                    print(f"DEBUG: Searching for class/interface declarations in {file_path}")
+                    # tree.filter가 작동하지 않으므로 tree.types를 직접 사용
+                    class_declarations = []
+                    for type_decl in tree.types:
+                        if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
+                            class_declarations.append((None, type_decl))  # (path, declaration) 형태로 맞춤
+                    print(f"DEBUG: Found {len(class_declarations)} class/interface declarations in {file_path}")
+                    logger.debug(f"Found {len(class_declarations)} class/interface declarations in {file_path}")
+                    
+                    for _, class_declaration in class_declarations:
                         class_name = class_declaration.name
                         class_key = f"{package_name}.{class_name}"
+                        print(f"DEBUG: Processing class/interface: {class_name} (type: {type(class_declaration).__name__})")
+                        logger.debug(f"Processing class/interface: {class_name} (type: {type(class_declaration).__name__})")
                         
                         # Debug: Check if this is the User class
                         if "User" in class_name:
@@ -1898,21 +2925,33 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
 
 
                         if class_key not in classes:
+                            print(f"DEBUG: Creating new class: {class_name} (key: {class_key})")
                             # Parse class annotations
                             class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
+                            
+                            # 클래스 타입 결정 (클래스 vs 인터페이스)
+                            class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
+                            print(f"DEBUG: Class type: {class_type}")
+                            
+                            logger.debug(f"Creating class node: {class_name} (type: {class_type})")
                             
                             classes[class_key] = Class(
                                 name=class_name,
                                 logical_name=class_key,  # Add logical_name
                                 file_path=file_path,
-                                type="class", # Simplified for now
+                                type=class_type,  # 인터페이스인 경우 "interface"로 설정
                                 source=class_source, # Add class source
                                 annotations=class_annotations,
                                 package_name=package_name,
+                                project_name=project_name,  # project_name 추가
                                 description="",  # TODO: Extract description from comments or annotations
                                 ai_description=""  # TODO: Generate AI description using LLM
                             )
                             class_to_package_map[class_key] = package_name
+                            print(f"DEBUG: Successfully added class to classes dict: {class_name} (key: {class_key})")
+                            logger.info(f"  Successfully added class to classes dict: {class_name} (key: {class_key})")
+                        else:
+                            logger.debug(f"Class {class_name} already exists, skipping")
                         
                         # --- Start of new import logic ---
                         for imp in tree.imports:
@@ -1930,8 +2969,8 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 # Assume same package or fully qualified if not in import_map
                                 classes[class_key].superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
 
-                        # Handle 'implements'
-                        if class_declaration.implements: # Add this check
+                        # Handle 'implements' (only for classes, not interfaces)
+                        if hasattr(class_declaration, 'implements') and class_declaration.implements:
                             for impl_ref in class_declaration.implements:
                                 interface_name = impl_ref.name
                                 # Try to resolve fully qualified name for interface
@@ -2066,10 +3105,53 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                             resolved_target_package = "java.io"
                                             resolved_target_class_name = "PrintStream"
                                         else:
-                                            if target_class_name in import_map:
-                                                resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                            # Check if target_class_name is a field type (from local_var_map)
+                                            if invocation.qualifier in local_var_map:
+                                                # This is a field call, use the field type directly
+                                                resolved_target_class_name = target_class_name
+                                                # Try to find the package for this class
+                                                if target_class_name in import_map:
+                                                    resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                                else:
+                                                    # If not in import_map, try to find the class in the current project
+                                                    # This is important for field calls like userService.getUserList()
+                                                    # where userService is of type UserService
+                                                    resolved_target_package = package_name
+                                                    
+                                                    # Try to find a more specific package by looking at common patterns
+                                                    # For example, if we're in com.carcare.domain.user.controller
+                                                    # and looking for UserService, it might be in com.carcare.domain.user.service
+                                                    if package_name and 'controller' in package_name:
+                                                        # Try service package
+                                                        service_package = package_name.replace('controller', 'service')
+                                                        resolved_target_package = service_package
+                                                        logger.debug(f"Trying service package for {target_class_name}: {service_package}")
+                                                    
+                                                    # Additional pattern matching for common Spring Boot patterns
+                                                    elif package_name and 'domain' in package_name:
+                                                        # Try to find service in the same domain
+                                                        domain_parts = package_name.split('.')
+                                                        if len(domain_parts) >= 3:  # com.carcare.domain.user.controller
+                                                            domain_base = '.'.join(domain_parts[:3])  # com.carcare.domain
+                                                            service_package = f"{domain_base}.{domain_parts[2]}.service"  # com.carcare.domain.user.service
+                                                            resolved_target_package = service_package
+                                                            logger.debug(f"Trying domain service package for {target_class_name}: {service_package}")
+                                                
+                                                # Debug logging for field calls
+                                                logger.debug(f"Field call: {invocation.qualifier}.{invocation.member} -> {resolved_target_package}.{resolved_target_class_name}")
+                                                
+                                                # Try to resolve generic types and interfaces
+                                                if '<' in target_class_name:
+                                                    # Extract base type from generic (e.g., List<User> -> List)
+                                                    base_type = target_class_name.split('<')[0]
+                                                    resolved_target_class_name = base_type
+                                                    logger.debug(f"Resolved generic type: {target_class_name} -> {base_type}")
                                             else:
-                                                resolved_target_package = package_name
+                                                # This is a direct class reference
+                                                if target_class_name in import_map:
+                                                    resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                                else:
+                                                    resolved_target_package = package_name
                                                 resolved_target_class_name = target_class_name
                                 else:
                                     # Same class method call
@@ -2077,6 +3159,11 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                     resolved_target_class_name = class_name
 
                                 if resolved_target_class_name:
+                                    # Skip Stream API methods and other unnecessary calls
+                                    method_name = invocation.member
+                                    if method_name in {'collect', 'map', 'filter', 'forEach', 'stream', 'reduce', 'findFirst', 'findAny', 'anyMatch', 'allMatch', 'noneMatch', 'count', 'distinct', 'sorted', 'limit', 'skip', 'peek', 'flatMap', 'toArray'}:
+                                        continue
+                                        
                                     # Get line number from invocation position
                                     line_number = invocation.position.line if invocation.position else 0
 
@@ -2101,20 +3188,30 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             lombok_methods = generate_lombok_methods(classes[class_key].properties, class_name, package_name)
                             classes[class_key].methods.extend(lombok_methods)
                             logger.debug(f"Generated {len(lombok_methods)} Lombok methods for {class_name}")
+                    
+                    # 파일 처리 성공
+                    processed_file_count += 1
+                    logger.debug(f"Successfully processed file: {file_path}")
+                    
                 except javalang.parser.JavaSyntaxError as e:
-                    print(f"Syntax error in {file_path}: {e}")
+                    logger.warning(f"Syntax error in {file_path}: {e}")
+                    logger.warning(f"Skipping file due to syntax error")
                     continue
                 except Exception as e:
-                    print(f"Error parsing {file_path}: {e}")
+                    logger.warning(f"Error parsing {file_path}: {e}")
+                    logger.warning(f"Exception type: {type(e).__name__}")
+                    logger.warning(f"Skipping file due to parsing error")
                     continue
     
-    # Extract beans, analyze dependencies, extract endpoints, extract MyBatis mappers, extract JPA entities, extract config files, and extract test classes
+    # Extract beans, analyze dependencies, extract endpoints, extract MyBatis mappers, extract JPA entities, extract JPA repositories, extract config files, and extract test classes
     classes_list = list(classes.values())
     beans = extract_beans_from_classes(classes_list)
     dependencies = analyze_bean_dependencies(classes_list, beans)
     endpoints = extract_endpoints_from_classes(classes_list)
     mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
     jpa_entities = extract_jpa_entities_from_classes(classes_list)
+    jpa_repositories = extract_jpa_repositories_from_classes(classes_list)
+    jpa_queries = extract_jpa_queries_from_repositories(jpa_repositories)
     config_files = extract_config_files(directory)
     test_classes = extract_test_classes_from_classes(classes_list)
     
@@ -2125,4 +3222,16 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
     # Extract SQL statements from MyBatis mappers
     sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
     
-    return list(packages.values()), classes_list, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name
+    # MyBatis SQL 매핑 분석 기능 강화
+    resultmap_mapping_analysis = analyze_mybatis_resultmap_mapping(mybatis_mappers, sql_statements)
+    sql_method_relationships = analyze_sql_method_relationships(sql_statements, classes_list)
+    db_call_chain_analysis = generate_db_call_chain_analysis(sql_statements, classes_list)
+    
+    # 요약 로그
+    logger.info(f"Java project analysis complete:")
+    logger.info(f"  - Java files processed: {processed_file_count}/{java_file_count}")
+    logger.info(f"  - Packages found: {len(packages)}")
+    logger.info(f"  - Classes found: {len(classes)}")
+    logger.info(f"  - Classes list length: {len(classes_list)}")
+    
+    return list(packages.values()), classes_list, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, jpa_repositories, jpa_queries, config_files, test_classes, sql_statements, project_name

@@ -10,6 +10,7 @@ from src.services.java_parser import parse_java_project
 from src.services.graph_db import GraphDB
 from src.services.sequence_diagram_generator import SequenceDiagramGenerator
 from src.services.db_parser import DBParser
+from src.services.db_call_analysis import DBCallAnalysisService
 from neo4j import GraphDatabase
 import subprocess
 import tempfile
@@ -148,7 +149,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
         try:
             # Parse Java project
             click.echo(f"Parsing Java project at: {java_source_folder}")
-            packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
+            packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, jpa_repositories, jpa_queries, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
             
             click.echo(f"Project name: {project_name}")
             click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
@@ -160,6 +161,8 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 click.echo(f"Found {len(endpoints)} REST API endpoints.")
                 click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
                 click.echo(f"Found {len(jpa_entities)} JPA entities.")
+                click.echo(f"Found {len(jpa_repositories)} JPA repositories.")
+                click.echo(f"Found {len(jpa_queries)} JPA queries.")
                 click.echo(f"Found {len(config_files)} configuration files.")
                 click.echo(f"Found {len(test_classes)} test classes.")
                 click.echo(f"Found {len(sql_statements)} SQL statements.")
@@ -193,19 +196,25 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             
             # Add classes
             click.echo("Adding classes to database...")
-            for class_node in classes_to_add:
-                # Find the package for this class using the mapping
-                class_key = f"{class_to_package_map.get(class_node.name, '')}.{class_node.name}"
-                package_name = class_to_package_map.get(class_key, None)
-                
-                if not package_name:
-                    # Fallback: try to find package by class name
-                    for key, pkg_name in class_to_package_map.items():
-                        if key.endswith(f".{class_node.name}"):
-                            package_name = pkg_name
-                            break
-                
-                db.add_class(class_node, package_name, project_name)
+            click.echo(f"Total classes to add: {len(classes_to_add)}")
+            
+            for i, class_node in enumerate(classes_to_add):
+                try:
+                    # Find the package for this class using the mapping
+                    # class_to_package_map의 키는 "package_name.class_name" 형식
+                    class_key = f"{class_node.package_name}.{class_node.name}"
+                    package_name = class_to_package_map.get(class_key, class_node.package_name)
+                    
+                    if not package_name:
+                        # Fallback: use the package_name from the class node itself
+                        package_name = class_node.package_name
+                    
+                    click.echo(f"Adding class {i+1}/{len(classes_to_add)}: {class_node.name} (package: {package_name})")
+                    db.add_class(class_node, package_name, project_name)
+                    
+                except Exception as e:
+                    click.echo(f"Error adding class {class_node.name}: {e}")
+                    continue
             
             # Add Spring Boot analysis results
             if beans:
@@ -232,6 +241,16 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
                 for entity in jpa_entities:
                     db.add_jpa_entity(entity, project_name)
+            
+            if jpa_repositories:
+                click.echo(f"Adding {len(jpa_repositories)} JPA repositories to database...")
+                for repository in jpa_repositories:
+                    db.add_jpa_repository(repository, project_name)
+            
+            if jpa_queries:
+                click.echo(f"Adding {len(jpa_queries)} JPA queries to database...")
+                for query in jpa_queries:
+                    db.add_jpa_query(query, project_name)
             
             if config_files:
                 click.echo(f"Adding {len(config_files)} configuration files to database...")
@@ -587,7 +606,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
     # Original full project analysis (when no specific object type is specified)
     if not java_object and not db_object:
         click.echo(f"Parsing Java project at: {java_source_folder}")
-        packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
+        packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, jpa_repositories, jpa_queries, config_files, test_classes, sql_statements, project_name = parse_java_project(java_source_folder)
     
         click.echo(f"Project name: {project_name}")
         
@@ -600,6 +619,8 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             click.echo(f"Found {len(endpoints)} REST API endpoints.")
             click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
             click.echo(f"Found {len(jpa_entities)} JPA entities.")
+            click.echo(f"Found {len(jpa_repositories)} JPA repositories.")
+            click.echo(f"Found {len(jpa_queries)} JPA queries.")
             click.echo(f"Found {len(config_files)} configuration files.")
             click.echo(f"Found {len(test_classes)} test classes.")
             click.echo(f"Found {len(sql_statements)} SQL statements.")
@@ -662,12 +683,22 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 click.echo(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
                 for mapper in mybatis_mappers:
                     db.add_mybatis_mapper(mapper, project_name)
-        
+            
             if jpa_entities:
                 click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
                 for entity in jpa_entities:
                     db.add_jpa_entity(entity, project_name)
-        
+            
+            if jpa_repositories:
+                click.echo(f"Adding {len(jpa_repositories)} JPA repositories to database...")
+                for repository in jpa_repositories:
+                    db.add_jpa_repository(repository, project_name)
+            
+            if jpa_queries:
+                click.echo(f"Adding {len(jpa_queries)} JPA queries to database...")
+                for query in jpa_queries:
+                    db.add_jpa_query(query, project_name)
+            
             if config_files:
                 click.echo(f"Adding {len(config_files)} configuration files to database...")
                 for config_file in config_files:
@@ -828,12 +859,13 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
 @click.option('--max-depth', default=3, help='Maximum depth of call chain to follow (default: 3)')
 @click.option('--include-external', is_flag=True, help='Include calls to external libraries')
 @click.option('--method-focused', is_flag=True, help='Generate method-focused diagram (shows only the specified method and its direct calls)')
+@click.option('--project-name', help='Project name for database analysis (optional, will auto-detect if not provided)')
 @click.option('--output-file', help='Output file to save the diagram (optional)')
 @click.option('--output-image', help='Output image file (PNG/SVG/PDF) - requires mermaid-cli')
 @click.option('--image-format', default='png', type=click.Choice(['png', 'svg', 'pdf']), help='Image format (default: png)')
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
-def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, method_focused, output_file, output_image, image_format, image_width, image_height):
+def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, method_focused, project_name, output_file, output_image, image_format, image_width, image_height):
     """Generate sequence diagram for a specific class and optionally a method."""
     
     try:
@@ -853,13 +885,26 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
             click.echo(f"Focusing on method: {method_name}")
         if method_focused:
             click.echo("Method-focused mode: showing only direct calls from the specified method")
+        if project_name:
+            click.echo(f"Using project: {project_name}")
+        else:
+            click.echo("Auto-detecting project name...")
+        
+        # Determine output path for sequence diagram files
+        output_path = None
+        if output_image:
+            output_path = output_image
+        elif output_file:
+            output_path = output_file
         
         diagram = generator.generate_sequence_diagram(
             class_name=class_name,
             method_name=method_name,
             max_depth=max_depth if not method_focused else 1,  # Method-focused uses depth 1
             include_external_calls=include_external,
-            method_focused=method_focused
+            method_focused=method_focused,
+            project_name=project_name,
+            output_path=output_path
         )
         
         click.echo(f"Diagram generated (length: {len(diagram)})")
@@ -875,8 +920,14 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
                 f.write(diagram)
             click.echo(f"Sequence diagram saved to: {output_file}")
         else:
-            # Default: save to {class_name}.md
-            default_filename = f"{class_name}.md"
+            # Default: save to {class_name}.md in the same directory as output_path
+            if output_path:
+                output_dir = os.path.dirname(output_path)
+                os.makedirs(output_dir, exist_ok=True)
+                default_filename = os.path.join(output_dir, f"{class_name}.md")
+            else:
+                default_filename = f"{class_name}.md"
+            
             with open(default_filename, 'w', encoding='utf-8') as f:
                 f.write(diagram)
             click.echo(f"Sequence diagram saved to: {default_filename}")
@@ -928,7 +979,9 @@ def list_classes(neo4j_uri, neo4j_user):
         click.echo("-" * 80)
         
         for cls in classes:
-            click.echo(f"{cls['name']:<30} {cls['package_name']:<30} {cls['type']:<10}")
+            package_name = cls.get('package_name') or 'N/A'
+            class_type = cls.get('type') or 'N/A'
+            click.echo(f"{cls['name']:<30} {package_name:<30} {class_type:<10}")
         
         click.echo(f"\nTotal: {len(classes)} classes found.")
         
@@ -1026,6 +1079,75 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name):
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--project-name', help='Project name to filter by (optional)')
+def db_analysis(neo4j_uri, neo4j_user, project_name):
+    """Show database call relationship analysis."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        db = GraphDB(neo4j_uri, neo4j_user, neo4j_password)
+        
+        click.echo("Database Call Relationship Analysis")
+        click.echo("=" * 80)
+        
+        # SQL 문 통계
+        sql_stats = db.get_sql_statistics(project_name)
+        if sql_stats:
+            click.echo(f"\nSQL Statistics:")
+            click.echo(f"  Total SQL statements: {sql_stats['total_sql']}")
+            click.echo(f"  SELECT statements: {sql_stats.get('SELECT', 0)}")
+            click.echo(f"  INSERT statements: {sql_stats.get('INSERT', 0)}")
+            click.echo(f"  UPDATE statements: {sql_stats.get('UPDATE', 0)}")
+            click.echo(f"  DELETE statements: {sql_stats.get('DELETE', 0)}")
+        
+        # 테이블 사용 통계
+        table_stats = db.get_table_usage_statistics(project_name)
+        if table_stats:
+            click.echo(f"\nTable Usage Statistics:")
+            click.echo(f"{'Table Name':<30} {'Access Count':<15} {'Operations':<20}")
+            click.echo("-" * 65)
+            for table in table_stats:
+                table_name = table['table_name']
+                access_count = table['access_count']
+                operations = ', '.join(table['operations'])
+                click.echo(f"{table_name:<30} {access_count:<15} {operations:<20}")
+        
+        # 복잡도 분석
+        complexity_stats = db.get_sql_complexity_statistics(project_name)
+        if complexity_stats:
+            click.echo(f"\nSQL Complexity Analysis:")
+            click.echo(f"  Simple queries: {complexity_stats.get('simple', 0)}")
+            click.echo(f"  Medium queries: {complexity_stats.get('medium', 0)}")
+            click.echo(f"  Complex queries: {complexity_stats.get('complex', 0)}")
+            click.echo(f"  Very complex queries: {complexity_stats.get('very_complex', 0)}")
+        
+        # 매퍼별 SQL 분포
+        mapper_stats = db.get_mapper_sql_distribution(project_name)
+        if mapper_stats:
+            click.echo(f"\nMapper SQL Distribution:")
+            click.echo(f"{'Mapper Name':<30} {'SQL Count':<15} {'SQL Types':<20}")
+            click.echo("-" * 65)
+            for mapper in mapper_stats:
+                mapper_name = mapper['mapper_name']
+                sql_count = mapper['sql_count']
+                sql_types = ', '.join(mapper['sql_types'])
+                click.echo(f"{mapper_name:<30} {sql_count:<15} {sql_types:<20}")
+        
+    except Exception as e:
+        click.echo(f"Error getting database analysis: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', help='Project name to filter by (optional)')
 def table_summary(neo4j_uri, neo4j_user, project_name):
     """Show CRUD summary for each table."""
     
@@ -1064,6 +1186,501 @@ def table_summary(neo4j_uri, neo4j_user, project_name):
         
     except Exception as e:
         click.echo(f"Error getting table summary: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', required=True, help='Project name to analyze')
+@click.option('--start-class', help='Starting class for call chain analysis (optional)')
+@click.option('--start-method', help='Starting method for call chain analysis (optional)')
+@click.option('--output-file', help='Output file to save the analysis results (optional)')
+def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method, output_file):
+    """Analyze database call chain relationships."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        analysis_service = DBCallAnalysisService(driver)
+        
+        click.echo("Database Call Chain Analysis")
+        click.echo("=" * 50)
+        
+        if start_class and start_method:
+            click.echo(f"Analyzing call chain from {start_class}.{start_method}")
+        elif start_class:
+            click.echo(f"Analyzing call chain from class {start_class}")
+        else:
+            click.echo(f"Analyzing call chain for project {project_name}")
+        
+        # 분석 실행
+        result = analysis_service.analyze_call_chain(project_name, start_class, start_method)
+        
+        if 'error' in result:
+            click.echo(f"Error: {result['error']}")
+            return
+        
+        # 결과 출력
+        call_chain = result['call_chain']
+        missing_nodes = result['missing_nodes']
+        summary = result['analysis_summary']
+        
+        click.echo(f"\nAnalysis Summary:")
+        click.echo(f"  Total calls: {summary['total_calls']}")
+        click.echo(f"  Unique classes: {summary['unique_classes']}")
+        click.echo(f"  Unique methods: {summary['unique_methods']}")
+        click.echo(f"  Unique SQL statements: {summary['unique_sql_statements']}")
+        click.echo(f"  Unique tables: {summary['unique_tables']}")
+        click.echo(f"  Unique columns: {summary['unique_columns']}")
+        click.echo(f"  Missing tables: {summary['missing_tables_count']}")
+        click.echo(f"  Missing columns: {summary['missing_columns_count']}")
+        
+        if missing_nodes['missing_tables']:
+            click.echo(f"\nMissing Tables (❌):")
+            for table in missing_nodes['missing_tables']:
+                click.echo(f"  - {table}")
+        
+        if missing_nodes['missing_columns']:
+            click.echo(f"\nMissing Columns (❌):")
+            for column in missing_nodes['missing_columns']:
+                click.echo(f"  - {column}")
+        
+        # 호출 체인 상세 정보
+        if call_chain:
+            click.echo(f"\nCall Chain Details:")
+            click.echo("-" * 80)
+            click.echo(f"{'Source':<25} {'Target':<25} {'SQL Type':<10} {'Table':<20}")
+            click.echo("-" * 80)
+            
+            for call in call_chain[:20]:  # 처음 20개만 표시
+                source = f"{call['source_class']}.{call['source_method']}" if call['source_method'] else call['source_class']
+                target = f"{call['target_class']}.{call['target_method']}" if call['target_method'] else call['target_class']
+                sql_type = call['sql_type'] or 'N/A'
+                table = call['table_name'] or 'N/A'
+                
+                click.echo(f"{source:<25} {target:<25} {sql_type:<10} {table:<20}")
+            
+            if len(call_chain) > 20:
+                click.echo(f"... and {len(call_chain) - 20} more calls")
+        
+        # 파일로 저장
+        if output_file:
+            import json
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            click.echo(f"\nAnalysis results saved to: {output_file}")
+        
+    except Exception as e:
+        click.echo(f"Error analyzing call chain: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', required=True, help='Project name to analyze')
+@click.option('--output-file', help='Output file to save the CRUD matrix (optional)')
+@click.option('--output-excel', help='Output Excel file to save the CRUD matrix (optional)')
+@click.option('--create-relationships', is_flag=True, help='Create Method-SqlStatement relationships before analysis')
+def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel, create_relationships):
+    """Generate CRUD matrix analysis."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        
+        # Method-SqlStatement 관계 생성 (옵션)
+        if create_relationships:
+            click.echo("Creating Method-SqlStatement relationships...")
+            graph_db = GraphDB(neo4j_uri, neo4j_user, neo4j_password)
+            relationships_created = graph_db.create_method_sql_relationships(project_name)
+            click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+        
+        analysis_service = DBCallAnalysisService(driver)
+        
+        click.echo("CRUD Matrix Analysis (SQL 호출 클래스만)")
+        click.echo("=" * 50)
+        
+        # CRUD 매트릭스 생성 (표 형태)
+        result = analysis_service.generate_crud_table_matrix(project_name)
+        
+        if 'error' in result:
+            click.echo(f"Error: {result['error']}")
+            return
+        
+        table_matrix = result['table_matrix']
+        class_names = result['class_names']
+        table_names = result['table_names']
+        summary = result['summary']
+        
+        click.echo(f"\nCRUD Summary:")
+        click.echo(f"  Total classes: {summary['total_classes']}")
+        click.echo(f"  Total tables: {summary['total_tables']}")
+        click.echo(f"  Create operations: {summary['crud_stats']['C']}")
+        click.echo(f"  Read operations: {summary['crud_stats']['R']}")
+        click.echo(f"  Update operations: {summary['crud_stats']['U']}")
+        click.echo(f"  Delete operations: {summary['crud_stats']['D']}")
+        click.echo(f"  Other operations: {summary['crud_stats']['O']}")
+        
+        if summary['most_active_class']:
+            click.echo(f"  Most active class: {summary['most_active_class']}")
+        if summary['most_used_table']:
+            click.echo(f"  Most used table: {summary['most_used_table']}")
+        
+        # CRUD 매트릭스 표 출력
+        if table_matrix and table_names:
+            click.echo(f"\nCRUD Matrix (Class vs Table):")
+            
+            # 테이블 헤더 계산
+            class_name_width = max(len("Class (Package)"), max(len(f"{row['class_name']} ({row['package_name']})") for row in table_matrix)) if table_matrix else 20
+            table_width = 18  # 각 테이블 컬럼 너비 (스키마 정보 포함으로 더 넓게)
+            
+            # 헤더 출력
+            header = f"{'Class (Package)':<{class_name_width}}"
+            for table_name in table_names:
+                # 테이블 이름을 12자로 제한
+                short_name = table_name[:12] if len(table_name) > 12 else table_name
+                header += f" {short_name:<{table_width}}"
+            click.echo(header)
+            
+            # 구분선 출력
+            separator = "-" * class_name_width
+            for _ in table_names:
+                separator += " " + "-" * table_width
+            click.echo(separator)
+            
+            # 데이터 행 출력
+            for row in table_matrix:
+                class_name = row['class_name']
+                package_name = row.get('package_name', 'N/A')
+                class_display = f"{class_name} ({package_name})"
+                line = f"{class_display:<{class_name_width}}"
+                for table_name in table_names:
+                    operations = row.get(table_name, '-')
+                    line += f" {operations:<{table_width}}"
+                click.echo(line)
+        else:
+            click.echo(f"\nSQL을 직접 호출하는 클래스가 없습니다.")
+            click.echo(f"다음을 확인해주세요:")
+            click.echo(f"  1. Java 객체 분석이 완료되었는지 확인")
+            click.echo(f"  2. MyBatis Mapper와 SQL 문이 분석되었는지 확인")
+            click.echo(f"  3. 프로젝트 이름이 올바른지 확인")
+        
+        # 파일로 저장
+        if output_file:
+            import json
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            click.echo(f"\nCRUD matrix saved to: {output_file}")
+        
+        # Excel 파일로 저장
+        if output_excel:
+            success = analysis_service.generate_crud_excel(project_name, output_excel)
+            if success:
+                click.echo(f"CRUD matrix Excel file saved to: {output_excel}")
+            else:
+                click.echo("Failed to generate Excel file. Check logs for details.")
+        
+    except Exception as e:
+        click.echo(f"Error generating CRUD matrix: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', required=True, help='Project name to analyze')
+@click.option('--start-class', help='Starting class for diagram (optional)')
+@click.option('--start-method', help='Starting method for diagram (optional)')
+@click.option('--output-file', help='Output file to save the diagram (optional)')
+@click.option('--output-image', help='Output image file (PNG/SVG/PDF) - requires mermaid-cli')
+@click.option('--image-format', default='png', type=click.Choice(['png', 'svg', 'pdf']), help='Image format (default: png)')
+@click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
+@click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
+def db_call_diagram(neo4j_uri, neo4j_user, project_name, start_class, start_method, output_file, output_image, image_format, image_width, image_height):
+    """Generate database call chain diagram."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        analysis_service = DBCallAnalysisService(driver)
+        
+        click.echo("Database Call Chain Diagram")
+        click.echo("=" * 50)
+        
+        if start_class and start_method:
+            click.echo(f"Generating diagram from {start_class}.{start_method}")
+        elif start_class:
+            click.echo(f"Generating diagram from class {start_class}")
+        else:
+            click.echo(f"Generating diagram for project {project_name}")
+        
+        # 다이어그램 생성
+        diagram = analysis_service.generate_call_chain_diagram(project_name, start_class, start_method)
+        
+        if diagram.startswith("오류:"):
+            click.echo(f"Error: {diagram}")
+            return
+        
+        # 파일로 저장
+        if output_file:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(diagram)
+            click.echo(f"Diagram saved to: {output_file}")
+        else:
+            # 기본 파일명으로 저장
+            default_filename = f"db_call_chain_{project_name}.md"
+            with open(default_filename, 'w', encoding='utf-8') as f:
+                f.write(diagram)
+            click.echo(f"Diagram saved to: {default_filename}")
+        
+        # 이미지로 변환
+        if output_image:
+            convert_to_image(diagram, output_image, image_format, image_width, image_height)
+        
+        # 다이어그램 미리보기
+        click.echo("\n" + "="*50)
+        click.echo("DATABASE CALL CHAIN DIAGRAM")
+        click.echo("="*50)
+        click.echo(diagram)
+        click.echo("="*50)
+        
+    except Exception as e:
+        click.echo(f"Error generating diagram: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', required=True, help='Project name to analyze')
+@click.option('--output-file', help='Output file to save the diagram (optional)')
+@click.option('--output-image', help='Output image file (PNG/SVG/PDF) - requires mermaid-cli')
+@click.option('--image-format', default='png', type=click.Choice(['png', 'svg', 'pdf']), help='Image format (default: png)')
+@click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
+@click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
+def crud_visualization(neo4j_uri, neo4j_user, project_name, output_file, output_image, image_format, image_width, image_height):
+    """Generate CRUD matrix visualization diagram showing class-table relationships."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        analysis_service = DBCallAnalysisService(driver)
+        
+        click.echo("CRUD Matrix Visualization Diagram")
+        click.echo("=" * 50)
+        click.echo(f"Generating diagram for project: {project_name}")
+        
+        # 다이어그램 생성
+        diagram = analysis_service.generate_crud_visualization_diagram(project_name)
+        
+        if diagram.startswith("Error:"):
+            click.echo(f"Error: {diagram}")
+            return
+        
+        # 파일로 저장
+        if output_file:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(diagram)
+            click.echo(f"Diagram saved to: {output_file}")
+        else:
+            # 기본 파일명으로 저장
+            default_filename = f"crud_visualization_{project_name}.md"
+            with open(default_filename, 'w', encoding='utf-8') as f:
+                f.write(diagram)
+            click.echo(f"Diagram saved to: {default_filename}")
+        
+        # 이미지로 변환
+        if output_image:
+            convert_to_image(diagram, output_image, image_format, image_width, image_height)
+        
+        # 다이어그램 미리보기
+        click.echo("\n" + "="*50)
+        click.echo("CRUD MATRIX VISUALIZATION DIAGRAM")
+        click.echo("="*50)
+        click.echo(diagram)
+        click.echo("="*50)
+        
+    except Exception as e:
+        click.echo(f"Error generating diagram: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', required=True, help='Project name to analyze')
+@click.option('--table-name', required=True, help='Table name to analyze impact for')
+@click.option('--output-file', help='Output file to save the impact analysis (optional)')
+def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file):
+    """Analyze impact of table changes on application code."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        analysis_service = DBCallAnalysisService(driver)
+        
+        click.echo("Table Impact Analysis")
+        click.echo("=" * 50)
+        click.echo(f"Analyzing impact of changes to table: {table_name}")
+        
+        # 영향도 분석
+        result = analysis_service.analyze_table_impact(project_name, table_name)
+        
+        if 'error' in result:
+            click.echo(f"Error: {result['error']}")
+            return
+        
+        impacted_classes = result['impacted_classes']
+        summary = result['summary']
+        
+        click.echo(f"\nImpact Summary:")
+        click.echo(f"  Table: {summary['table_name']}")
+        click.echo(f"  Impacted classes: {summary['total_impacted_classes']}")
+        click.echo(f"  Impacted methods: {summary['total_impacted_methods']}")
+        click.echo(f"  SQL statements: {summary['total_sql_statements']}")
+        click.echo(f"  CRUD operations: {', '.join(summary['crud_operations'])}")
+        
+        if summary['high_complexity_sql']:
+            click.echo(f"  High complexity SQL: {len(summary['high_complexity_sql'])}")
+        
+        # 영향받는 클래스 상세 정보
+        if impacted_classes:
+            click.echo(f"\nImpacted Classes:")
+            click.echo("-" * 80)
+            click.echo(f"{'Class':<25} {'Method':<25} {'SQL Type':<10} {'Complexity':<12}")
+            click.echo("-" * 80)
+            
+            for cls in impacted_classes:
+                class_name = cls['class_name']
+                method_name = cls['method_name'] or 'N/A'
+                sql_type = cls['sql_type'] or 'N/A'
+                complexity = str(cls['complexity_score']) if cls['complexity_score'] else 'N/A'
+                
+                click.echo(f"{class_name:<25} {method_name:<25} {sql_type:<10} {complexity:<12}")
+        
+        # 고복잡도 SQL 상세 정보
+        if summary['high_complexity_sql']:
+            click.echo(f"\nHigh Complexity SQL Statements:")
+            click.echo("-" * 60)
+            for sql in summary['high_complexity_sql']:
+                click.echo(f"  {sql['class_name']}.{sql['method_name']} - {sql['sql_type']} (complexity: {sql['complexity_score']})")
+        
+        # 파일로 저장
+        if output_file:
+            import json
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            click.echo(f"\nImpact analysis saved to: {output_file}")
+        
+    except Exception as e:
+        click.echo(f"Error analyzing table impact: {e}")
+        exit(1)
+    finally:
+        driver.close()
+
+@cli.command()
+@click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
+@click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
+@click.option('--project-name', required=True, help='Project name to analyze')
+@click.option('--output-file', help='Output file to save the statistics (optional)')
+def db_statistics(neo4j_uri, neo4j_user, project_name, output_file):
+    """Show database usage statistics."""
+    
+    try:
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        if not neo4j_password:
+            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            exit(1)
+        
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        analysis_service = DBCallAnalysisService(driver)
+        
+        click.echo("Database Usage Statistics")
+        click.echo("=" * 50)
+        
+        # 통계 조회
+        result = analysis_service.get_database_usage_statistics(project_name)
+        
+        if 'error' in result:
+            click.echo(f"Error: {result['error']}")
+            return
+        
+        sql_stats = result['sql_statistics']
+        table_usage = result['table_usage']
+        complexity_stats = result['complexity_statistics']
+        
+        # SQL 통계
+        if sql_stats:
+            click.echo(f"\nSQL Statistics:")
+            click.echo(f"  Total SQL statements: {sql_stats['total_sql']}")
+            click.echo(f"  SELECT statements: {sql_stats.get('SELECT', 0)}")
+            click.echo(f"  INSERT statements: {sql_stats.get('INSERT', 0)}")
+            click.echo(f"  UPDATE statements: {sql_stats.get('UPDATE', 0)}")
+            click.echo(f"  DELETE statements: {sql_stats.get('DELETE', 0)}")
+        
+        # 테이블 사용 통계
+        if table_usage:
+            click.echo(f"\nTable Usage Statistics:")
+            click.echo("-" * 60)
+            click.echo(f"{'Table Name':<30} {'Access Count':<15} {'Operations':<20}")
+            click.echo("-" * 60)
+            
+            for table in table_usage:
+                table_name = table['table_name']
+                access_count = table['access_count']
+                operations = ', '.join(table['operations'])
+                click.echo(f"{table_name:<30} {access_count:<15} {operations:<20}")
+        
+        # 복잡도 통계
+        if complexity_stats:
+            click.echo(f"\nSQL Complexity Statistics:")
+            click.echo(f"  Simple queries: {complexity_stats.get('simple', 0)}")
+            click.echo(f"  Medium queries: {complexity_stats.get('medium', 0)}")
+            click.echo(f"  Complex queries: {complexity_stats.get('complex', 0)}")
+            click.echo(f"  Very complex queries: {complexity_stats.get('very_complex', 0)}")
+        
+        # 파일로 저장
+        if output_file:
+            import json
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            click.echo(f"\nStatistics saved to: {output_file}")
+        
+    except Exception as e:
+        click.echo(f"Error getting database statistics: {e}")
         exit(1)
     finally:
         driver.close()

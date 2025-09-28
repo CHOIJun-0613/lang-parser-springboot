@@ -5,3 +5,5 @@ click
 pydantic
 python-dotenv
 PyYAML
+pandas
+openpyxl

@@ -1,0 +1,10 @@
+---
+description: python 실행시키기 위한 규칙칙
+globs:
+alwaysApply: true
+---
+1. 새로운 Terminal을 오픈하거나 채팅창에서 명령어를 실행할 때는 항상  Command Prompt를 사용할 것
+2. 채팅창에서 command를 실행할 때는 command 실행 결과가 오류발 수 있다는 점을 알고 실행할 것.
+  - 채팅창에서 command를 실행했는데, 그 결과가 오류인 경우에는 hang 상태로 멈춰버린 것 같음
+3. python  프로그램을 실행할 때는 가상환경에서 실행시킬 것
+4. debug나 임시 test 소스를 생성할 때는 /test 폴더에 생성하고 테스트 할 것
