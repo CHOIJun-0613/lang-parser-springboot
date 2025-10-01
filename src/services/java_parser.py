@@ -21,7 +21,6 @@ def extract_project_name(java_source_folder: str) -> str:
     Returns:
         프로젝트 이름 (마지막 디렉토리명)
     """
-    # 경로를 정규화하고 마지막 디렉토리명 추출
     path = Path(java_source_folder).resolve()
     return path.name
 
@@ -45,12 +44,10 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
             sql_content = sql_dict.get('sql_content', '')
             sql_type = sql_dict.get('sql_type', '')
             
-            # SQL 파서를 사용하여 SQL 분석
             sql_analysis = None
             if sql_content and sql_type:
                 sql_analysis = sql_parser.parse_sql_statement(sql_content, sql_type)
             
-            # MyBatisSqlStatement를 SqlStatement로 변환
             sql_statement = SqlStatement(
                 id=sql_dict.get('id', ''),
                 sql_type=sql_type,
@@ -59,11 +56,10 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
                 result_type=sql_dict.get('result_type', ''),
                 result_map=sql_dict.get('result_map', ''),
                 mapper_name=mapper.name,
-                annotations=[],  # TODO: annotations를 파싱하여 추가
+                annotations=[],
                 project_name=project_name
             )
             
-            # SQL 분석 결과를 추가 속성으로 저장
             if sql_analysis:
                 sql_statement.sql_analysis = sql_analysis
                 sql_statement.tables = sql_analysis.get('tables', [])
@@ -89,7 +85,6 @@ def analyze_mybatis_resultmap_mapping(mybatis_mappers: list[MyBatisMapper], sql_
     mapping_analysis = []
     
     for mapper in mybatis_mappers:
-        # XML 매퍼에서 ResultMap 추출
         if mapper.type == "xml":
             result_maps = getattr(mapper, 'result_maps', [])
             
@@ -98,13 +93,11 @@ def analyze_mybatis_resultmap_mapping(mybatis_mappers: list[MyBatisMapper], sql_
                 result_map_type = result_map.get('type', '')
                 properties = result_map.get('properties', [])
                 
-                # ResultMap과 관련된 SQL 문 찾기
                 related_sqls = []
                 for sql_stmt in sql_statements:
                     if sql_stmt.mapper_name == mapper.name and sql_stmt.result_map == result_map_id:
                         related_sqls.append(sql_stmt)
                 
-                # 매핑 분석
                 mapping_info = {
                     'result_map_id': result_map_id,
                     'result_map_type': result_map_type,
@@ -116,7 +109,6 @@ def analyze_mybatis_resultmap_mapping(mybatis_mappers: list[MyBatisMapper], sql_
                     'potential_issues': []
                 }
                 
-                # SQL에서 테이블-컬럼 매핑 추출
                 for sql_stmt in related_sqls:
                     if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
                         table_column_mapping = sql_stmt.sql_analysis.get('tables', [])
@@ -125,14 +117,12 @@ def analyze_mybatis_resultmap_mapping(mybatis_mappers: list[MyBatisMapper], sql_
                             if table_name not in mapping_info['table_column_mapping']:
                                 mapping_info['table_column_mapping'][table_name] = []
                             
-                            # SQL에서 사용된 컬럼들 추가
                             columns = sql_stmt.sql_analysis.get('columns', [])
                             for col_info in columns:
                                 col_name = col_info['name']
                                 if col_name != '*' and col_name not in mapping_info['table_column_mapping'][table_name]:
                                     mapping_info['table_column_mapping'][table_name].append(col_name)
                 
-                # 매핑 완성도 계산
                 total_properties = len(properties)
                 mapped_properties = 0
                 
@@ -143,7 +133,6 @@ def analyze_mybatis_resultmap_mapping(mybatis_mappers: list[MyBatisMapper], sql_
                     if property_name and column_name:
                         mapped_properties += 1
                         
-                        # 매핑 검증
                         found_in_sql = False
                         for table_name, columns in mapping_info['table_column_mapping'].items():
                             if column_name in columns:
@@ -176,7 +165,6 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
     """
     relationships = []
     
-    # 클래스별 메서드 매핑 생성
     class_method_map = {}
     for cls in classes:
         class_method_map[cls.name] = cls.methods
@@ -184,7 +172,6 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
     for sql_stmt in sql_statements:
         mapper_name = sql_stmt.mapper_name
         
-        # 매퍼 클래스 찾기
         mapper_class = None
         for cls in classes:
             if cls.name == mapper_name:
@@ -194,13 +181,11 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
         if not mapper_class:
             continue
         
-        # SQL과 매핑되는 메서드 찾기
         related_methods = []
         for method in mapper_class.methods:
             if method.name == sql_stmt.id:
                 related_methods.append(method)
         
-        # 관계 분석
         relationship_info = {
             'sql_id': sql_stmt.id,
             'sql_type': sql_stmt.sql_type,
@@ -212,7 +197,6 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
             'complexity_analysis': {}
         }
         
-        # 관련 메서드 정보 수집
         for method in related_methods:
             method_info = {
                 'name': method.name,
@@ -222,7 +206,6 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
             }
             relationship_info['related_methods'].append(method_info)
         
-        # 테이블 접근 패턴 분석
         if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
             tables = sql_stmt.sql_analysis.get('tables', [])
             for table_info in tables:
@@ -233,7 +216,6 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
                     'join_type': table_info.get('type', 'main')
                 }
         
-        # 파라미터 매핑 분석
         if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
             parameters = sql_stmt.sql_analysis.get('parameters', [])
             for param in parameters:
@@ -243,7 +225,6 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
                     'pattern': param['pattern']
                 }
         
-        # 복잡도 분석
         if hasattr(sql_stmt, 'complexity_score'):
             relationship_info['complexity_analysis'] = {
                 'score': sql_stmt.complexity_score,
@@ -277,14 +258,12 @@ def generate_db_call_chain_analysis(sql_statements: list[SqlStatement], classes:
         'call_chains': []
     }
     
-    # SQL 타입별 분포
     for sql_stmt in sql_statements:
         sql_type = sql_stmt.sql_type
         if sql_type not in analysis['sql_type_distribution']:
             analysis['sql_type_distribution'][sql_type] = 0
         analysis['sql_type_distribution'][sql_type] += 1
     
-    # 테이블 사용 통계
     for sql_stmt in sql_statements:
         if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
             tables = sql_stmt.sql_analysis.get('tables', [])
@@ -301,7 +280,6 @@ def generate_db_call_chain_analysis(sql_statements: list[SqlStatement], classes:
                 analysis['table_usage_statistics'][table_name]['access_types'].add(sql_stmt.sql_type)
                 analysis['table_usage_statistics'][table_name]['mappers'].add(sql_stmt.mapper_name)
     
-    # 복잡도 분포
     for sql_stmt in sql_statements:
         if hasattr(sql_stmt, 'complexity_score'):
             score = sql_stmt.complexity_score
@@ -311,7 +289,6 @@ def generate_db_call_chain_analysis(sql_statements: list[SqlStatement], classes:
                 analysis['complexity_distribution'][level] = 0
             analysis['complexity_distribution'][level] += 1
     
-    # 매퍼 사용 통계
     for sql_stmt in sql_statements:
         mapper_name = sql_stmt.mapper_name
         if mapper_name not in analysis['mapper_usage_statistics']:
@@ -329,7 +306,6 @@ def generate_db_call_chain_analysis(sql_statements: list[SqlStatement], classes:
             for table_info in tables:
                 analysis['mapper_usage_statistics'][mapper_name]['tables_accessed'].add(table_info['name'])
     
-    # 호출 체인 생성
     for sql_stmt in sql_statements:
         call_chain = {
             'sql_id': sql_stmt.id,
@@ -360,7 +336,6 @@ def parse_annotations(annotations, target_type: str = "class") -> list[Annotatio
         annotation_name = annotation.name
         parameters = {}
         
-        # Parse annotation parameters if they exist
         if hasattr(annotation, 'element') and annotation.element:
             for element in annotation.element:
                 if hasattr(element, 'name') and hasattr(element, 'value'):
@@ -385,88 +360,68 @@ def classify_springboot_annotation(annotation_name: str) -> str:
     Returns:
         Category of the annotation
     """
-    # Component annotations
     component_annotations = {
         "Component", "Service", "Repository", "Controller", 
         "RestController", "Configuration", "Bean"
     }
     
-    # Injection annotations
     injection_annotations = {
         "Autowired", "Resource", "Value", "Qualifier", "Primary"
     }
     
-    # Web annotations
     web_annotations = {
         "RequestMapping", "GetMapping", "PostMapping", "PutMapping", 
         "DeleteMapping", "PatchMapping", "RequestParam", "PathVariable",
         "RequestBody", "ResponseBody", "ResponseStatus"
     }
     
-    # JPA annotations
     jpa_annotations = {
-        # Core Entity annotations
         "Entity", "Table", "MappedSuperclass", "Embeddable", "Embedded",
         
-        # Primary Key annotations
         "Id", "GeneratedValue", "SequenceGenerator", "TableGenerator",
         
-        # Column annotations
         "Column", "Basic", "Transient", "Enumerated", "Temporal", "Lob",
         
-        # Relationship annotations
         "OneToOne", "OneToMany", "ManyToOne", "ManyToMany",
         "JoinColumn", "JoinColumns", "JoinTable", "PrimaryKeyJoinColumn", "PrimaryKeyJoinColumns",
         
-        # Collection annotations
         "ElementCollection", "CollectionTable", "OrderBy", "OrderColumn",
         "MapKey", "MapKeyClass", "MapKeyColumn", "MapKeyJoinColumn", "MapKeyJoinColumns",
         "MapKeyTemporal", "MapKeyEnumerated",
         
-        # Inheritance annotations
         "Inheritance", "DiscriminatorColumn", "DiscriminatorValue",
         
-        # Secondary table annotations
         "SecondaryTable", "SecondaryTables", "AttributeOverride", "AttributeOverrides",
         "AssociationOverride", "AssociationOverrides",
         
-        # Query annotations
         "NamedQuery", "NamedQueries", "NamedNativeQuery", "NamedNativeQueries",
         "SqlResultSetMapping", "SqlResultSetMappings", "ConstructorResult", "ColumnResult",
         "FieldResult", "EntityResult", "EntityResults",
         
-        # Cache annotations
         "Cacheable",
         
-        # Version annotation
         "Version",
         
-        # Access annotation
         "Access",
         
-        # Table constraints
         "UniqueConstraint", "Index", "ForeignKey"
     }
     
-    # Test annotations
     test_annotations = {
         "Test", "SpringBootTest", "DataJpaTest", "WebMvcTest",
         "MockBean", "SpyBean", "TestPropertySource"
     }
     
-    # Security annotations
     security_annotations = {
         "PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed",
         "EnableWebSecurity", "EnableGlobalMethodSecurity"
     }
     
-    # Validation annotations
     validation_annotations = {
         "Valid", "NotNull", "NotBlank", "NotEmpty", "Size", "Min", "Max",
         "Pattern", "Email", "AssertTrue", "AssertFalse"
     }
     
-    # MyBatis annotations
     mybatis_annotations = {
         "Mapper", "Select", "Insert", "Update", "Delete", "SelectProvider",
         "InsertProvider", "UpdateProvider", "DeleteProvider", "Results",
@@ -502,7 +457,6 @@ def classify_test_annotation(annotation_name: str) -> str:
     Returns:
         Category of the test annotation
     """
-    # JUnit annotations
     junit_annotations = {
         "Test", "BeforeEach", "AfterEach", "BeforeAll", "AfterAll",
         "DisplayName", "ParameterizedTest", "ValueSource", "CsvSource",
@@ -510,7 +464,6 @@ def classify_test_annotation(annotation_name: str) -> str:
         "Order", "TestMethodOrder", "TestInstance", "TestClassOrder"
     }
     
-    # Spring Boot Test annotations
     spring_test_annotations = {
         "SpringBootTest", "WebMvcTest", "DataJpaTest", "DataJdbcTest",
         "JdbcTest", "JsonTest", "RestClientTest", "WebFluxTest",
@@ -521,7 +474,6 @@ def classify_test_annotation(annotation_name: str) -> str:
         "MockMvc", "TestEntityManager", "TestContainers", "DynamicPropertySource"
     }
     
-    # TestNG annotations
     testng_annotations = {
         "TestNG", "BeforeMethod", "AfterMethod", "BeforeClass", "AfterClass",
         "BeforeSuite", "AfterSuite", "BeforeGroups", "AfterGroups",
@@ -530,17 +482,14 @@ def classify_test_annotation(annotation_name: str) -> str:
         "SuccessPercentage", "TimeOut"
     }
     
-    # Mockito annotations
     mockito_annotations = {
         "Mock", "Spy", "InjectMocks", "Captor", "MockedStatic"
     }
     
-    # AssertJ annotations
     assertj_annotations = {
         "AssertJ"
     }
     
-    # Other test annotations
     other_test_annotations = {
         "Ignore", "Category", "RunWith", "ExtendWith", "ContextConfiguration"
     }
@@ -573,14 +522,11 @@ def extract_beans_from_classes(classes: list[Class]) -> list[Bean]:
     beans = []
     
     for cls in classes:
-        # Check if class has Spring component annotations
         component_annotations = [ann for ann in cls.annotations if ann.category == "component"]
         
-        # Also check for @Repository on interfaces
         has_repository_annotation = any(ann.name == "Repository" for ann in cls.annotations)
         
         if component_annotations or has_repository_annotation:
-            # Determine bean type based on annotations
             bean_type = "component"  # default
             if any(ann.name in ["Service", "Service"] for ann in cls.annotations):
                 bean_type = "service"
@@ -591,7 +537,6 @@ def extract_beans_from_classes(classes: list[Class]) -> list[Bean]:
             elif any(ann.name in ["Configuration", "Configuration"] for ann in cls.annotations):
                 bean_type = "configuration"
             
-            # Determine scope (default is singleton)
             scope = "singleton"
             for ann in cls.annotations:
                 if ann.name == "Scope":
@@ -604,10 +549,8 @@ def extract_beans_from_classes(classes: list[Class]) -> list[Bean]:
                     elif "session" in str(ann.parameters):
                         scope = "session"
             
-            # Create bean name (use class name with first letter lowercase)
             bean_name = cls.name[0].lower() + cls.name[1:] if cls.name else cls.name
             
-            # Check for @Bean methods in configuration classes
             bean_methods = []
             if bean_type == "configuration":
                 for method in cls.methods:
@@ -641,30 +584,24 @@ def analyze_bean_dependencies(classes: list[Class], beans: list[Bean]) -> list[B
     """
     dependencies = []
     
-    # Create a mapping from class names to bean names
     class_to_bean = {}
     for bean in beans:
         class_to_bean[bean.class_name] = bean.name
     
     for cls in classes:
-        # Check if this class is a bean
         if cls.name not in class_to_bean:
             continue
             
         source_bean = class_to_bean[cls.name]
         
-        # Analyze field injections (@Autowired, @Resource, @Value)
         for prop in cls.properties:
             if any(ann.category == "injection" for ann in prop.annotations):
-                # Try to determine target bean from field type
                 target_bean = None
                 field_type = prop.type
                 
-                # Look for exact class name match
                 if field_type in class_to_bean:
                     target_bean = class_to_bean[field_type]
                 else:
-                    # Look for interface implementations (simplified - just check if type matches any bean class name)
                     for bean in beans:
                         if field_type == bean.class_name:
                             target_bean = bean.name
@@ -688,7 +625,6 @@ def analyze_bean_dependencies(classes: list[Class], beans: list[Bean]) -> list[B
                     )
                     dependencies.append(dependency)
         
-        # Analyze constructor injections
         for method in cls.methods:
             if method.name == cls.name:  # Constructor
                 for param in method.parameters:
@@ -699,7 +635,6 @@ def analyze_bean_dependencies(classes: list[Class], beans: list[Bean]) -> list[B
                         if param_type in class_to_bean:
                             target_bean = class_to_bean[param_type]
                         else:
-                            # Look for interface implementations (simplified)
                             for bean in beans:
                                 if param_type == bean.class_name:
                                     target_bean = bean.name
@@ -714,7 +649,6 @@ def analyze_bean_dependencies(classes: list[Class], beans: list[Bean]) -> list[B
                             )
                             dependencies.append(dependency)
         
-        # Analyze setter injections
         for method in cls.methods:
             if method.name.startswith("set") and len(method.parameters) == 1:
                 if any(ann.category == "injection" for ann in method.annotations):
@@ -725,7 +659,6 @@ def analyze_bean_dependencies(classes: list[Class], beans: list[Bean]) -> list[B
                     if param_type in class_to_bean:
                         target_bean = class_to_bean[param_type]
                     else:
-                        # Look for interface implementations (simplified)
                         for bean in beans:
                             if param_type == bean.class_name:
                                 target_bean = bean.name
@@ -756,13 +689,11 @@ def extract_endpoints_from_classes(classes: list[Class]) -> list[Endpoint]:
     endpoints = []
     
     for cls in classes:
-        # Check if class is a controller
         is_controller = any(ann.name in ["Controller", "RestController"] for ann in cls.annotations)
         
         if not is_controller:
             continue
             
-        # Get class-level path mapping
         class_path = ""
         for ann in cls.annotations:
             if ann.name == "RequestMapping":
@@ -770,31 +701,25 @@ def extract_endpoints_from_classes(classes: list[Class]) -> list[Endpoint]:
                     class_path = ann.parameters["value"]
                 break
         
-        # Process each method in the controller
         for method in cls.methods:
-            # Skip constructors
             if method.name == cls.name:
                 continue
                 
-            # Check if method has web mapping annotations
             web_annotations = [ann for ann in method.annotations if ann.category == "web"]
             
             if not web_annotations:
                 continue
             
-            # Extract endpoint information
             endpoint_path = ""
             http_method = "GET"  # default
             
             for ann in web_annotations:
                 if ann.name in ["RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"]:
-                    # Extract path
                     if "value" in ann.parameters:
                         endpoint_path = ann.parameters["value"]
                     elif "path" in ann.parameters:
                         endpoint_path = ann.parameters["path"]
                     
-                    # Extract HTTP method
                     if ann.name == "GetMapping":
                         http_method = "GET"
                     elif ann.name == "PostMapping":
@@ -816,7 +741,6 @@ def extract_endpoints_from_classes(classes: list[Class]) -> list[Endpoint]:
                             http_method = "GET"  # default for RequestMapping
                     break
             
-            # Build full path
             full_path = class_path
             if endpoint_path:
                 if full_path and not full_path.endswith("/") and not endpoint_path.startswith("/"):
@@ -825,7 +749,6 @@ def extract_endpoints_from_classes(classes: list[Class]) -> list[Endpoint]:
             elif not full_path:
                 full_path = "/"
             
-            # Extract method parameters
             parameters = []
             for param in method.parameters:
                 param_info = {
@@ -835,10 +758,8 @@ def extract_endpoints_from_classes(classes: list[Class]) -> list[Endpoint]:
                 }
                 parameters.append(param_info)
             
-            # Extract return type
             return_type = method.return_type if method.return_type != "constructor" else "void"
             
-            # Create endpoint
             endpoint = Endpoint(
                 path=endpoint_path or "/",
                 method=http_method,
@@ -866,36 +787,27 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
     mappers = []
     
     for cls in classes:
-        # Check if class is a MyBatis Mapper interface
         is_mapper = any(ann.name == "Mapper" for ann in cls.annotations)
         
         if not is_mapper:
             continue
         
-        # Extract ALL methods from Mapper interface (not just annotated ones)
         mapper_methods = []
         sql_statements = []
         
         for method in cls.methods:
-            # Skip constructors
             if method.name == cls.name:
                 continue
             
-            # Check if method has MyBatis annotations (for annotation-based mapping)
             mybatis_annotations = [ann for ann in method.annotations if ann.category == "mybatis"]
             
-            # For XML-based mapping, we don't need annotations
-            # All methods in @Mapper interface are potential SQL methods
-            # Process ALL methods, not just annotated ones
             
-            # Extract SQL statement information
             sql_type = "SELECT"  # default
             sql_content = ""
             parameter_type = ""
             result_type = ""
             result_map = ""
             
-            # Process MyBatis annotations if present
             if mybatis_annotations:
                 for ann in mybatis_annotations:
                     if ann.name in ["Select", "SelectProvider"]:
@@ -915,7 +827,6 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
                         if "value" in ann.parameters:
                             sql_content = ann.parameters["value"]
                     
-                    # Extract parameter and result type information
                     if "parameterType" in ann.parameters:
                         parameter_type = ann.parameters["parameterType"]
                     if "resultType" in ann.parameters:
@@ -923,7 +834,6 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
                     if "resultMap" in ann.parameters:
                         result_map = ann.parameters["resultMap"]
             else:
-                # For XML-based mapping, infer SQL type from method name
                 method_name_lower = method.name.lower()
                 if any(keyword in method_name_lower for keyword in ['find', 'get', 'select', 'search', 'list']):
                     sql_type = "SELECT"
@@ -934,7 +844,6 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
                 elif any(keyword in method_name_lower for keyword in ['delete', 'remove']):
                     sql_type = "DELETE"
             
-            # Create method info
             method_info = {
                 "name": method.name,
                 "return_type": method.return_type,
@@ -943,7 +852,6 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
             }
             mapper_methods.append(method_info)
             
-            # Create SQL statement info
             sql_statement = {
                 "id": method.name,
                 "sql_type": sql_type,
@@ -985,16 +893,13 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
         tree = ET.parse(file_path)
         root = tree.getroot()
         
-        # Extract namespace
         namespace = root.get("namespace", "")
         
-        # Extract SQL statements
         sql_statements = []
         for statement in root.findall(".//*[@id]"):
             statement_id = statement.get("id")
             tag_name = statement.tag.lower()
             
-            # Determine SQL type
             sql_type = "SELECT"
             if tag_name == "insert":
                 sql_type = "INSERT"
@@ -1003,10 +908,8 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
             elif tag_name == "delete":
                 sql_type = "DELETE"
             
-            # Extract SQL content
             sql_content = statement.text.strip() if statement.text else ""
             
-            # Extract parameter and result information
             parameter_type = statement.get("parameterType", "")
             result_type = statement.get("resultType", "")
             result_map = statement.get("resultMap", "")
@@ -1022,7 +925,6 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
             }
             sql_statements.append(sql_statement)
         
-        # Extract ResultMaps
         result_maps = []
         for result_map in root.findall(".//resultMap"):
             result_map_id = result_map.get("id")
@@ -1104,35 +1006,28 @@ def extract_jpa_entities_from_classes(classes: list[Class]) -> list[JpaEntity]:
     entities = []
     
     for cls in classes:
-        # Check if class is a JPA Entity
         is_entity = any(ann.name == "Entity" for ann in cls.annotations)
         
         if not is_entity:
             continue
         
-        # Extract table information with enhanced analysis
         table_info = _extract_table_info(cls)
         
-        # Extract columns from properties with enhanced analysis
         columns = []
         relationships = []
         
         for prop in cls.properties:
-            # Check if property has JPA annotations
             jpa_annotations = [ann for ann in prop.annotations if ann.category == "jpa"]
             
             if jpa_annotations or _is_jpa_property(prop, cls):
-                # Extract column information with enhanced analysis
                 column_info = _extract_column_info(prop, jpa_annotations)
                 if column_info:
                     columns.append(column_info)
                 
-                # Extract relationship information
                 relationship_info = _extract_relationship_info(prop, jpa_annotations)
                 if relationship_info:
                     relationships.append(relationship_info)
         
-        # Create entity with enhanced information
         entity = JpaEntity(
             name=cls.name,
             table_name=table_info["name"],
@@ -1183,8 +1078,6 @@ def _extract_table_info(cls: Class) -> dict:
 
 def _is_jpa_property(prop: Field, cls: Class) -> bool:
     """Check if a property should be considered as JPA property even without explicit annotations."""
-    # Properties without JPA annotations but part of an entity are considered JPA properties
-    # unless they are explicitly marked as @Transient
     has_transient = any(ann.name == "Transient" for ann in prop.annotations)
     return not has_transient
 
@@ -1209,7 +1102,6 @@ def _extract_column_info(prop: Field, jpa_annotations: list[Annotation]) -> dict
     temporal_type = ""
     enum_type = ""
     
-    # Process JPA annotations
     for ann in jpa_annotations:
         if ann.name == "Column":
             if "name" in ann.parameters:
@@ -1306,7 +1198,6 @@ def _extract_relationship_info(prop: Field, jpa_annotations: list[Annotation]) -
     orphan_removal = False
     optional = True
     
-    # Process relationship annotations
     for ann in jpa_annotations:
         if ann.name in ["OneToOne", "OneToMany", "ManyToOne", "ManyToMany"]:
             relationship_type = ann.name
@@ -1371,19 +1262,15 @@ def extract_jpa_repositories_from_classes(classes: list[Class]) -> list[JpaRepos
     repositories = []
     
     for cls in classes:
-        # Check if class is a JPA Repository
         is_repository = _is_jpa_repository(cls)
         
         if not is_repository:
             continue
         
-        # Extract entity type from generic type parameters
         entity_type = _extract_entity_type_from_repository(cls)
         
-        # Extract repository methods
         methods = _extract_repository_methods(cls)
         
-        # Create repository
         repository = JpaRepository(
             name=cls.name,
             entity_type=entity_type,
@@ -1401,22 +1288,18 @@ def extract_jpa_repositories_from_classes(classes: list[Class]) -> list[JpaRepos
 
 def _is_jpa_repository(cls: Class) -> bool:
     """Check if a class is a JPA Repository."""
-    # Check if class extends JpaRepository or similar interfaces
     jpa_repository_interfaces = {
         "JpaRepository", "CrudRepository", "PagingAndSortingRepository",
         "JpaSpecificationExecutor", "QueryByExampleExecutor"
     }
     
-    # Check interfaces
     for interface in cls.interfaces:
         interface_name = interface.split('.')[-1]  # Get simple name
         if interface_name in jpa_repository_interfaces:
             return True
     
-    # Check if class has @Repository annotation
     has_repository_annotation = any(ann.name == "Repository" for ann in cls.annotations)
     
-    # Check if class name ends with "Repository"
     is_repository_by_name = cls.name.endswith("Repository")
     
     return has_repository_annotation or is_repository_by_name
@@ -1450,7 +1333,7 @@ def _extract_repository_methods(cls: Class) -> list[dict]:
         method_info = {
             "name": method.name,
             "return_type": method.return_type,
-            "parameters": [param.dict() for param in method.parameters],
+            "parameters": [{"name": param.name, "type": param.type} for param in method.parameters],
             "annotations": [ann.name for ann in method.annotations],
             "query_info": _analyze_repository_method(method)
         }
@@ -1472,7 +1355,6 @@ def _analyze_repository_method(method: Method) -> dict:
         "parameters": []
     }
     
-    # Check for @Query annotation
     for ann in method.annotations:
         if ann.name == "Query":
             query_info["query_type"] = "JPQL"
@@ -1498,7 +1380,6 @@ def _analyze_repository_method(method: Method) -> dict:
             if "query" in ann.parameters:
                 query_info["query_content"] = ann.parameters["query"]
     
-    # Analyze method name for query derivation
     if query_info["query_type"] == "METHOD":
         query_info.update(_analyze_method_name_query(method.name, method.parameters))
     
@@ -1518,7 +1399,6 @@ def _analyze_method_name_query(method_name: str, parameters: list[Field]) -> dic
     
     method_name_lower = method_name.lower()
     
-    # Determine operation
     if method_name_lower.startswith("find") or method_name_lower.startswith("get"):
         query_info["operation"] = "SELECT"
     elif method_name_lower.startswith("save") or method_name_lower.startswith("insert"):
@@ -1532,17 +1412,12 @@ def _analyze_method_name_query(method_name: str, parameters: list[Field]) -> dic
     elif method_name_lower.startswith("exists"):
         query_info["operation"] = "EXISTS"
     
-    # Check for sorting
     if "orderby" in method_name_lower or "sort" in method_name_lower:
         query_info["sorting"] = ["field_name"]  # Simplified
     
-    # Check for paging
     if "page" in method_name_lower or "pageable" in method_name_lower:
         query_info["paging"] = True
     
-    # Extract field names from method name
-    # This is a simplified implementation
-    # In practice, you would need more sophisticated parsing
     field_patterns = [
         r"findBy(\w+)",
         r"getBy(\w+)",
@@ -1812,18 +1687,15 @@ def parse_yaml_config(file_path: str) -> ConfigFile:
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            # 여러 YAML 문서가 있는 경우 처리
             documents = list(yaml.safe_load_all(f))
             content = documents[0] if documents else {}
         
         if not content:
             content = {}
         
-        # Extract file info
         file_name = os.path.basename(file_path)
         file_type = "yaml" if file_path.endswith('.yaml') else "yml"
         
-        # Extract profiles
         profiles = []
         if 'spring' in content and 'profiles' in content['spring']:
             if 'active' in content['spring']['profiles']:
@@ -2197,13 +2069,11 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
     test_classes = []
     
     for cls in classes:
-        # Check if class is a test class
         test_annotations = [ann for ann in cls.annotations if classify_test_annotation(ann.name) in ["junit", "spring_test", "testng"]]
         
         if not test_annotations:
             continue
         
-        # Determine test framework and type
         test_framework = "junit"  # default
         test_type = "unit"  # default
         
@@ -2219,7 +2089,6 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
             elif ann.name in ["Test", "BeforeEach", "AfterEach", "BeforeAll", "AfterAll"]:
                 test_framework = "junit"
         
-        # Extract test methods
         test_methods = []
         setup_methods = []
         
@@ -2227,7 +2096,6 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
             method_annotations = [ann.name for ann in method.annotations if classify_test_annotation(ann.name) in ["junit", "spring_test", "testng"]]
             
             if method_annotations:
-                # Check if it's a setup/teardown method
                 if any(ann in method_annotations for ann in ["BeforeEach", "AfterEach", "BeforeAll", "AfterAll", "BeforeMethod", "AfterMethod", "BeforeClass", "AfterClass", "BeforeSuite", "AfterSuite"]):
                     setup_methods.append({
                         "name": method.name,
@@ -2236,7 +2104,6 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
                         "parameters": [{"name": p.name, "type": p.type} for p in method.parameters]
                     })
                 else:
-                    # Regular test method
                     test_method_info = {
                         "name": method.name,
                         "annotations": method_annotations,
@@ -2250,21 +2117,18 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
                         "display_name": ""
                     }
                     
-                    # Extract display name
                     for ann in method.annotations:
                         if ann.name == "DisplayName" and "value" in ann.parameters:
                             test_method_info["display_name"] = ann.parameters["value"]
                         elif ann.name == "Timeout" and "value" in ann.parameters:
                             test_method_info["timeout"] = ann.parameters["value"]
                     
-                    # Extract expected exceptions
                     for ann in method.annotations:
                         if ann.name == "ExpectedExceptions" and "value" in ann.parameters:
                             test_method_info["expected_exceptions"] = ann.parameters["value"] if isinstance(ann.parameters["value"], list) else [ann.parameters["value"]]
                     
                     test_methods.append(test_method_info)
         
-        # Extract mock dependencies
         mock_dependencies = []
         for prop in cls.properties:
             prop_annotations = [ann.name for ann in prop.annotations if classify_test_annotation(ann.name) in ["mockito", "spring_test"]]
@@ -2276,7 +2140,6 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
                     "mock_type": "mock" if "Mock" in prop_annotations else "spy" if "Spy" in prop_annotations else "bean"
                 })
         
-        # Extract test configurations
         test_configurations = []
         for ann in cls.annotations:
             if ann.name in ["TestConfiguration", "ActiveProfiles", "TestPropertySource"]:
@@ -2291,7 +2154,6 @@ def extract_test_classes_from_classes(classes: list[Class]) -> list[TestClass]:
                 }
                 test_configurations.append(config_info)
         
-        # Create test class
         test_class = TestClass(
             name=cls.name,
             package_name=cls.package_name,
@@ -2322,7 +2184,6 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
     test_methods = []
     
     for method_info in test_class.test_methods:
-        # Find the corresponding method in the class
         method_obj = None
         for method in class_obj.methods:
             if method.name == method_info["name"]:
@@ -2332,7 +2193,6 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
         if not method_obj:
             continue
         
-        # Analyze method source code for assertions and mock calls
         assertions = []
         mock_calls = []
         test_data = []
@@ -2340,7 +2200,6 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
         if method_obj.source:
             source_code = method_obj.source
             
-            # Find assertions (JUnit, AssertJ, etc.)
             assertion_patterns = [
                 r'assert\w+\(',  # JUnit assertions
                 r'assertThat\(',  # AssertJ
@@ -2367,7 +2226,6 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
                         "line": source_code.find(match) + 1
                     })
             
-            # Find mock calls
             mock_call_patterns = [
                 r'(\w+)\.(\w+)\(',  # Method calls on objects
                 r'mock\(',  # Mockito mock creation
@@ -2392,7 +2250,6 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
                             "line": source_code.find(match) + 1
                         })
             
-            # Find test data setup
             test_data_patterns = [
                 r'new\s+(\w+)\(',  # Object creation
                 r'(\w+)\s*=\s*new\s+(\w+)\(',  # Variable assignment with new
@@ -2416,7 +2273,6 @@ def analyze_test_methods(test_class: TestClass, class_obj: Class) -> list[TestMe
                             "pattern": "annotation"
                         })
         
-        # Create TestMethod object
         test_method = TestMethod(
             name=method_info["name"],
             return_type=method_info["return_type"],
@@ -2437,12 +2293,9 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
     """Generate Lombok @Data methods (getters, setters, equals, hashCode, toString) for properties."""
     methods = []
     
-    # Generate getters and setters for each property
     for prop in properties:
-        # Getter
         getter_name = f"get{prop.name[0].upper()}{prop.name[1:]}"
         if prop.type == "Boolean" and prop.name.startswith("is"):
-            # For boolean fields starting with 'is', use the field name as getter
             getter_name = prop.name
         
         getter = Method(
@@ -2455,11 +2308,10 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
             package_name=package_name,
             annotations=[],
             description=f"Generated getter for {prop.name} field",  # Generated method description
-            ai_description=""  # TODO: Generate AI description using LLM
+            ai_description=""
         )
         methods.append(getter)
         
-        # Setter
         setter_name = f"set{prop.name[0].upper()}{prop.name[1:]}"
         setter_param = Field(
             name=prop.name,
@@ -2479,11 +2331,10 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
             package_name=package_name,
             annotations=[],
             description=f"Generated setter for {prop.name} field",  # Generated method description
-            ai_description=""  # TODO: Generate AI description using LLM
+            ai_description=""
         )
         methods.append(setter)
     
-    # Generate equals method
     equals_method = Method(
         name="equals",
         logical_name=f"{package_name}.{class_name}.equals",
@@ -2494,11 +2345,10 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         package_name=package_name,
         annotations=[],
         description="Generated equals method for object comparison",  # Generated method description
-        ai_description=""  # TODO: Generate AI description using LLM
+        ai_description=""
     )
     methods.append(equals_method)
     
-    # Generate hashCode method
     hashcode_method = Method(
         name="hashCode",
         logical_name=f"{package_name}.{class_name}.hashCode",
@@ -2509,11 +2359,10 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         package_name=package_name,
         annotations=[],
         description="Generated hashCode method for object hashing",  # Generated method description
-        ai_description=""  # TODO: Generate AI description using LLM
+        ai_description=""
     )
     methods.append(hashcode_method)
     
-    # Generate toString method
     tostring_method = Method(
         name="toString",
         logical_name=f"{package_name}.{class_name}.toString",
@@ -2524,7 +2373,7 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         package_name=package_name,
         annotations=[],
         description="Generated toString method for string representation",  # Generated method description
-        ai_description=""  # TODO: Generate AI description using LLM
+        ai_description=""
     )
     methods.append(tostring_method)
     
@@ -2547,11 +2396,9 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
         print(f"DEBUG: Parsed package name: {package_name}")
         logger.info(f"Parsed package name: {package_name}")
         
-        # Create package node
         if package_name:
             package_node = Package(name=package_name)
         else:
-            # Handle classes without package (default package)
             package_name = "default"
             package_node = Package(name=package_name)
         
@@ -2559,301 +2406,20 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
         for imp in tree.imports:
             class_name = imp.path.split('.')[-1]
             import_map[class_name] = imp.path
-
-        # 첫 번째 로직 - 주석 처리 (두 번째 로직 사용)
-        # print(f"DEBUG: Searching for class/interface declarations in {file_path}")
-        # logger.info(f"Searching for class/interface declarations in {file_path}")
-        # class_declarations = list(tree.filter(lambda node: isinstance(node, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration))))
-        # print(f"DEBUG: Found {len(class_declarations)} class/interface declarations in {file_path}")
-        # logger.info(f"Found {len(class_declarations)} class/interface declarations in {file_path}")
-        
-        # 첫 번째 로직 - 주석 처리 (두 번째 로직 사용)
-        # all_nodes = list(tree.filter(lambda node: True))
-        # print(f"DEBUG: Total nodes in AST: {len(all_nodes)}")
-        # logger.info(f"Total nodes in AST: {len(all_nodes)}")
-        # 
-        # node_types = {}
-        # for node in all_nodes:
-        #     node_type = type(node).__name__
-        #     node_types[node_type] = node_types.get(node_type, 0) + 1
-        # 
-        # print(f"DEBUG: Node types found: {dict(list(node_types.items())[:10])}")
-        # logger.info(f"Node types found: {dict(list(node_types.items())[:10])}")
-        
-        # 첫 번째 로직 - 주석 처리 (두 번째 로직 사용)
-        # for i, (_, class_declaration) in enumerate(class_declarations):
-        # class_name = class_declaration.name
-        # class_key = f"{package_name}.{class_name}"
-        # class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
-        # logger.info(f"  Processing class {i+1}: {class_name} (type: {class_type})")
-            
-        # # Extract class source code
-        # class_source = file_content
-        # 
-        # # Parse class annotations
-        # class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
-            
-        # # 클래스 타입 결정 (클래스 vs 인터페이스)
-        # class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
-            
-        # class_node = Class(
-        #     name=class_name,
-        #     logical_name=class_key,
-        #     file_path=file_path,
-        #     type=class_type,  # 인터페이스인 경우 "interface"로 설정
-        #     source=class_source,
-        #     annotations=class_annotations,
-        #     package_name=package_name,
-        #     project_name=project_name,  # project_name 추가
-        #     description="",
-        #     ai_description=""
-        # )
-        # 
-        # # Add imports
-        # for imp in tree.imports:
-        #     class_node.imports.append(imp.path)
-        # 
-        # # Handle inheritance
-        # if class_declaration.extends:
-        #     superclass_name = class_declaration.extends.name
-        #     if superclass_name in import_map:
-        #         class_node.superclass = import_map[superclass_name]
-        #     else:
-        #         class_node.superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
-        # 
-        # if class_declaration.implements:
-        #     for impl_ref in class_declaration.implements:
-        #         interface_name = impl_ref.name
-        #         if interface_name in import_map:
-        #             class_node.interfaces.append(import_map[interface_name])
-        #         else:
-        #             class_node.interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
-        # 
-        # # Parse fields
-        # field_map = {}
-        # for field_declaration in class_declaration.fields:
-        #         for declarator in field_declaration.declarators:
-        #             field_map[declarator.name] = field_declaration.type.name
-        #             
-        #             # Parse field annotations
-        #             field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
-        #             
-        #             # Extract initial value if present
-        #             initial_value = ""
-        #             if hasattr(declarator, 'initializer') and declarator.initializer:
-        #                 if hasattr(declarator.initializer, 'value'):
-        #                     initial_value = str(declarator.initializer.value)
-        #                 elif hasattr(declarator.initializer, 'type'):
-        #                     initial_value = str(declarator.initializer.type)
-        #                 else:
-        #                     initial_value = str(declarator.initializer)
-        #             
-        #             prop = Field(
-        #                 name=declarator.name,
-        #                 logical_name=f"{package_name}.{class_name}.{declarator.name}",
-        #                 type=field_declaration.type.name,
-        #                 modifiers=list(field_declaration.modifiers),
-        #                 package_name=package_name,
-        #                 class_name=class_name,
-        #                 annotations=field_annotations,
-        #                 initial_value=initial_value,
-        #                 description="",
-        #                 ai_description=""
-        #             )
-        #             class_node.properties.append(prop)
-
-        # # Parse methods and constructors
-        # all_declarations = class_declaration.methods + class_declaration.constructors
-        #     
-        #     for declaration in all_declarations:
-        #         local_var_map = field_map.copy()
-        #         params = []
-        #         for param in declaration.parameters:
-        #             param_type_name = 'Unknown'
-        #             if hasattr(param.type, 'name'):
-        #                 param_type_name = param.type.name
-        #             local_var_map[param.name] = param_type_name
-        #             params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
-
-                if declaration.body:
-                    for _, var_decl in declaration.filter(javalang.tree.LocalVariableDeclaration):
-                        for declarator in var_decl.declarators:
-                            local_var_map[declarator.name] = var_decl.type.name
-                
-                if isinstance(declaration, javalang.tree.MethodDeclaration):
-                    return_type = declaration.return_type.name if declaration.return_type else "void"
-                else: # ConstructorDeclaration
-                    return_type = "constructor"
-
-                # Extract modifiers
-                modifiers = list(declaration.modifiers)
-                
-                # Parse method annotations
-                method_annotations = parse_annotations(declaration.annotations, "method") if hasattr(declaration, 'annotations') else []
-
-                # Extract method source code
-                method_source = ""
-                if declaration.position:
-                    lines = file_content.splitlines(keepends=True)
-                    start_line = declaration.position.line - 1
-                    
-                    # Find the end of the method by matching braces
-                    brace_count = 0
-                    end_line = start_line
-                    for i in range(start_line, len(lines)):
-                        line = lines[i]
-                        for char in line:
-                            if char == '{':
-                                brace_count += 1
-                            elif char == '}':
-                                brace_count -= 1
-                                if brace_count == 0:
-                                    end_line = i
-                                    break
-                        if brace_count == 0:
-                            break
-                    
-                    method_source = "".join(lines[start_line:end_line + 1])
-
-                method = Method(
-                    name=declaration.name,
-                    logical_name=f"{class_key}.{declaration.name}",
-                    return_type=return_type,
-                    parameters=params,
-                    modifiers=modifiers,
-                    source=method_source,
-                    package_name=package_name,
-                    annotations=method_annotations,
-                    description="",
-                    ai_description=""
-                )
-                class_node.methods.append(method)
-
-                # Extract method calls with order information
-                call_order = 0
-                for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
-                    target_class_name = None
-                    resolved_target_package = ""
-                    resolved_target_class_name = ""
-                    
-                    if invocation.qualifier:
-                        # External method call
-                        if invocation.qualifier in local_var_map:
-                            target_class_name = local_var_map[invocation.qualifier]
-                        else:
-                            target_class_name = invocation.qualifier
-                        
-                        if target_class_name:
-                            if target_class_name == "System.out":
-                                resolved_target_package = "java.io"
-                                resolved_target_class_name = "PrintStream"
-                            else:
-                                # Check if target_class_name is a field type (from local_var_map)
-                                if invocation.qualifier in local_var_map:
-                                    # This is a field call, use the field type directly
-                                    resolved_target_class_name = target_class_name
-                                    # Try to find the package for this class
-                                    if target_class_name in import_map:
-                                        resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
-                                    else:
-                                        # If not in import_map, try to find the class in the current project
-                                        # This is important for field calls like userService.getUserList()
-                                        # where userService is of type UserService
-                                        resolved_target_package = package_name
-                                        
-                                        # Try to find a more specific package by looking at common patterns
-                                        # For example, if we're in com.carcare.domain.user.controller
-                                        # and looking for UserService, it might be in com.carcare.domain.user.service
-                                        if package_name and 'controller' in package_name:
-                                            # Try service package
-                                            service_package = package_name.replace('controller', 'service')
-                                            resolved_target_package = service_package
-                                            logger.debug(f"Trying service package for {target_class_name}: {service_package}")
-                                        
-                                        # Additional pattern matching for common Spring Boot patterns
-                                        elif package_name and 'domain' in package_name:
-                                            # Try to find service in the same domain
-                                            domain_parts = package_name.split('.')
-                                            if len(domain_parts) >= 3:  # com.carcare.domain.user.controller
-                                                domain_base = '.'.join(domain_parts[:3])  # com.carcare.domain
-                                                service_package = f"{domain_base}.{domain_parts[2]}.service"  # com.carcare.domain.user.service
-                                                resolved_target_package = service_package
-                                                logger.debug(f"Trying domain service package for {target_class_name}: {service_package}")
-                                    
-                                    # Debug logging for field calls
-                                    logger.debug(f"Field call: {invocation.qualifier}.{invocation.member} -> {resolved_target_package}.{resolved_target_class_name}")
-                                    
-                                    # Try to resolve generic types and interfaces
-                                    if '<' in target_class_name:
-                                        # Extract base type from generic (e.g., List<User> -> List)
-                                        base_type = target_class_name.split('<')[0]
-                                        resolved_target_class_name = base_type
-                                        logger.debug(f"Resolved generic type: {target_class_name} -> {base_type}")
-                                else:
-                                    # This is a direct class reference
-                                    if target_class_name in import_map:
-                                        resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
-                                    else:
-                                        resolved_target_package = package_name
-                                    resolved_target_class_name = target_class_name
-                    else:
-                        # Same class method call
-                        resolved_target_package = package_name
-                        resolved_target_class_name = class_name
-
-                    if resolved_target_class_name:
-                        # Skip Stream API methods and other unnecessary calls
-                        method_name = invocation.member
-                        if method_name in {'collect', 'map', 'filter', 'forEach', 'stream', 'reduce', 'findFirst', 'findAny', 'anyMatch', 'allMatch', 'noneMatch', 'count', 'distinct', 'sorted', 'limit', 'skip', 'peek', 'flatMap', 'toArray'}:
-                            continue
-                            
-                        # Get line number from invocation position
-                        line_number = invocation.position.line if invocation.position else 0
-
-                        call = MethodCall(
-                            source_package=package_name,
-                            source_class=class_name,
-                            source_method=declaration.name,
-                            target_package=resolved_target_package,
-                            target_class=resolved_target_class_name,
-                            target_method=invocation.member,
-                            call_order=call_order,
-                            line_number=line_number,
-                            return_type="void"
-                        )
-                        class_node.calls.append(call)
-                        call_order += 1
-            
-            # Check for Lombok @Data annotation and generate methods
-            has_data_annotation = any(ann.name == "Data" for ann in class_node.annotations)
-            if has_data_annotation:
-                logger.debug(f"Found @Data annotation on {class_name}, generating Lombok methods")
-                lombok_methods = generate_lombok_methods(class_node.properties, class_name, package_name)
-                class_node.methods.extend(lombok_methods)
-                logger.debug(f"Generated {len(lombok_methods)} Lombok methods for {class_name}")
-            
-            return package_node, class_node, package_name
-            
-    except javalang.parser.JavaSyntaxError as e:
-        logger.error(f"Syntax error in {file_path}: {e}")
-        raise
     except Exception as e:
-        logger.error(f"Error parsing {file_path}: {e}")
-        raise
+        logger.error(f"Error parsing file: {e}")
+        return None, None, ""
 
 
 def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[JpaRepository], list[JpaQuery], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
     """Parse Java project and return parsed entities."""
     logger = get_logger(__name__)
-    """Parses all Java files in a directory and returns a tuple of (packages, classes, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, config_files, test_classes, sql_statements, project_name)."""
     
-    # Extract project name from directory path
     project_name = extract_project_name(directory)
     packages = {}
     classes = {}
-    class_to_package_map = {}  # Maps class_key to package_name
+    class_to_package_map = {}
     
-    logger = get_logger(__name__)
     logger.info(f"Starting Java project analysis in: {directory}")
     logger.info(f"Project name: {project_name}")
 
@@ -2868,9 +2434,8 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                 logger.debug(f"Processing Java file {java_file_count}: {file_path}")
                 
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    file_content = f.read() # Read file content once
+                    file_content = f.read()
                 
-                # HTML이 포함된 Java 파일 건너뛰기
                 if '<html' in file_content.lower() or '<body' in file_content.lower() or '<div' in file_content.lower():
                     logger.warning(f"Skipping file with HTML content: {file_path}")
                     continue
@@ -2880,13 +2445,11 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                     package_name = tree.package.name if tree.package else ""
                     logger.debug(f"Parsed file: {file_path}, package: {package_name}")
                     
-                    # Create or update package node
                     if package_name and package_name not in packages:
                         packages[package_name] = Package(
                             name=package_name
                         )
                     elif not package_name:
-                        # Handle classes without package (default package)
                         package_name = "default"
                         if package_name not in packages:
                             packages[package_name] = Package(
@@ -2898,101 +2461,64 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                         class_name = imp.path.split('.')[-1]
                         import_map[class_name] = imp.path
 
-                    # 클래스와 인터페이스 모두 처리
-                    print(f"DEBUG: Searching for class/interface declarations in {file_path}")
-                    # tree.filter가 작동하지 않으므로 tree.types를 직접 사용
                     class_declarations = []
                     for type_decl in tree.types:
                         if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
-                            class_declarations.append((None, type_decl))  # (path, declaration) 형태로 맞춤
-                    print(f"DEBUG: Found {len(class_declarations)} class/interface declarations in {file_path}")
-                    logger.debug(f"Found {len(class_declarations)} class/interface declarations in {file_path}")
+                            class_declarations.append((None, type_decl))
                     
                     for _, class_declaration in class_declarations:
                         class_name = class_declaration.name
                         class_key = f"{package_name}.{class_name}"
-                        print(f"DEBUG: Processing class/interface: {class_name} (type: {type(class_declaration).__name__})")
                         logger.debug(f"Processing class/interface: {class_name} (type: {type(class_declaration).__name__})")
                         
-                        # Debug: Check if this is the User class
-                        if "User" in class_name:
-                            logger.debug(f"Found User class - {class_key}")
-                            logger.debug(f"Methods count: {len(class_declaration.methods)}")
-                            logger.debug(f"Constructors count: {len(class_declaration.constructors)}")
-                        
-                        # Extract class source code - use the entire file content
-                        class_source = file_content
-
-
                         if class_key not in classes:
-                            print(f"DEBUG: Creating new class: {class_name} (key: {class_key})")
-                            # Parse class annotations
                             class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
-                            
-                            # 클래스 타입 결정 (클래스 vs 인터페이스)
                             class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
-                            print(f"DEBUG: Class type: {class_type}")
-                            
-                            logger.debug(f"Creating class node: {class_name} (type: {class_type})")
                             
                             classes[class_key] = Class(
                                 name=class_name,
-                                logical_name=class_key,  # Add logical_name
+                                logical_name=class_key,
                                 file_path=file_path,
-                                type=class_type,  # 인터페이스인 경우 "interface"로 설정
-                                source=class_source, # Add class source
+                                type=class_type,
+                                source=file_content,
                                 annotations=class_annotations,
                                 package_name=package_name,
-                                project_name=project_name,  # project_name 추가
-                                description="",  # TODO: Extract description from comments or annotations
-                                ai_description=""  # TODO: Generate AI description using LLM
+                                project_name=project_name,
+                                description="",
+                                ai_description=""
                             )
                             class_to_package_map[class_key] = package_name
-                            print(f"DEBUG: Successfully added class to classes dict: {class_name} (key: {class_key})")
-                            logger.info(f"  Successfully added class to classes dict: {class_name} (key: {class_key})")
+                            logger.info(f"Successfully added class to classes dict: {class_name} (key: {class_key})")
                         else:
                             logger.debug(f"Class {class_name} already exists, skipping")
                         
-                        # --- Start of new import logic ---
                         for imp in tree.imports:
                             classes[class_key].imports.append(imp.path)
-                        # --- End of new import logic ---
 
-                        # --- Start of new inheritance logic ---
-                        # Handle 'extends'
                         if class_declaration.extends:
                             superclass_name = class_declaration.extends.name
-                            # Try to resolve fully qualified name for superclass
                             if superclass_name in import_map:
                                 classes[class_key].superclass = import_map[superclass_name]
                             else:
-                                # Assume same package or fully qualified if not in import_map
                                 classes[class_key].superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
 
-                        # Handle 'implements' (only for classes, not interfaces)
                         if hasattr(class_declaration, 'implements') and class_declaration.implements:
                             for impl_ref in class_declaration.implements:
                                 interface_name = impl_ref.name
-                                # Try to resolve fully qualified name for interface
                                 if interface_name in import_map:
                                     classes[class_key].interfaces.append(import_map[interface_name])
                                 else:
-                                    # Assume same package or fully qualified if not in import_map
                                     classes[class_key].interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
-                        # --- End of new inheritance logic ---
 
                         field_map = {}
                         for field_declaration in class_declaration.fields:
                             for declarator in field_declaration.declarators:
                                 field_map[declarator.name] = field_declaration.type.name
                                 
-                                # Parse field annotations
                                 field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
                                 
-                                # Extract initial value if present
                                 initial_value = ""
                                 if hasattr(declarator, 'initializer') and declarator.initializer:
-                                    # Convert the initializer to string representation
                                     if hasattr(declarator.initializer, 'value'):
                                         initial_value = str(declarator.initializer.value)
                                     elif hasattr(declarator.initializer, 'type'):
@@ -3004,23 +2530,17 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                     name=declarator.name,
                                     logical_name=f"{package_name}.{class_name}.{declarator.name}",
                                     type=field_declaration.type.name,
-                                    modifiers=list(field_declaration.modifiers), # Add modifiers
+                                    modifiers=list(field_declaration.modifiers),
                                     package_name=package_name,
                                     class_name=class_name,
                                     annotations=field_annotations,
                                     initial_value=initial_value,
-                                    description="",  # TODO: Extract description from comments or annotations
-                                    ai_description=""  # TODO: Generate AI description using LLM
+                                    description="",
+                                    ai_description=""
                                 )
                                 classes[class_key].properties.append(prop)
 
                         all_declarations = class_declaration.methods + class_declaration.constructors
-                        
-                        # Debug: Check User class method processing
-                        if "User" in class_name:
-                            logger.debug(f"Processing User class methods - total declarations: {len(all_declarations)}")
-                            for i, decl in enumerate(all_declarations):
-                                logger.debug(f"Declaration {i}: {type(decl).__name__} - {decl.name}")
                         
                         for declaration in all_declarations:
                             local_var_map = field_map.copy()
@@ -3039,22 +2559,17 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             
                             if isinstance(declaration, javalang.tree.MethodDeclaration):
                                 return_type = declaration.return_type.name if declaration.return_type else "void"
-                            else: # ConstructorDeclaration
+                            else:
                                 return_type = "constructor"
 
-                            # Extract modifiers
                             modifiers = list(declaration.modifiers)
-                            
-                            # Parse method annotations
                             method_annotations = parse_annotations(declaration.annotations, "method") if hasattr(declaration, 'annotations') else []
 
-                            # Extract method source code
                             method_source = ""
                             if declaration.position:
-                                lines = file_content.splitlines(keepends=True) # Keep line endings
+                                lines = file_content.splitlines(keepends=True)
                                 start_line = declaration.position.line - 1
                                 
-                                # Find the end of the method by matching braces
                                 brace_count = 0
                                 end_line = start_line
                                 for i in range(start_line, len(lines)):
@@ -3074,19 +2589,18 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
 
                             method = Method(
                                 name=declaration.name,
-                                logical_name=f"{class_key}.{declaration.name}",  # Add logical_name
+                                logical_name=f"{class_key}.{declaration.name}",
                                 return_type=return_type,
                                 parameters=params,
                                 modifiers=modifiers,
-                                source=method_source, # Add method source
+                                source=method_source,
                                 package_name=package_name,
                                 annotations=method_annotations,
-                                description="",  # TODO: Extract description from comments or annotations
-                                ai_description=""  # TODO: Generate AI description using LLM
+                                description="",
+                                ai_description=""
                             )
                             classes[class_key].methods.append(method)
 
-                            # Extract method calls with order information
                             call_order = 0
                             for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
                                 target_class_name = None
@@ -3094,7 +2608,6 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 resolved_target_class_name = ""
                                 
                                 if invocation.qualifier:
-                                    # External method call
                                     if invocation.qualifier in local_var_map:
                                         target_class_name = local_var_map[invocation.qualifier]
                                     else:
@@ -3105,66 +2618,42 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                             resolved_target_package = "java.io"
                                             resolved_target_class_name = "PrintStream"
                                         else:
-                                            # Check if target_class_name is a field type (from local_var_map)
                                             if invocation.qualifier in local_var_map:
-                                                # This is a field call, use the field type directly
                                                 resolved_target_class_name = target_class_name
-                                                # Try to find the package for this class
                                                 if target_class_name in import_map:
                                                     resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
                                                 else:
-                                                    # If not in import_map, try to find the class in the current project
-                                                    # This is important for field calls like userService.getUserList()
-                                                    # where userService is of type UserService
                                                     resolved_target_package = package_name
                                                     
-                                                    # Try to find a more specific package by looking at common patterns
-                                                    # For example, if we're in com.carcare.domain.user.controller
-                                                    # and looking for UserService, it might be in com.carcare.domain.user.service
                                                     if package_name and 'controller' in package_name:
-                                                        # Try service package
                                                         service_package = package_name.replace('controller', 'service')
                                                         resolved_target_package = service_package
-                                                        logger.debug(f"Trying service package for {target_class_name}: {service_package}")
                                                     
-                                                    # Additional pattern matching for common Spring Boot patterns
                                                     elif package_name and 'domain' in package_name:
-                                                        # Try to find service in the same domain
                                                         domain_parts = package_name.split('.')
-                                                        if len(domain_parts) >= 3:  # com.carcare.domain.user.controller
-                                                            domain_base = '.'.join(domain_parts[:3])  # com.carcare.domain
-                                                            service_package = f"{domain_base}.{domain_parts[2]}.service"  # com.carcare.domain.user.service
+                                                        if len(domain_parts) >= 3:
+                                                            domain_base = '.'.join(domain_parts[:3])
+                                                            service_package = f"{domain_base}.{domain_parts[2]}.service"
                                                             resolved_target_package = service_package
-                                                            logger.debug(f"Trying domain service package for {target_class_name}: {service_package}")
                                                 
-                                                # Debug logging for field calls
-                                                logger.debug(f"Field call: {invocation.qualifier}.{invocation.member} -> {resolved_target_package}.{resolved_target_class_name}")
-                                                
-                                                # Try to resolve generic types and interfaces
                                                 if '<' in target_class_name:
-                                                    # Extract base type from generic (e.g., List<User> -> List)
                                                     base_type = target_class_name.split('<')[0]
                                                     resolved_target_class_name = base_type
-                                                    logger.debug(f"Resolved generic type: {target_class_name} -> {base_type}")
                                             else:
-                                                # This is a direct class reference
                                                 if target_class_name in import_map:
                                                     resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
                                                 else:
                                                     resolved_target_package = package_name
                                                 resolved_target_class_name = target_class_name
                                 else:
-                                    # Same class method call
                                     resolved_target_package = package_name
                                     resolved_target_class_name = class_name
 
                                 if resolved_target_class_name:
-                                    # Skip Stream API methods and other unnecessary calls
                                     method_name = invocation.member
                                     if method_name in {'collect', 'map', 'filter', 'forEach', 'stream', 'reduce', 'findFirst', 'findAny', 'anyMatch', 'allMatch', 'noneMatch', 'count', 'distinct', 'sorted', 'limit', 'skip', 'peek', 'flatMap', 'toArray'}:
                                         continue
                                         
-                                    # Get line number from invocation position
                                     line_number = invocation.position.line if invocation.position else 0
 
                                     call = MethodCall(
@@ -3176,12 +2665,11 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                         target_method=invocation.member,
                                         call_order=call_order,
                                         line_number=line_number,
-                                        return_type="void"  # Default return type, can be enhanced later
+                                        return_type="void"
                                     )
                                     classes[class_key].calls.append(call)
                                     call_order += 1
                         
-                        # Check for Lombok @Data annotation and generate methods
                         has_data_annotation = any(ann.name == "Data" for ann in classes[class_key].annotations)
                         if has_data_annotation:
                             logger.debug(f"Found @Data annotation on {class_name}, generating Lombok methods")
@@ -3189,21 +2677,13 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             classes[class_key].methods.extend(lombok_methods)
                             logger.debug(f"Generated {len(lombok_methods)} Lombok methods for {class_name}")
                     
-                    # 파일 처리 성공
                     processed_file_count += 1
                     logger.debug(f"Successfully processed file: {file_path}")
-                    
-                except javalang.parser.JavaSyntaxError as e:
-                    logger.warning(f"Syntax error in {file_path}: {e}")
-                    logger.warning(f"Skipping file due to syntax error")
-                    continue
+                
                 except Exception as e:
-                    logger.warning(f"Error parsing {file_path}: {e}")
-                    logger.warning(f"Exception type: {type(e).__name__}")
-                    logger.warning(f"Skipping file due to parsing error")
+                    logger.error(f"Error processing file {file_path}: {e}")
                     continue
     
-    # Extract beans, analyze dependencies, extract endpoints, extract MyBatis mappers, extract JPA entities, extract JPA repositories, extract config files, and extract test classes
     classes_list = list(classes.values())
     beans = extract_beans_from_classes(classes_list)
     dependencies = analyze_bean_dependencies(classes_list, beans)
@@ -3215,19 +2695,15 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
     config_files = extract_config_files(directory)
     test_classes = extract_test_classes_from_classes(classes_list)
     
-    # Also extract XML mappers
     xml_mappers = extract_mybatis_xml_mappers(directory)
     mybatis_mappers.extend(xml_mappers)
     
-    # Extract SQL statements from MyBatis mappers
     sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
     
-    # MyBatis SQL 매핑 분석 기능 강화
     resultmap_mapping_analysis = analyze_mybatis_resultmap_mapping(mybatis_mappers, sql_statements)
     sql_method_relationships = analyze_sql_method_relationships(sql_statements, classes_list)
     db_call_chain_analysis = generate_db_call_chain_analysis(sql_statements, classes_list)
     
-    # 요약 로그
     logger.info(f"Java project analysis complete:")
     logger.info(f"  - Java files processed: {processed_file_count}/{java_file_count}")
     logger.info(f"  - Packages found: {len(packages)}")

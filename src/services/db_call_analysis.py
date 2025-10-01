@@ -23,12 +23,12 @@ class DBCallAnalysisService:
         self.driver = driver
         self.logger = get_logger(__name__)
     
-    def analyze_call_chain(self, project_name: str, start_class: str = None, start_method: str = None) -> Dict[str, Any]:
+    def analyze_call_chain(self, project_name: str = None, start_class: str = None, start_method: str = None) -> Dict[str, Any]:
         """
         Controller → Service → Repository → SQL → Table/Column 호출 체인을 분석합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             start_class: 시작 클래스 (선택사항)
             start_method: 시작 메서드 (선택사항)
             
@@ -39,16 +39,16 @@ class DBCallAnalysisService:
             with self.driver.session() as session:
                 if start_class and start_method:
                     # 특정 메서드부터 시작하는 호출 체인
-                    call_chain = self._get_method_call_chain(session, project_name, start_class, start_method)
+                    call_chain = self._get_method_call_chain(session, start_class, start_method)
                 elif start_class:
                     # 특정 클래스부터 시작하는 호출 체인
-                    call_chain = self._get_class_call_chain(session, project_name, start_class)
+                    call_chain = self._get_class_call_chain(session, start_class)
                 else:
                     # 전체 프로젝트의 호출 체인
-                    call_chain = self._get_project_call_chain(session, project_name)
+                    call_chain = self._get_project_call_chain(session)
                 
                 # 존재하지 않는 Table/Column 노드 식별
-                missing_nodes = self._identify_missing_nodes(session, project_name, call_chain)
+                missing_nodes = self._identify_missing_nodes(session, call_chain)
                 
                 return {
                     'project_name': project_name,
@@ -61,15 +61,15 @@ class DBCallAnalysisService:
             self.logger.error(f"호출 체인 분석 오류: {str(e)}")
             return {'error': str(e)}
     
-    def _get_method_call_chain(self, session, project_name: str, class_name: str, method_name: str) -> List[Dict[str, Any]]:
+    def _get_method_call_chain(self, session, class_name: str, method_name: str) -> List[Dict[str, Any]]:
         """특정 메서드부터 시작하는 호출 체인을 분석합니다."""
         query = """
-        MATCH (c:Class {name: $class_name, project_name: $project_name})-[:HAS_METHOD]->(m:Method {name: $method_name})
+        MATCH (c:Class {name: $class_name})-[:HAS_METHOD]->(m:Method {name: $method_name})
         OPTIONAL MATCH (m)-[:CALLS*0..5]->(target_method:Method)
         OPTIONAL MATCH (target_method)<-[:HAS_METHOD]-(target_class:Class)
-        OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement {project_name: $project_name})
-        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table {project_name: $project_name})
-        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column {project_name: $project_name})
+        OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
+        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
+        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
         RETURN m.name as source_method,
                c.name as source_class,
                c.package_name as source_package,
@@ -88,8 +88,7 @@ class DBCallAnalysisService:
         
         result = session.run(query, 
                            class_name=class_name, 
-                           method_name=method_name, 
-                           project_name=project_name)
+                           method_name=method_name)
         
         call_chain = []
         for record in result:
@@ -111,15 +110,15 @@ class DBCallAnalysisService:
         
         return call_chain
     
-    def _get_class_call_chain(self, session, project_name: str, class_name: str) -> List[Dict[str, Any]]:
+    def _get_class_call_chain(self, session, class_name: str) -> List[Dict[str, Any]]:
         """특정 클래스부터 시작하는 호출 체인을 분석합니다."""
         query = """
-        MATCH (c:Class {name: $class_name, project_name: $project_name})-[:HAS_METHOD]->(m:Method)
+        MATCH (c:Class {name: $class_name})-[:HAS_METHOD]->(m:Method)
         OPTIONAL MATCH (m)-[:CALLS*0..5]->(target_method:Method)
         OPTIONAL MATCH (target_method)<-[:HAS_METHOD]-(target_class:Class)
-        OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement {project_name: $project_name})
-        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table {project_name: $project_name})
-        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column {project_name: $project_name})
+        OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
+        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
+        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
         RETURN m.name as source_method,
                c.name as source_class,
                c.package_name as source_package,
@@ -137,8 +136,7 @@ class DBCallAnalysisService:
         """
         
         result = session.run(query, 
-                           class_name=class_name, 
-                           project_name=project_name)
+                           class_name=class_name)
         
         call_chain = []
         for record in result:
@@ -160,15 +158,15 @@ class DBCallAnalysisService:
         
         return call_chain
     
-    def _get_project_call_chain(self, session, project_name: str) -> List[Dict[str, Any]]:
+    def _get_project_call_chain(self, session) -> List[Dict[str, Any]]:
         """전체 프로젝트의 호출 체인을 분석합니다."""
         query = """
-        MATCH (c:Class {project_name: $project_name})-[:HAS_METHOD]->(m:Method)
+        MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
         OPTIONAL MATCH (m)-[:CALLS*0..5]->(target_method:Method)
         OPTIONAL MATCH (target_method)<-[:HAS_METHOD]-(target_class:Class)
-        OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement {project_name: $project_name})
-        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table {project_name: $project_name})
-        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column {project_name: $project_name})
+        OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
+        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
+        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
         RETURN m.name as source_method,
                c.name as source_class,
                c.package_name as source_package,
@@ -185,7 +183,7 @@ class DBCallAnalysisService:
         ORDER BY source_class, source_method, target_class.name, target_method.name
         """
         
-        result = session.run(query, project_name=project_name)
+        result = session.run(query)
         
         call_chain = []
         for record in result:
@@ -207,7 +205,7 @@ class DBCallAnalysisService:
         
         return call_chain
     
-    def _identify_missing_nodes(self, session, project_name: str, call_chain: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    def _identify_missing_nodes(self, session, call_chain: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         """존재하지 않는 Table/Column 노드를 식별합니다."""
         missing_tables = set()
         missing_columns = set()
@@ -232,8 +230,8 @@ class DBCallAnalysisService:
                             referenced_tables.add(column_info['table'])
         
         # 실제 존재하는 테이블과 컬럼 조회
-        existing_tables = self._get_existing_tables(session, project_name)
-        existing_columns = self._get_existing_columns(session, project_name)
+        existing_tables = self._get_existing_tables(session)
+        existing_columns = self._get_existing_columns(session)
         
         # 존재하지 않는 테이블 식별
         for table_name in referenced_tables:
@@ -250,24 +248,24 @@ class DBCallAnalysisService:
             'missing_columns': list(missing_columns)
         }
     
-    def _get_existing_tables(self, session, project_name: str) -> Set[str]:
+    def _get_existing_tables(self, session) -> Set[str]:
         """실제 존재하는 테이블 목록을 조회합니다."""
         query = """
-        MATCH (t:Table {project_name: $project_name})
+        MATCH (t:Table)
         RETURN t.name as table_name
         """
         
-        result = session.run(query, project_name=project_name)
+        result = session.run(query)
         return {record['table_name'] for record in result}
     
-    def _get_existing_columns(self, session, project_name: str) -> Set[str]:
+    def _get_existing_columns(self, session) -> Set[str]:
         """실제 존재하는 컬럼 목록을 조회합니다."""
         query = """
-        MATCH (c:Column {project_name: $project_name})
+        MATCH (c:Column)
         RETURN c.name as column_name
         """
         
-        result = session.run(query, project_name=project_name)
+        result = session.run(query)
         return {record['column_name'] for record in result}
     
     def _generate_analysis_summary(self, call_chain: List[Dict[str, Any]], missing_nodes: Dict[str, List[str]]) -> Dict[str, Any]:
@@ -305,13 +303,13 @@ class DBCallAnalysisService:
             'class_stats': class_stats
         }
     
-    def generate_crud_matrix(self, project_name: str) -> Dict[str, Any]:
+    def generate_crud_matrix(self, project_name: str = None) -> Dict[str, Any]:
         """
         CRUD 매트릭스를 생성합니다.
         SQL을 직접 호출하는 클래스만 포함합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             
         Returns:
             CRUD 매트릭스 데이터
@@ -320,8 +318,8 @@ class DBCallAnalysisService:
             with self.driver.session() as session:
                 # SQL을 직접 호출하는 클래스와 실제 테이블 정보를 가져오는 쿼리
                 class_crud_query = """
-                MATCH (c:Class {project_name: $project_name})-[:HAS_METHOD]->(m:Method)
-                MATCH (m)-[:CALLS]->(sql:SqlStatement {project_name: $project_name})
+                MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
+                MATCH (m)-[:CALLS]->(sql:SqlStatement)
                 WHERE sql.tables IS NOT NULL AND sql.tables <> '[]'
                 WITH c, m, sql,
                      CASE 
@@ -339,7 +337,7 @@ class DBCallAnalysisService:
                 ORDER BY c.name
                 """
                 
-                result = session.run(class_crud_query, project_name=project_name)
+                result = session.run(class_crud_query)
                 raw_data = [record.data() for record in result]
                 
                 # 클래스별로 그룹화하여 매트릭스 생성 (1:1 관계로 표시)
@@ -419,8 +417,15 @@ class DBCallAnalysisService:
                         'schema_name': relation['schema_name'],
                         'operations': relation['operations']
                     })
-                    class_matrix[class_name]['operations'].update(relation['operations'])
-                    class_matrix[class_name]['sql_statements'].update(relation['sql_statements'])
+                    if isinstance(relation['operations'], dict):
+                        class_matrix[class_name]['operations'].update(relation['operations'])
+                    elif isinstance(relation['operations'], (list, set)):
+                        class_matrix[class_name]['operations'].update(relation['operations'])
+                    
+                    if isinstance(relation['sql_statements'], dict):
+                        class_matrix[class_name]['sql_statements'].update(relation['sql_statements'])
+                    elif isinstance(relation['sql_statements'], (list, set)):
+                        class_matrix[class_name]['sql_statements'].update(relation['sql_statements'])
                 
                 # 최종 형태로 변환
                 class_matrix = [
@@ -436,12 +441,12 @@ class DBCallAnalysisService:
                 
                 # 테이블별 CRUD 매트릭스 (Python에서 처리)
                 table_crud_query = """
-                MATCH (sql:SqlStatement {project_name: $project_name})
+                MATCH (sql:SqlStatement)
                 WHERE sql.tables IS NOT NULL AND sql.tables <> '[]'
                 RETURN sql.tables as tables_json, sql.sql_type as operation
                 """
                 
-                result = session.run(table_crud_query, project_name=project_name)
+                result = session.run(table_crud_query)
                 raw_table_data = [record.data() for record in result]
                 
                 # Python에서 테이블별 CRUD 매트릭스 생성
@@ -505,12 +510,12 @@ class DBCallAnalysisService:
             'most_used_table': max(table_matrix, key=lambda x: sum(op['count'] for op in x['operations']))['table_name'] if table_matrix else None
         }
     
-    def generate_call_chain_diagram(self, project_name: str, start_class: str = None, start_method: str = None) -> str:
+    def generate_call_chain_diagram(self, project_name: str = None, start_class: str = None, start_method: str = None) -> str:
         """
         호출 체인을 Mermaid 다이어그램으로 생성합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             start_class: 시작 클래스 (선택사항)
             start_method: 시작 메서드 (선택사항)
             
@@ -613,12 +618,12 @@ class DBCallAnalysisService:
             self.logger.error(f"호출 체인 다이어그램 생성 오류: {str(e)}")
             return f"오류: {str(e)}"
     
-    def analyze_table_impact(self, project_name: str, table_name: str) -> Dict[str, Any]:
+    def analyze_table_impact(self, project_name: str = None, table_name: str = None) -> Dict[str, Any]:
         """
         특정 테이블 변경 시 영향받는 클래스/메서드를 분석합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             table_name: 분석할 테이블 이름
             
         Returns:
@@ -628,8 +633,8 @@ class DBCallAnalysisService:
             with self.driver.session() as session:
                 # 테이블을 사용하는 클래스/메서드 조회
                 impact_query = """
-                MATCH (c:Class {project_name: $project_name})-[:HAS_METHOD]->(m:Method)
-                MATCH (m)-[:CALLS]->(sql:SqlStatement {project_name: $project_name})
+                MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
+                MATCH (m)-[:CALLS]->(sql:SqlStatement)
                 WHERE sql.tables CONTAINS $table_name OR 
                       ANY(table_info IN sql.tables WHERE table_info.name = $table_name)
                 RETURN c.name as class_name,
@@ -676,12 +681,12 @@ class DBCallAnalysisService:
             self.logger.error(f"테이블 영향도 분석 오류: {str(e)}")
             return {'error': str(e)}
     
-    def get_database_usage_statistics(self, project_name: str) -> Dict[str, Any]:
+    def get_database_usage_statistics(self, project_name: str = None) -> Dict[str, Any]:
         """
         데이터베이스 사용 통계를 조회합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             
         Returns:
             데이터베이스 사용 통계
@@ -690,7 +695,7 @@ class DBCallAnalysisService:
             with self.driver.session() as session:
                 # SQL 통계
                 sql_stats_query = """
-                MATCH (sql:SqlStatement {project_name: $project_name})
+                MATCH (sql:SqlStatement)
                 RETURN 
                     count(sql) as total_sql,
                     sum(CASE WHEN sql.sql_type = 'SELECT' THEN 1 ELSE 0 END) as SELECT,
@@ -748,12 +753,12 @@ class DBCallAnalysisService:
             self.logger.error(f"데이터베이스 사용 통계 조회 오류: {str(e)}")
             return {'error': str(e)}
     
-    def generate_crud_visualization_diagram(self, project_name: str) -> str:
+    def generate_crud_visualization_diagram(self, project_name: str = None) -> str:
         """
         CRUD 매트릭스를 기반으로 어플리케이션-데이터베이스 호출관계를 Mermaid 다이어그램으로 생성합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             
         Returns:
             Mermaid 다이어그램 문자열
@@ -823,13 +828,13 @@ class DBCallAnalysisService:
             self.logger.error(f"CRUD 시각화 다이어그램 생성 오류: {e}")
             return f"```mermaid\ngraph TD\n    A[Error: {str(e)}]\n```"
     
-    def generate_crud_table_matrix(self, project_name: str) -> Dict[str, Any]:
+    def generate_crud_table_matrix(self, project_name: str = None) -> Dict[str, Any]:
         """
         CRUD 매트릭스를 표 형태로 생성합니다.
         가로축: 테이블, 세로축: 클래스
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             
         Returns:
             표 형태의 CRUD 매트릭스 데이터
@@ -909,12 +914,12 @@ class DBCallAnalysisService:
             self.logger.error(f"CRUD 표 매트릭스 생성 오류: {e}")
             return {'error': str(e)}
     
-    def generate_crud_excel(self, project_name: str, output_file: str) -> bool:
+    def generate_crud_excel(self, project_name: str = None, output_file: str = None) -> bool:
         """
         CRUD 매트릭스를 Excel 파일로 생성합니다.
         
         Args:
-            project_name: 프로젝트 이름
+            project_name: 프로젝트 이름 (선택사항, 크로스 프로젝트 분석을 위해)
             output_file: 출력할 Excel 파일 경로
             
         Returns:

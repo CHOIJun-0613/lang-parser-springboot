@@ -181,11 +181,11 @@ class GraphDB:
         # --- Start of new method relationships logic ---
         for method in class_node.methods:
             # Serialize parameters to JSON string
-            parameters_json = json.dumps([p.dict() for p in method.parameters])
+            parameters_json = json.dumps([{"name": p.name, "type": p.type} for p in method.parameters])
             # Serialize modifiers to JSON string
             modifiers_json = json.dumps(method.modifiers)
             # Serialize annotations to JSON string
-            annotations_json = json.dumps([a.dict() for a in method.annotations])
+            annotations_json = json.dumps([{"name": a.name, "parameters": a.parameters} for a in method.annotations])
 
             method_query = (
                 "MATCH (c:Class {name: $class_name}) "
@@ -230,7 +230,7 @@ class GraphDB:
             # Serialize modifiers to JSON string
             prop_modifiers_json = json.dumps(prop.modifiers)
             # Serialize annotations to JSON string
-            prop_annotations_json = json.dumps([a.dict() for a in prop.annotations])
+            prop_annotations_json = json.dumps([{"name": a.name, "parameters": a.parameters} for a in prop.annotations])
             
             prop_query = (
                 "MATCH (c:Class {name: $class_name}) "
@@ -556,21 +556,21 @@ class GraphDB:
             "q.annotations = $annotations, q.description = $description, "
             "q.ai_description = $ai_description, q.updated_at = $updated_at"
         )
-        tx.run(
-            query_query,
-            name=query.name,
-            project_name=project_name,
-            query_type=query.query_type,
-            query_content=query.query_content,
-            return_type=query.return_type,
-            parameters=json.dumps(query.parameters),
-            repository_name=query.repository_name,
-            method_name=query.method_name,
-            annotations=json.dumps(query.annotations),
-            description=query.description or "",
-            ai_description=query.ai_description or "",
-            updated_at=current_timestamp
-        )
+        parameters_dict = {
+            "name": str(query.name) if query.name else "",
+            "project_name": str(project_name) if project_name else "",
+            "query_type": str(query.query_type) if query.query_type else "",
+            "query_content": str(query.query_content) if query.query_content else "",
+            "return_type": str(query.return_type) if query.return_type else "",
+            "parameters": json.dumps(query.parameters if isinstance(query.parameters, list) else []),
+            "repository_name": str(query.repository_name) if query.repository_name else "",
+            "method_name": str(query.method_name) if query.method_name else "",
+            "annotations": json.dumps(query.annotations if isinstance(query.annotations, list) else []),
+            "description": str(query.description) if query.description else "",
+            "ai_description": str(query.ai_description) if query.ai_description else "",
+            "updated_at": current_timestamp
+        }
+        tx.run(query_query, parameters_dict)
 
     @staticmethod
     def _create_config_file_node_tx(tx, config_file: ConfigFile, project_name: str):
@@ -652,7 +652,7 @@ class GraphDB:
             parameter_type=sql_statement.parameter_type,
             result_type=sql_statement.result_type,
             result_map=sql_statement.result_map,
-            annotations=json.dumps([a.dict() for a in sql_statement.annotations]),
+            annotations=json.dumps([{"name": a.name, "parameters": a.parameters} for a in sql_statement.annotations]),
             project_name=project_name,
             description=sql_statement.description or "",
             ai_description=sql_statement.ai_description or "",
@@ -857,8 +857,8 @@ class GraphDB:
     def get_crud_matrix(self, project_name: str = None):
         """Get CRUD matrix showing class-table relationships."""
         query = """
-        MATCH (c:Class {project_name: $project_name})-[:HAS_METHOD]->(m:Method)
-        MATCH (m)-[:CALLS]->(s:SqlStatement {project_name: $project_name})
+        MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
+        MATCH (m)-[:CALLS]->(s:SqlStatement)
         WHERE s.tables IS NOT NULL AND s.tables <> '[]'
         WITH c, m, s, 
              CASE 
@@ -877,7 +877,7 @@ class GraphDB:
         """
         
         with self._driver.session() as session:
-            result = session.run(query, project_name=project_name)
+            result = session.run(query)
             raw_data = [record.data() for record in result]
             
             # 클래스별로 그룹화하여 매트릭스 생성

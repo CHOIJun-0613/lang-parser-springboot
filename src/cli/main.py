@@ -120,18 +120,71 @@ def cli():
 @click.option('--clean', is_flag=True, help='Wipe the database before analysis.')
 @click.option('--class-name', help='Analyze only a specific class (delete existing data for this class first)')
 @click.option('--update', is_flag=True, help='Update all classes individually without clearing database')
-@click.option('--db_object', is_flag=True, help='Analyze database objects from DDL scripts')
-@click.option('--java_object', is_flag=True, help='Analyze Java objects from source code')
+@click.option('--db_object', is_flag=True, help='Analyze database objects from DDL scripts (requires DB_SCRIPT_FOLDER env var)')
+@click.option('--java_object', is_flag=True, help='Analyze Java objects from source code (requires JAVA_SOURCE_FOLDER env var)')
+@click.option('--all_objects', is_flag=True, help='Analyze both Java objects and database objects (equivalent to --java_object --db_object)')
 @click.option('--dry-run', is_flag=True, help='Parse Java files without connecting to database.')
-def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, class_name, update, db_object, java_object, dry_run):
-    """Analyzes a Java project and populates a Neo4j database."""
-    if not java_source_folder:
-        click.echo("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required.", err=True)
+def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, class_name, update, db_object, java_object, all_objects, dry_run):
+    """
+    Analyzes Java projects and/or database objects and populates a Neo4j database.
+    
+    This command can analyze:
+    - Java objects from source code (--java_object)
+    - Database objects from DDL scripts (--db_object)
+    - Specific classes (--class-name)
+    - Update existing classes (--update)
+    
+    Examples:
+      # Analyze only database objects
+      python -m src.cli.main analyze --db_object
+      
+      # Analyze only Java objects
+      python -m src.cli.main analyze --java_object
+      
+      # Analyze both database and Java objects
+      python -m src.cli.main analyze --all_objects
+      
+      # Alternative way to analyze both
+      python -m src.cli.main analyze --db_object --java_object
+      
+      # Dry run (parse without database connection)
+      python -m src.cli.main analyze --db_object --dry-run
+    """
+    # Handle --all_objects option
+    if all_objects:
+        db_object = True
+        java_object = True
+        click.echo("--all_objects option detected: Analyzing both Java objects and database objects")
+    
+    # Check if at least one analysis type is specified
+    if not db_object and not java_object and not class_name and not update:
+        click.echo("Error: Please specify at least one analysis type:", err=True)
+        click.echo("  --db_object     : Analyze database objects from DDL scripts", err=True)
+        click.echo("  --java_object   : Analyze Java objects from source code", err=True)
+        click.echo("  --all_objects   : Analyze both Java objects and database objects", err=True)
+        click.echo("  --class-name    : Analyze a specific class", err=True)
+        click.echo("  --update        : Update all classes individually", err=True)
+        click.echo("", err=True)
+        click.echo("Examples:", err=True)
+        click.echo("  python -m src.cli.main analyze --db_object", err=True)
+        click.echo("  python -m src.cli.main analyze --java_object", err=True)
+        click.echo("  python -m src.cli.main analyze --all_objects", err=True)
+        click.echo("  python -m src.cli.main analyze --db_object --java_object", err=True)
         exit(1)
+    
+    # Check java_source_folder requirement for Java-related operations
+    if java_object or class_name or update or (not db_object):
+        if not java_source_folder:
+            click.echo("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required for Java object analysis.", err=True)
+            exit(1)
 
     # Extract project name from directory path
     from pathlib import Path
-    project_name = Path(java_source_folder).resolve().name
+    if java_source_folder:
+        project_name = Path(java_source_folder).resolve().name
+    else:
+        # For DB-only analysis, use a default project name or get from environment
+        project_name = os.getenv("PROJECT_NAME", "default_project")
 
     # Handle Java object analysis
     if java_object:
@@ -275,13 +328,17 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             return
             
         except Exception as e:
+            import traceback
             click.echo(f"Error analyzing Java objects: {e}")
+            click.echo(f"\nFull traceback:")
+            traceback.print_exc()
             click.echo("Use --dry-run flag to parse without database connection.")
             exit(1)
 
     # Handle DB object analysis
     if db_object:
         click.echo("Analyzing database objects from DDL scripts...")
+        click.echo(f"Project name: {project_name}")
         
         # Get DB script folder from environment variable
         db_script_folder = os.getenv("DB_SCRIPT_FOLDER")
@@ -297,7 +354,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
         try:
             # Parse DDL files
             db_parser = DBParser()
-            all_db_objects = db_parser.parse_ddl_directory(db_script_folder, project_name)
+            all_db_objects = db_parser.parse_ddl_directory(db_script_folder, None)
             
             if not all_db_objects:
                 click.echo("No DDL files found or parsed successfully.")
@@ -305,16 +362,30 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             
             click.echo(f"Found {len(all_db_objects)} DDL files to process.")
             
+            # Show summary of what will be processed
+            total_tables = sum(len(db_objects['tables']) for db_objects in all_db_objects)
+            total_columns = sum(len(db_objects['columns']) for db_objects in all_db_objects)
+            total_indexes = sum(len(db_objects['indexes']) for db_objects in all_db_objects)
+            total_constraints = sum(len(db_objects['constraints']) for db_objects in all_db_objects)
+            
+            click.echo(f"Summary:")
+            click.echo(f"  Total databases: {len(all_db_objects)}")
+            click.echo(f"  Total tables: {total_tables}")
+            click.echo(f"  Total columns: {total_columns}")
+            click.echo(f"  Total indexes: {total_indexes}")
+            click.echo(f"  Total constraints: {total_constraints}")
+            
             if dry_run:
-                click.echo("Dry run mode - not connecting to database.")
+                click.echo("\nDry run mode - not connecting to database.")
                 for i, db_objects in enumerate(all_db_objects):
-                    click.echo(f"DDL file {i+1}:")
+                    click.echo(f"\nDDL file {i+1}:")
                     click.echo(f"  Database: {db_objects['database'].name}")
+                    click.echo(f"  Environment: {db_objects['database'].environment}")
                     click.echo(f"  Tables: {len(db_objects['tables'])}")
                     click.echo(f"  Columns: {len(db_objects['columns'])}")
                     click.echo(f"  Indexes: {len(db_objects['indexes'])}")
                     click.echo(f"  Constraints: {len(db_objects['constraints'])}")
-                click.echo("DB object analysis complete (dry run).")
+                click.echo("\nDB object analysis complete (dry run).")
                 return
             
             # Connect to database
@@ -337,31 +408,33 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 
                 # Add database
                 click.echo(f"Adding database: {db_objects['database'].name}")
-                db.add_database(db_objects['database'], project_name)
+                db.add_database(db_objects['database'], None)
                 
                 # Add tables
                 for table_obj in db_objects['tables']:
                     click.echo(f"Adding table: {table_obj.name}")
-                    db.add_table(table_obj, db_objects['database'].name, project_name)
+                    db.add_table(table_obj, db_objects['database'].name, None)
                 
                 # Add columns
                 for column_obj in db_objects['columns']:
                     table_name = getattr(column_obj, 'table_name', 'unknown')
                     click.echo(f"Adding column: {column_obj.name} to table {table_name}")
-                    db.add_column(column_obj, table_name, project_name)
+                    db.add_column(column_obj, table_name, None)
                 
                 # Add indexes
                 for index_obj, table_name in db_objects['indexes']:
                     click.echo(f"Adding index: {index_obj.name} to table {table_name}")
-                    db.add_index(index_obj, table_name, project_name)
+                    db.add_index(index_obj, table_name, None)
                 
                 # Add constraints
                 for constraint_obj, table_name in db_objects['constraints']:
                     click.echo(f"Adding constraint: {constraint_obj.name} to table {table_name}")
-                    db.add_constraint(constraint_obj, table_name, project_name)
+                    db.add_constraint(constraint_obj, table_name, None)
             
             db.close()
-            click.echo("DB object analysis complete.")
+            click.echo(f"\nDB object analysis complete!")
+            click.echo(f"Successfully processed {len(all_db_objects)} DDL files.")
+            click.echo(f"Added {total_tables} tables, {total_columns} columns, {total_indexes} indexes, and {total_constraints} constraints to the database.")
             return
             
         except Exception as e:
@@ -856,7 +929,7 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--class-name', required=True, help='Name of the class to analyze')
 @click.option('--method-name', help='Specific method to analyze (optional)')
-@click.option('--max-depth', default=3, help='Maximum depth of call chain to follow (default: 3)')
+@click.option('--max-depth', default=10, help='Maximum depth of call chain to follow (default: 3)')
 @click.option('--include-external', is_flag=True, help='Include calls to external libraries')
 @click.option('--method-focused', is_flag=True, help='Generate method-focused diagram (shows only the specified method and its direct calls)')
 @click.option('--project-name', help='Project name for database analysis (optional, will auto-detect if not provided)')
@@ -923,8 +996,9 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
             # Default: save to {class_name}.md in the same directory as output_path
             if output_path:
                 output_dir = os.path.dirname(output_path)
-                os.makedirs(output_dir, exist_ok=True)
-                default_filename = os.path.join(output_dir, f"{class_name}.md")
+                if output_dir:  # Only create directory if it's not empty
+                    os.makedirs(output_dir, exist_ok=True)
+                default_filename = os.path.join(output_dir, f"{class_name}.md") if output_dir else f"{class_name}.md"
             else:
                 default_filename = f"{class_name}.md"
             
