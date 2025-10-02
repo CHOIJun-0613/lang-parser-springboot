@@ -1,165 +1,67 @@
-# Java Code Analyzer
+# Java 소스 코드 분석기
 
-This project is a Python-based tool for analyzing Java source code and visualizing the class relationships as a graph in a Neo4j database.
+## 1. 개요
 
-## Features
+이 프로젝트는 지정된 경로의 Java 소스 코드를 분석하여 그 구조와 관계를 시각화하고 데이터베이스에 저장하는 도구입니다. 코드를 파싱하여 클래스, 메서드, 속성 등의 구성 요소를 추출하고, 이들 간의 호출 관계 및 데이터베이스 상호작용을 분석하여 Neo4j 그래프 데이터베이스에 저장합니다.
 
-- Parses Java projects to identify classes, properties, and method calls.
-- Stores the code structure in a Neo4j graph database.
-- Provides a CLI for triggering the analysis.
-- **NEW**: Generates sequence diagrams showing method call relationships.
-- **NEW**: Interactive class and method exploration tools.
+## 2. 프로젝트 구조
 
-## Project Structure
-
-- `src/`: Contains the main source code.
-    - `cli/`: Command-line interface 정의.
-    - `models/`: 그래프 엔티티(예: 클래스, 메서드)를 위한 데이터 모델.
-    - `services/`: Java 파싱(`java_parser.py`) 및 Neo4j 상호작용(`graph_db.py`)을 위한 핵심 로직.
-- `tests/`: 단위, 통합 및 계약 테스트.
-    - `sample_java_project/`: 테스트에 사용되는 샘플 Java 파일.
-- `specs/`: 프로젝트 사양 및 문서.
-
-## Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository_url>
-    cd <repository_directory>
-    ```
-
-2.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## Usage
-
-Java 프로젝트를 분석하려면 `analyze` 명령어를 사용하세요. Java 소스 폴더와 Neo4j 연결 세부 정보를 지정할 수 있습니다. Neo4j 자격 증명은 환경 변수(`NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`)로 설정하거나 옵션으로 전달하는 것이 좋습니다.
-
-```bash
-python -m src.cli.main analyze --java-source-folder /path/to/your/java/project --neo4j-password <your_password>
+```
+src/
+├── cli/
+│   └── main.py           # CLI(Command Line Interface) 엔트리 포인트
+├── models/
+│   └── graph_entities.py # Graph DB에 저장될 데이터 모델 (Node, Relationship) 정의
+├── services/
+│   ├── java_parser.py    # Java 소스 코드를 파싱하여 AST(Abstract Syntax Tree) 생성 및 분석
+│   ├── sql_parser.py     # 코드 내 SQL 문을 파싱하고 분석
+│   ├── db_call_analysis.py # Java 코드와 DB 호출 관계 분석
+│   ├── graph_db.py       # Neo4j 데이터베이스 연결 및 데이터 CRUD 관리
+│   └── sequence_diagram_generator.py # 분석 데이터를 기반으로 시퀀스 다이어그램 생성
+└── utils/
+    └── logger.py         # 로깅 유틸리티
 ```
 
-**옵션:**
+## 3. 주요 모듈 설명
 
-- `--java-source-folder <path>`: Java 소스 프로젝트 폴더 경로. (`JAVA_SOURCE_FOLDER` 환경 변수를 통해서도 설정 가능).
-- `--neo4j-uri <uri>`: Neo4j URI (기본값: `bolt://localhost:7687`). (`NEO4J_URI` 환경 변수를 통해서도 설정 가능).
-- `--neo4j-user <username>`: Neo4j 사용자 이름 (기본값: `neo4j`). (`NEO4J_USER` 환경 변수를 통해서도 설정 가능).
-- `--neo4j-password <password>`: Neo4j 비밀번호. (`NEO4J_PASSWORD` 환경 변수를 통해서도 설정 가능).
-- `--clean`: 분석 전에 데이터베이스를 초기화합니다.
+### `cli/main.py`
 
-**데이터베이스 초기화 예시:**
+-   애플리케이션의 메인 시작점입니다.
+-   `argparse`를 사용하여 커맨드 라인 인자(분석할 프로젝트 경로 등)를 처리하고, 전체 분석 프로세스를 조율합니다.
 
-```bash
-python -m src.cli.main analyze --java-source-folder /path/to/your/java/project --clean
-```
+### `models/graph_entities.py`
 
-더 자세한 지침 및 예시는 [Quickstart Guide](./specs/001-java-class-properyties/quickstart.md)를 참조하십시오.
+-   Neo4j 그래프 데이터베이스에 저장될 노드(Node)와 관계(Relationship)의 데이터 구조를 Pydantic 모델로 정의합니다.
+-   예: `Project`, `File`, `Class`, `Method`, `Call` 등.
 
-## Sequence Diagram Generation
+### `services/java_parser.py`
 
-Java 코드 분석 후, 특정 클래스의 메서드 호출 관계를 시각화하는 sequence diagram을 생성할 수 있습니다.
+-   `javalang` 라이브러리를 사용하여 Java 소스 파일을 파싱합니다.
+-   클래스, 인터페이스, 메서드, 필드, 어노테이션 등의 정보를 추출하여 그래프 엔티티로 변환합니다.
 
-**주의**: Sequence diagram 기능을 사용하기 전에 `.env` 파일에 Neo4j 접속 정보를 설정해야 합니다.
+### `services/sql_parser.py`
 
-```bash
-# .env 파일 예시
-NEO4J_URI=neo4j://127.0.0.1:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_password
-```
+-   `sqlparse` 라이브러리를 사용하여 코드에서 추출된 SQL 쿼리문을 분석합니다.
+-   쿼리 유형(SELECT, INSERT 등), 대상 테이블, 컬럼 등의 정보를 식별합니다.
 
-### 사용 가능한 클래스 목록 보기
+### `services/db_call_analysis.py`
 
-```bash
-python -m src.cli.main list-classes
-```
+-   `java_parser`와 `sql_parser`의 분석 결과를 종합합니다.
+-   Java 메서드와 관련된 데이터베이스 테이블 간의 관계(e.g., CRUD)를 분석하고, 이를 그래프 DB에 저장할 수 있도록 가공합니다.
 
-### 특정 클래스의 메서드 목록 보기
+### `services/graph_db.py`
 
-```bash
-python -m src.cli.main list-methods --class-name <class_name>
-```
+-   Neo4j 데이터베이스와의 모든 상호작용을 담당합니다.
+-   노드 및 관계의 생성, 조회, 업데이트, 삭제(CRUD) 로직을 포함합니다.
 
-### Sequence Diagram 생성
+### `utils/logger.py`
 
-특정 클래스의 모든 메서드에 대한 sequence diagram 생성:
+-   프로젝트 전반에서 사용될 로거를 설정하고 관리하는 유틸리티입니다.
+
+## 4. 실행 방법
+
+커맨드 라인에서 `src/cli/main.py`를 실행하여 분석을 시작할 수 있습니다. 분석할 Java 프로젝트의 경로를 인자로 전달해야 합니다.
 
 ```bash
-python -m src.cli.main sequence --class-name <class_name>
-```
-
-특정 메서드에 대한 sequence diagram 생성:
-
-```bash
-python -m src.cli.main sequence --class-name <class_name> --method-name <method_name>
-```
-
-메서드 중심의 간단한 sequence diagram 생성 (직접 호출만 표시):
-
-```bash
-python -m src.cli.main sequence --class-name <class_name> --method-name <method_name> --method-focused
-```
-
-파일로 저장:
-
-```bash
-python -m src.cli.main sequence --class-name <class_name> --output-file diagram.md
-```
-
-외부 라이브러리 호출 포함:
-
-```bash
-python -m src.cli.main sequence --class-name <class_name> --include-external
-```
-
-호출 체인 깊이 제한:
-
-```bash
-python -m src.cli.main sequence --class-name <class_name> --max-depth 5
-```
-
-### 이미지로 변환
-
-Mermaid 다이어그램을 이미지 파일로 변환:
-
-```bash
-# PNG 이미지로 변환
-python -m src.cli.main sequence --class-name <class_name> --output-image diagram.png
-
-# SVG 이미지로 변환 (벡터, 확대해도 깨지지 않음)
-python -m src.cli.main sequence --class-name <class_name> --output-image diagram.svg --image-format svg
-
-# PDF로 변환
-python -m src.cli.main sequence --class-name <class_name> --output-image diagram.pdf --image-format pdf
-
-# 고해상도 이미지 생성
-python -m src.cli.main sequence --class-name <class_name> --output-image diagram.png --image-width 2000 --image-height 1500
-```
-
-**주의**: 이미지 변환을 위해서는 `mermaid-cli`가 설치되어 있어야 합니다:
-```bash
-npm install -g @mermaid-js/mermaid-cli
-```
-
-**옵션:**
-
-- `--class-name <name>`: 분석할 클래스 이름 (필수)
-- `--method-name <name>`: 특정 메서드 분석 (선택사항)
-- `--max-depth <number>`: 호출 체인 최대 깊이 (기본값: 3)
-- `--include-external`: 외부 라이브러리 호출 포함
-- `--method-focused`: 메서드 중심 모드 (직접 호출만 표시, --method-name과 함께 사용)
-- `--output-file <path>`: 다이어그램을 파일로 저장
-- `--output-image <path>`: 이미지 파일로 변환 (PNG/SVG/PDF)
-- `--image-format <format>`: 이미지 형식 (png, svg, pdf, 기본값: png)
-- `--image-width <width>`: 이미지 너비 (기본값: 1200)
-- `--image-height <height>`: 이미지 높이 (기본값: 800)
-
-## Testing
-
-프로젝트 테스트를 실행하려면 `pytest`를 사용하십시오.
-
-```bash
-pytest
+python -m src.cli.main --project_path <분석할 프로젝트 경로>
 ```

@@ -929,16 +929,15 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--class-name', required=True, help='Name of the class to analyze')
 @click.option('--method-name', help='Specific method to analyze (optional)')
-@click.option('--max-depth', default=10, help='Maximum depth of call chain to follow (default: 3)')
+@click.option('--max-depth', default=10, help='Maximum depth of call chain to follow (default: 10)')
 @click.option('--include-external', is_flag=True, help='Include calls to external libraries')
-@click.option('--method-focused', is_flag=True, help='Generate method-focused diagram (shows only the specified method and its direct calls)')
 @click.option('--project-name', help='Project name for database analysis (optional, will auto-detect if not provided)')
 @click.option('--output-file', help='Output file to save the diagram (optional)')
 @click.option('--output-image', help='Output image file (PNG/SVG/PDF) - requires mermaid-cli')
 @click.option('--image-format', default='png', type=click.Choice(['png', 'svg', 'pdf']), help='Image format (default: png)')
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
-def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, method_focused, project_name, output_file, output_image, image_format, image_width, image_height):
+def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, project_name, output_file, output_image, image_format, image_width, image_height):
     """Generate sequence diagram for a specific class and optionally a method."""
     
     try:
@@ -956,28 +955,17 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
         click.echo(f"Generating sequence diagram for class: {class_name}")
         if method_name:
             click.echo(f"Focusing on method: {method_name}")
-        if method_focused:
-            click.echo("Method-focused mode: showing only direct calls from the specified method")
         if project_name:
             click.echo(f"Using project: {project_name}")
         else:
             click.echo("Auto-detecting project name...")
         
-        # Determine output path for sequence diagram files
-        output_path = None
-        if output_image:
-            output_path = output_image
-        elif output_file:
-            output_path = output_file
-        
         diagram = generator.generate_sequence_diagram(
             class_name=class_name,
             method_name=method_name,
-            max_depth=max_depth if not method_focused else 1,  # Method-focused uses depth 1
+            max_depth=max_depth,
             include_external_calls=include_external,
-            method_focused=method_focused,
-            project_name=project_name,
-            output_path=output_path
+            project_name=project_name
         )
         
         click.echo(f"Diagram generated (length: {len(diagram)})")
@@ -987,34 +975,29 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
             click.echo(f"Error: {diagram}")
             return
         
-        # Output the diagram
-        if output_file:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(diagram)
-            click.echo(f"Sequence diagram saved to: {output_file}")
-        else:
-            # Default: save to {class_name}.md in the same directory as output_path
-            if output_path:
-                output_dir = os.path.dirname(output_path)
-                if output_dir:  # Only create directory if it's not empty
-                    os.makedirs(output_dir, exist_ok=True)
-                default_filename = os.path.join(output_dir, f"{class_name}.md") if output_dir else f"{class_name}.md"
-            else:
-                default_filename = f"{class_name}.md"
-            
-            with open(default_filename, 'w', encoding='utf-8') as f:
-                f.write(diagram)
-            click.echo(f"Sequence diagram saved to: {default_filename}")
-            
-            click.echo("\n" + "="*50)
-            click.echo("SEQUENCE DIAGRAM")
-            click.echo("="*50)
-            click.echo(diagram)
-            click.echo("="*50)
+        # Determine output path for sequence diagram files
+        md_output_path = output_file
+        if not md_output_path and output_image:
+            # If only image is specified, create a default .md path
+            md_output_path = os.path.splitext(output_image)[0] + ".md"
+        elif not md_output_path:
+            md_output_path = f"{class_name}.md"
+
+        # Save the diagram to a .md file
+        with open(md_output_path, 'w', encoding='utf-8') as f:
+            f.write(diagram)
+        click.echo(f"Sequence diagram saved to: {md_output_path}")
         
         # Convert to image if requested
         if output_image:
             convert_to_image(diagram, output_image, image_format, image_width, image_height)
+        else:
+            # If no image output, print diagram to console
+            click.echo("\n" + "="*50)
+            click.echo("SEQUENCE DIAGRAM PREVIEW")
+            click.echo("="*50)
+            click.echo(diagram)
+            click.echo("="*50)
         
     except Exception as e:
         click.echo(f"Error generating sequence diagram: {e}")
