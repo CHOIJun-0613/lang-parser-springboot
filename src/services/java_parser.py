@@ -25,6 +25,93 @@ def extract_project_name(java_source_folder: str) -> str:
     return path.name
 
 
+def extract_sub_type(package_name: str, class_name: str, annotations: list[Annotation]) -> str:
+    """
+    패키지명과 클래스명, 어노테이션을 기반으로 sub_type을 추출합니다.
+    
+    Args:
+        package_name: 패키지명
+        class_name: 클래스명
+        annotations: 클래스 어노테이션 리스트
+        
+    Returns:
+        sub_type (controller, service, util, dto, config, mapper, repository, entity, exception, client)
+    """
+    # 패키지명의 마지막 단어 추출
+    package_parts = package_name.split('.')
+    last_package_part = package_parts[-1].lower() if package_parts else ""
+    
+    # 어노테이션 기반 판단
+    annotation_names = [ann.name.lower() for ann in annotations]
+    
+    # Controller 판단
+    if any(ann in annotation_names for ann in ['@controller', '@restcontroller', '@controlleradvice']):
+        return 'controller'
+    
+    # Service 판단
+    if any(ann in annotation_names for ann in ['@service', '@component']):
+        return 'service'
+    
+    # Repository 판단
+    if any(ann in annotation_names for ann in ['@repository', '@mapper']):
+        return 'repository'
+    
+    # Entity 판단
+    if any(ann in annotation_names for ann in ['@entity', '@table', '@mappedsuperclass']):
+        return 'entity'
+    
+    # Configuration 판단
+    if any(ann in annotation_names for ann in ['@configuration', '@config', '@enableautoconfiguration']):
+        return 'config'
+    
+    # 패키지명 기반 판단
+    if last_package_part in ['controller', 'controllers']:
+        return 'controller'
+    elif last_package_part in ['service', 'services']:
+        return 'service'
+    elif last_package_part in ['util', 'utils', 'utility']:
+        return 'util'
+    elif last_package_part in ['dto', 'dtos', 'model', 'models']:
+        return 'dto'
+    elif last_package_part in ['config', 'configuration']:
+        return 'config'
+    elif last_package_part in ['mapper', 'mappers']:
+        return 'mapper'
+    elif last_package_part in ['repository', 'repositories']:
+        return 'repository'
+    elif last_package_part in ['entity', 'entities', 'domain']:
+        return 'entity'
+    elif last_package_part in ['exception', 'exceptions']:
+        return 'exception'
+    elif last_package_part in ['client', 'clients']:
+        return 'client'
+    
+    # 클래스명 기반 판단 (fallback)
+    class_name_lower = class_name.lower()
+    if class_name_lower.endswith('controller'):
+        return 'controller'
+    elif class_name_lower.endswith('service'):
+        return 'service'
+    elif class_name_lower.endswith('util') or class_name_lower.endswith('utils'):
+        return 'util'
+    elif class_name_lower.endswith('dto') or class_name_lower.endswith('request') or class_name_lower.endswith('response'):
+        return 'dto'
+    elif class_name_lower.endswith('config') or class_name_lower.endswith('configuration'):
+        return 'config'
+    elif class_name_lower.endswith('mapper'):
+        return 'mapper'
+    elif class_name_lower.endswith('repository'):
+        return 'repository'
+    elif class_name_lower.endswith('entity'):
+        return 'entity'
+    elif class_name_lower.endswith('exception'):
+        return 'exception'
+    elif class_name_lower.endswith('client'):
+        return 'client'
+    
+    return ""
+
+
 def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], project_name: str) -> list[SqlStatement]:
     """
     MyBatis mappers에서 SQL statements를 추출하고 SQL 파서를 사용하여 분석합니다.
@@ -908,7 +995,25 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
             elif tag_name == "delete":
                 sql_type = "DELETE"
             
-            sql_content = statement.text.strip() if statement.text else ""
+            # SQL 내용 추출 - CDATA와 하위 요소들 포함
+            sql_content = ""
+            if statement.text:
+                sql_content += statement.text.strip()
+            
+            # 하위 요소들의 텍스트도 포함
+            for child in statement:
+                if child.text:
+                    sql_content += " " + child.text.strip()
+                if child.tail:
+                    sql_content += " " + child.tail.strip()
+            
+            # CDATA 섹션 처리
+            if not sql_content:
+                # CDATA가 있는 경우를 위해 전체 텍스트 추출
+                import xml.etree.ElementTree as ET
+                sql_content = ET.tostring(statement, encoding='unicode', method='text').strip()
+            
+            sql_content = sql_content.strip()
             
             parameter_type = statement.get("parameterType", "")
             result_type = statement.get("resultType", "")
@@ -2475,11 +2580,15 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
                             class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
                             
+                            # sub_type 추출 (package name의 마지막 단어)
+                            sub_type = extract_sub_type(package_name, class_name, class_annotations)
+                            
                             classes[class_key] = Class(
                                 name=class_name,
                                 logical_name=class_key,
                                 file_path=file_path,
                                 type=class_type,
+                                sub_type=sub_type,
                                 source=file_content,
                                 annotations=class_annotations,
                                 package_name=package_name,

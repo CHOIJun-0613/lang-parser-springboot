@@ -69,7 +69,7 @@ class GraphDB:
         # Create or merge the class node itself
         class_query = (
             "MERGE (c:Class {name: $name}) "
-            "SET c.file_path = $file_path, c.type = $type, "
+            "SET c.file_path = $file_path, c.type = $type, c.sub_type = $sub_type, "
             "c.source = $source, c.logical_name = $logical_name, "
             "c.superclass = $superclass, c.interfaces = $interfaces, "
             "c.imports = $imports, c.package_name = $package_name, "
@@ -81,6 +81,7 @@ class GraphDB:
             name=class_node.name,
             file_path=class_node.file_path,
             type=class_node.type,
+            sub_type=class_node.sub_type or "",  # Add sub_type
             source=class_node.source,
             logical_name=class_node.logical_name,
             superclass=class_node.superclass,
