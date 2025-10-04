@@ -2450,7 +2450,8 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         package_name=package_name,
         annotations=[],
         description="Generated equals method for object comparison",  # Generated method description
-        ai_description=""
+        ai_description="",
+        is_lombok_generated=True  # Lombok generated method flag
     )
     methods.append(equals_method)
     
@@ -2464,7 +2465,8 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         package_name=package_name,
         annotations=[],
         description="Generated hashCode method for object hashing",  # Generated method description
-        ai_description=""
+        ai_description="",
+        is_lombok_generated=True  # Lombok generated method flag
     )
     methods.append(hashcode_method)
     
@@ -2478,7 +2480,8 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         package_name=package_name,
         annotations=[],
         description="Generated toString method for string representation",  # Generated method description
-        ai_description=""
+        ai_description="",
+        is_lombok_generated=True  # Lombok generated method flag
     )
     methods.append(tostring_method)
     

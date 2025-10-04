@@ -1,4 +1,5 @@
 import logging
+import copy
 from typing import List, Dict, Set, Optional
 from neo4j import Driver
 from src.utils.logger import get_logger
@@ -53,14 +54,24 @@ sequenceDiagram
         return dict(record) if record else None
 
     def _fetch_call_chain(self, session, class_name: str, method_name: Optional[str], max_depth: int, project_name: Optional[str]) -> List[Dict]:
+        """
+        클래스 단위 시퀀스 다이어그램을 위한 호출 체인을 가져옵니다.
+        method 단위와 동일한 방법으로 메서드 중첩과 SqlStatement/Table 호출관계를 처리합니다.
+        """
         query_params = {
             'class_name': class_name,
             'method_name': method_name,
             'project_name': project_name
         }
         
+        # method 단위와 동일한 쿼리 구조 사용
+        # 클래스 단위에서는 method_name이 None일 때 모든 메서드를 대상으로 하되, SQL 호출 관계는 유지
+        method_condition = "m.name = $method_name" if method_name else "true"
+        
         final_query = f"""
-        MATCH (c:Class)-[:HAS_METHOD]->(m:Method) WHERE c.name = $class_name AND (m.name = $method_name OR $method_name IS NULL) AND (c.project_name = $project_name OR $project_name IS NULL)
+        -- 1. 메서드 간 호출관계 (method 단위와 동일한 처리)
+        MATCH (c:Class)-[:HAS_METHOD]->(m:Method) 
+        WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
         MATCH path = (m)-[:CALLS*0..{max_depth}]->(callee:Method)
         UNWIND range(0, size(nodes(path))-1) as i
         WITH m.name as top_level_method, nodes(path)[i] AS source_method, nodes(path)[i+1] AS target_method, (i + 1) as depth
@@ -72,24 +83,28 @@ sequenceDiagram
         
         UNION ALL
         
-        MATCH (c:Class)-[:HAS_METHOD]->(m:Method) WHERE c.name = $class_name AND (m.name = $method_name OR $method_name IS NULL) AND (c.project_name = $project_name OR $project_name IS NULL)
+        -- 2. SqlStatement 호출관계 (method 단위와 동일한 처리)
+        MATCH (c:Class)-[:HAS_METHOD]->(m:Method) 
+        WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
         MATCH path = (m)-[:CALLS*0..{max_depth}]->(calling_method:Method)
         MATCH (source_class:Class)-[:HAS_METHOD]->(calling_method)
         MATCH (mapper_node:MyBatisMapper {{name: source_class.name, project_name: $project_name}})
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name}})
         WITH m, path, source_class, calling_method, sql
-        WHERE source_class.project_name IS NOT NULL
+        WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL
         RETURN DISTINCT m.name as top_level_method, source_class.name AS source_class, calling_method.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, length(path) + 1 AS depth, "" as table_name, "" as sql_type, "" as target_package
         
         UNION ALL
         
-        MATCH (c:Class)-[:HAS_METHOD]->(m:Method) WHERE c.name = $class_name AND (m.name = $method_name OR $method_name IS NULL) AND (c.project_name = $project_name OR $project_name IS NULL)
+        -- 3. Table 호출관계 (method 단위와 동일한 처리)
+        MATCH (c:Class)-[:HAS_METHOD]->(m:Method) 
+        WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
         MATCH path = (m)-[:CALLS*0..{max_depth}]->(calling_method:Method)
         MATCH (source_class:Class)-[:HAS_METHOD]->(calling_method)
         MATCH (mapper_node:MyBatisMapper {{name: source_class.name, project_name: $project_name}})
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name}})
         WITH m, path, source_class, calling_method, sql
-        WHERE source_class.project_name IS NOT NULL AND sql.tables IS NOT NULL
+        WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
         RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, length(path) + 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as target_package
         """
@@ -154,10 +169,14 @@ sequenceDiagram
             if not is_single_method_flow:
                 diagram_lines.append(f"    opt flow for {top_method}")
 
-            # 시작 메서드 호출 표시 (외부에서 호출되는 형태)
-            if start_method:
-                diagram_lines.append(f"    Client->>{main_class_name}: {start_method}()")
-                diagram_lines.append(f"    activate {main_class_name}")
+            # 각 flow마다 Client 호출 표시
+            diagram_lines.append(f"    Client->>{main_class_name}: {top_method}()")
+            diagram_lines.append(f"    activate {main_class_name}")
+            
+            # Stack-based rendering on the correctly ordered flow
+            activation_stack = []
+            active_participants = set()  # 현재 활성화된 participant 추적
+            active_participants.add(main_class_name)
 
             # Build a map of calls from each source
             calls_from_source = {}
@@ -176,12 +195,15 @@ sequenceDiagram
             entry_method = top_method
 
             def build_flow_dfs(source_class, source_method):
+                """
+                method 단위와 동일한 DFS 방식으로 메서드 중첩을 처리합니다.
+                """
                 key = (source_class, source_method)
                 if key in calls_from_source:
-                    # 소스코드의 실제 호출 순서를 유지하기 위해 메서드명으로 정렬
+                    # method 단위와 동일한 메서드 호출 순서 정렬
                     def sort_key(call):
                         method_name = call['target_method']
-                        # 소스코드의 실제 호출 순서에 맞게 정의
+                        # 소스코드의 실제 호출 순서에 맞게 정의 (method 단위와 동일)
                         order_map = {
                             'getCurrentUser': 1,
                             'getUserList': 2,
@@ -193,62 +215,102 @@ sequenceDiagram
                         return order_map.get(method_name, 999)
                     
                     sorted_children = sorted(calls_from_source[key], key=sort_key)
+                    
+                    # method 단위와 동일한 방식으로 호출된 메서드들을 저장하고 처리
+                    method_calls = []
                     for call in sorted_children:
                         edge = (call['source_class'], call['source_method'], call['target_class'], call['target_method'])
                         if edge not in visited_edges:
                             visited_edges.add(edge)
-                            ordered_flow.append(call)
-                            build_flow_dfs(call['target_class'], call['target_method'])
+                            method_caller_call = copy.deepcopy(call)
+                            method_caller_call['source_class'] = call['source_class']
+                            method_caller_call['source_method'] = call['source_method']
+                            method_calls.append(method_caller_call)
+                    
+                    # method 단위와 동일한 방식으로 각 메서드 호출을 처리
+                    for call in method_calls:
+                        ordered_flow.append(call)
+                        # method 단위와 동일한 재귀 호출로 내부 호출 체인을 완전히 처리
+                        build_flow_dfs(call['target_class'], call['target_method'])
+                        
+                        # method 단위와 동일한 반환 처리 (메서드의 전체 호출 체인 완료 후)
+                        # 내부 호출인지 외부 호출인지에 따라 반환 대상 결정
+                        if call['source_class'] == call['target_class']:
+                            # 내부 호출: 자기 자신에게 반환 (method 단위와 동일)
+                            return_target = call['target_class']
+                        else:
+                            # 외부 호출: 호출한 곳으로 반환 (method 단위와 동일)
+                            return_target = call['source_class']
+                        
+                        ordered_flow.append({
+                            'source_class': call['target_class'],
+                            'source_method': call['target_method'],
+                            'target_class': return_target,
+                            'target_method': call['source_method'],
+                            'return_type': call.get('return_type', 'void'),
+                            'is_return': True
+                        })
             
             build_flow_dfs(entry_source, entry_method)
-
-            # Stack-based rendering on the correctly ordered flow
-            activation_stack = []
+            
             for call in ordered_flow:
+                # method 단위와 동일한 방식으로 반환 처리
+                if call.get('is_return', False):
+                    # method 단위와 동일한 반환 처리
+                    source = call['source_class']
+                    target = call['target_class']
+                    return_type = call.get('return_type', 'void')
+                    
+                    # method 단위와 동일한 반환 표시
+                    diagram_lines.append(f"    {source}-->>{target}: return ({return_type})")
+                    
+                    # method 단위와 동일한 방식으로 모든 반환에 대해 deactivate 처리 (내부 호출도 중첩 박스 닫기)
+                    if source in active_participants:
+                        diagram_lines.append(f"    deactivate {source}")
+                        active_participants.remove(source)
+                    
+                    # method 단위와 동일한 방식으로 activation_stack에서 해당 participant 제거
+                    activation_stack = [a for a in activation_stack if a['participant'] != source]
+                    continue
+                
+                
+                
                 source = call['source_class']
                 target = call['target_class']
                 method = call['target_method']
+                source_method = call['source_method']
                 return_type = call.get('return_type') or 'void'
 
                 # 현재 호출이 같은 클래스 내부 호출인지 확인
-                is_internal_call = (source == target)
-                
-                if not is_internal_call:
-                    # 다른 클래스로의 호출인 경우, 이전 activation들을 정리
-                    while activation_stack and activation_stack[-1]['participant'] != source:
-                        ended_activation = activation_stack.pop()
-                        return_to = activation_stack[-1]['participant'] if activation_stack else source
-                        diagram_lines.append(f"    {ended_activation['participant']}-->>{return_to}: return ({ended_activation['return_type']})")
-                        diagram_lines.append(f"    deactivate {ended_activation['participant']}")
+                is_internal_call = (source == target and source_method != method)
 
                 if source and target and method:
+                    # method 단위와 동일한 방식으로 SqlStatement와 Table 호출관계 처리
                     if source == 'SQL':
+                        # SQL에서 Table로의 호출 (method 단위와 동일한 처리)
                         call_str = f"    {source}->>{target}: 🔍 {method}"
                     elif target in table_participants:
+                        # Table 호출 (method 단위와 동일한 처리)
                         call_str = f"    {source}->>{target}: 📊 {method}"
                     elif target == 'SQL':
+                        # Method에서 SQL로의 호출 (method 단위와 동일한 처리)
                         call_str = f"    {source}->>{target}: {method}"  # SQL 호출 시 () 제거
                     else:
+                        # 일반 메서드 호출 (method 단위와 동일한 처리)
                         call_str = f"    {source}->>{target}: {method}()"
                     diagram_lines.append(call_str)
                     
-                    # 같은 클래스 내부 호출이 아닌 경우에만 activate
-                    if not is_internal_call:
-                        diagram_lines.append(f"    activate {target}")
-                        activation_stack.append({'participant': target, 'return_type': return_type, 'source': source})
-
-            while activation_stack:
-                ended_activation = activation_stack.pop()
-                return_to = ended_activation.get('source') or main_class_name
-                diagram_lines.append(f"    {ended_activation['participant']}-->>{return_to}: return ({ended_activation['return_type']})")
-                diagram_lines.append(f"    deactivate {ended_activation['participant']}")
+                    # method 단위와 동일한 방식으로 모든 호출에 대해 activate 처리 (내부 호출도 중첩 박스로 표시)
+                    diagram_lines.append(f"    activate {target}")
+                    activation_stack.append({'participant': target, 'return_type': return_type, 'source': source})
+                    active_participants.add(target)
 
             # 시작 메서드의 activation 블럭 종료
-            diagram_lines.append(f"    deactivate {main_class_name}")
+            if main_class_name in active_participants:
+                diagram_lines.append(f"    deactivate {main_class_name}")
             
-            # 시작 메서드의 return 표시
-            if start_method:
-                diagram_lines.append(f"    {main_class_name}-->>Client: return (ResponseEntity)")
+            # 각 flow의 마지막 반환 표시
+            diagram_lines.append(f"    {main_class_name}-->>Client: return (ResponseEntity)")
 
             if not is_single_method_flow:
                 diagram_lines.append("    end")

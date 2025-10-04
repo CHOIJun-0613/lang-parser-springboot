@@ -937,7 +937,9 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
 @click.option('--image-format', default='png', type=click.Choice(['png', 'svg', 'pdf']), help='Image format (default: png)')
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
-def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, project_name, output_file, output_image, image_format, image_width, image_height):
+@click.option('--format', default='plantuml', type=click.Choice(['mermaid', 'plantuml']), help='Diagram format (default: plantuml)')
+@click.option('--output-dir', default='output/sequence-diagram', help='Output directory for sequence diagrams (default: output/sequence-diagram)')
+def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, project_name, output_file, output_image, image_format, image_width, image_height, format, output_dir):
     """Generate sequence diagram for a specific class and optionally a method."""
     
     try:
@@ -949,10 +951,16 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
         
         click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
-        generator = SequenceDiagramGenerator(driver)
+        
+        # Choose generator based on format
+        if format == 'plantuml':
+            from src.services.plantuml_diagram_generator import PlantUMLDiagramGenerator
+            generator = PlantUMLDiagramGenerator(driver)
+        else:
+            generator = SequenceDiagramGenerator(driver)
         
         # Generate the sequence diagram
-        click.echo(f"Generating sequence diagram for class: {class_name}")
+        click.echo(f"Generating {format} sequence diagram for class: {class_name}")
         if method_name:
             click.echo(f"Focusing on method: {method_name}")
         if project_name:
@@ -965,7 +973,8 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
             method_name=method_name,
             max_depth=max_depth,
             include_external_calls=include_external,
-            project_name=project_name
+            project_name=project_name,
+            output_dir=output_dir
         )
         
         click.echo(f"Diagram generated (length: {len(diagram)})")
