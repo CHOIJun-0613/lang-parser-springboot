@@ -42,7 +42,7 @@ note over {class_name}: No outbound calls found for {method_name}.
 @enduml"""
 
                 flows = self._build_flows(call_chain, method_name)
-                diagram = self._generate_plantuml_diagram(class_info, flows, include_external_calls, method_name)
+                diagram = self._generate_plantuml_diagram(session, class_info, flows, include_external_calls, method_name, project_name)
                 return diagram
         except Exception as e:
             logger.error(f"Error generating PlantUML sequence diagram: {e}", exc_info=True)
@@ -51,6 +51,14 @@ note over {class_name}: No outbound calls found for {method_name}.
     def _generate_class_level_diagram(self, session, class_info: Dict, max_depth: int, include_external_calls: bool, project_name: Optional[str], output_dir: str) -> str:
         """클래스 단위 다이어그램 생성: 각 메서드별로 별도 파일 생성"""
         class_name = class_info['name']
+        package_name = class_info.get('package_name', '')
+        
+        # 패키지명을 디렉토리 경로로 변환
+        if package_name:
+            package_path = package_name.replace('.', os.sep)
+            final_output_dir = os.path.join(output_dir, package_path)
+        else:
+            final_output_dir = output_dir
         
         # 1. 클래스의 메서드들을 리스트업
         methods = self._get_class_methods(session, class_name, project_name)
@@ -75,14 +83,14 @@ note over {class_name}: No methods found in this class.
                 
                 if method_flows:
                     # 개별 메서드 다이어그램 생성
-                    diagram = self._generate_plantuml_diagram(class_info, method_flows, include_external_calls, method_name)
+                    diagram = self._generate_plantuml_diagram(session, class_info, method_flows, include_external_calls, method_name, project_name)
                     
                     # 파일명 생성: SEQ_클래스명_메서드명_YYYYMMDD-HH24MiSS.puml
                     filename = f"SEQ_{class_name}_{method_name}_{timestamp}.puml"
                     
-                    # 지정된 디렉토리에 파일 저장
-                    os.makedirs(output_dir, exist_ok=True)
-                    filepath = os.path.join(output_dir, filename)
+                    # 지정된 디렉토리에 파일 저장 (패키지 구조 반영)
+                    os.makedirs(final_output_dir, exist_ok=True)
+                    filepath = os.path.join(final_output_dir, filename)
                     
                     with open(filepath, 'w', encoding='utf-8') as f:
                         f.write(diagram)
@@ -102,7 +110,7 @@ note over {class_name}: No outbound calls found for any method in this class.
 
 {files_info}
 
-Files saved in: {output_dir}/ directory"""
+Files saved in: {final_output_dir}/ directory"""
 
     def _get_class_methods(self, session, class_name: str, project_name: Optional[str]) -> List[Dict]:
         """클래스의 메서드들을 가져옵니다."""
@@ -120,11 +128,22 @@ Files saved in: {output_dir}/ directory"""
         query = """
         MATCH (c:Class {name: $class_name})
         WHERE ($project_name IS NULL OR c.project_name = $project_name)
-        RETURN c.name as name, c.package as package, c.project_name as project_name
+        RETURN c.name as name, c.package_name as package_name, c.project_name as project_name
         """
         result = session.run(query, class_name=class_name, project_name=project_name)
         record = result.single()
         return dict(record) if record else None
+
+    def _get_method_return_type(self, session, class_name: str, method_name: str, project_name: Optional[str]) -> Optional[str]:
+        """Get method's return type from database."""
+        query = """
+        MATCH (c:Class {name: $class_name})-[:HAS_METHOD]->(m:Method {name: $method_name})
+        WHERE ($project_name IS NULL OR c.project_name = $project_name)
+        RETURN m.return_type as return_type
+        """
+        result = session.run(query, class_name=class_name, method_name=method_name, project_name=project_name)
+        record = result.single()
+        return record['return_type'] if record and record['return_type'] else None
 
     def _fetch_call_chain(self, session, class_name: str, method_name: Optional[str], max_depth: int, project_name: Optional[str]) -> List[Dict]:
         """Fetch call chain from database including SQL calls."""
@@ -152,7 +171,7 @@ Files saved in: {output_dir}/ directory"""
         MATCH (target_class:Class)-[:HAS_METHOD]->(target_method)
         WITH top_level_method, source_class, source_method, target_class, target_method, depth
         WHERE source_class.project_name IS NOT NULL AND target_class.project_name IS NOT NULL
-        RETURN DISTINCT top_level_method, source_class.name AS source_class, source_method.name AS source_method, target_class.name AS target_class, target_method.name AS target_method, target_method.return_type AS return_type, depth, "" as table_name, "" as sql_type, target_class.package_name as target_package
+        RETURN DISTINCT top_level_method, source_class.name AS source_class, source_method.name AS source_method, target_class.name AS target_class, target_method.name AS target_method, target_method.return_type AS return_type, depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, target_class.package_name as target_package, "" as mapper_name, "" as mapper_namespace, "" as mapper_file_path
         
         UNION ALL
         
@@ -162,9 +181,9 @@ Files saved in: {output_dir}/ directory"""
         MATCH (source_class:Class)-[:HAS_METHOD]->(calling_method)
         MATCH (mapper_node:MyBatisMapper {{name: source_class.name, project_name: $project_name}})
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name, project_name: $project_name}})
-        WITH m, path, source_class, calling_method, sql
+        WITH m, path, source_class, calling_method, sql, mapper_node
         WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL
-        RETURN DISTINCT m.name as top_level_method, source_class.name AS source_class, calling_method.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, length(path) + 1 AS depth, "" as table_name, "" as sql_type, "" as target_package
+        RETURN DISTINCT m.name as top_level_method, source_class.name AS source_class, calling_method.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, length(path) + 1 AS depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
         
         UNION ALL
         
@@ -173,7 +192,7 @@ Files saved in: {output_dir}/ directory"""
         MATCH (mapper_node:MyBatisMapper {{name: $class_name, project_name: $project_name}})
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name, project_name: $project_name}})
         WHERE sql IS NOT NULL
-        RETURN DISTINCT m.name as top_level_method, $class_name AS source_class, m.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, 1 AS depth, "" as table_name, "" as sql_type, "" as target_package
+        RETURN DISTINCT m.name as top_level_method, $class_name AS source_class, m.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, 1 AS depth, "" as table_name, "" as sql_type, c.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
         
         UNION ALL
         
@@ -183,10 +202,10 @@ Files saved in: {output_dir}/ directory"""
         MATCH (source_class:Class)-[:HAS_METHOD]->(calling_method)
         MATCH (mapper_node:MyBatisMapper {{name: source_class.name, project_name: $project_name}})
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name, project_name: $project_name}})
-        WITH m, path, source_class, calling_method, sql
+        WITH m, path, source_class, calling_method, sql, mapper_node
         WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
-        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, length(path) + 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as target_package
+        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, length(path) + 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
         
         UNION ALL
         
@@ -196,7 +215,7 @@ Files saved in: {output_dir}/ directory"""
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name, project_name: $project_name}})
         WHERE sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
-        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as target_package
+        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
         """
 
         result = session.run(final_query, query_params)
@@ -264,15 +283,51 @@ Files saved in: {output_dir}/ directory"""
         # Accept calls that are clearly part of the execution flow
         return bool(source_method and target_method and source_method != target_method)
 
-    def _generate_plantuml_diagram(self, class_info: Dict, flows: Dict[str, List[Dict]], include_external_calls: bool, start_method: Optional[str]) -> str:
+    def _generate_plantuml_diagram(self, session, class_info: Dict, flows: Dict[str, List[Dict]], include_external_calls: bool, start_method: Optional[str], project_name: Optional[str]) -> str:
         """Generate PlantUML sequence diagram with proper activation lifecycle management."""
         main_class_name = class_info['name']
+        main_class_package = class_info.get('package_name', '')
         all_calls = [call for flow in flows.values() for call in flow]
 
         # 디버깅 로그 추가
         sql_calls = [call for call in all_calls if call.get('target_class') == 'SQL']
         table_calls = [call for call in all_calls if call.get('source_class') == 'SQL']
         logger.info(f"_generate_plantuml_diagram: 총 {len(all_calls)}개 호출, SQL 호출: {len(sql_calls)}개, Table 호출: {len(table_calls)}개")
+
+        # Participant별 package 정보 수집
+        participant_packages = {}
+        
+        # 메인 클래스의 패키지 정보 추가
+        if main_class_package:
+            participant_packages[main_class_name] = main_class_package
+        
+        # SQL participant의 mapper 정보 수집
+        sql_mapper_info = {}
+        
+        # 모든 호출에서 participant의 package 정보 및 mapper 정보 수집
+        for call in all_calls:
+            source_class = call.get('source_class', '')
+            target_class = call.get('target_class', '')
+            source_package = call.get('source_package', '')
+            target_package = call.get('target_package', '')
+            mapper_name = call.get('mapper_name', '')
+            mapper_namespace = call.get('mapper_namespace', '')
+            mapper_file_path = call.get('mapper_file_path', '')
+            
+            if source_class and source_package and source_class not in ['Client', 'SQL']:
+                participant_packages[source_class] = source_package
+            if target_class and target_package and target_class not in ['Client', 'SQL']:
+                participant_packages[target_class] = target_package
+            
+            # SQL과 관련된 호출에서 mapper 정보 수집
+            if (target_class == 'SQL' or source_class == 'SQL') and mapper_file_path:
+                # 파일명 추출: 마지막 / 또는 \ 뒤의 문자열
+                file_name = os.path.basename(mapper_file_path)
+                
+                sql_mapper_info['SQL'] = {
+                    'file_name': file_name,
+                    'namespace': mapper_namespace
+                }
 
         # Participant ordering logic - SQL and Tables at the end
         table_participants = {p['target_class'] for p in all_calls if p['source_class'] == 'SQL'}
@@ -281,6 +336,13 @@ Files saved in: {output_dir}/ directory"""
         sql_participant = None
 
         all_calls.sort(key=lambda x: x.get('depth') or 0)
+
+        # Collect table schema information
+        table_schemas = {}
+        for table_name in table_participants:
+            schema = self._get_table_schema(session, table_name, project_name)
+            if schema:
+                table_schemas[table_name] = schema
 
         # First, collect all non-SQL/Table participants
         for call in all_calls:
@@ -315,16 +377,35 @@ Files saved in: {output_dir}/ directory"""
         diagram_lines.append(f"title {title}")
         diagram_lines.append("")
         
-        # Add participants
+        # Add participants with package information
         for p in final_participants_unique:
             if p == 'Client':
-                diagram_lines.append(f"actor {p} as \"👤 Client\"")
+                diagram_lines.append(f"actor {p} as \"Client\"")
             elif p == 'SQL':
-                diagram_lines.append(f"participant {p} as \"SQL statement\"")
+                # Add mapper file name and namespace to SQL participant if available
+                mapper_info = sql_mapper_info.get('SQL', {})
+                file_name = mapper_info.get('file_name', '')
+                namespace = mapper_info.get('namespace', '')
+                
+                if file_name and namespace:
+                    diagram_lines.append(f"participant SQL as \"{file_name}\" << {namespace} >>")
+                elif file_name:
+                    diagram_lines.append(f"participant SQL as \"{file_name}\"")
+                else:
+                    diagram_lines.append(f"participant SQL as \"SQL statement\"")
             elif p in table_participants:
-                diagram_lines.append(f"participant {p} as \"🗃️ Table: {p}\"")
+                schema = table_schemas.get(p, None)
+                if schema:
+                    diagram_lines.append(f"participant {p} << Table : {schema} >>")
+                else:
+                    diagram_lines.append(f"participant {p} << Table >>")
             else:
-                diagram_lines.append(f"participant {p}")
+                # Add package information as stereotype if available
+                package_info = participant_packages.get(p, '')
+                if package_info and package_info.strip():
+                    diagram_lines.append(f"participant {p} << {package_info} >>")
+                else:
+                    diagram_lines.append(f"participant {p}")
         
         diagram_lines.append("")
 
@@ -333,6 +414,9 @@ Files saved in: {output_dir}/ directory"""
         is_focused_method = (start_method is not None)
 
         for top_method, calls in flows.items():
+            # Top-level 메서드의 실제 return type 조회
+            top_method_return_type = self._get_method_return_type(session, main_class_name, top_method, project_name)
+            
             if not is_single_method_flow and not is_focused_method:
                 diagram_lines.append(f"group flow for {top_method}")
 
@@ -419,7 +503,8 @@ Files saved in: {output_dir}/ directory"""
                         active_participants.discard(source)
 
             # Final cleanup - return and deactivate any remaining active participants in reverse order
-            remaining_active = list(active_participants - {'Client'})
+            # Exclude Client and main_class_name from cleanup (they will be handled separately)
+            remaining_active = list(active_participants - {'Client', main_class_name})
             remaining_active.sort(key=lambda x: final_participants_unique.index(x) if x in final_participants_unique else 999)
             
             for participant in remaining_active:
@@ -427,8 +512,9 @@ Files saved in: {output_dir}/ directory"""
                 diagram_lines.append(f"{participant} --> {main_class_name} : return (void)")
                 diagram_lines.append(f"deactivate {participant}")
             
-            # Client final return
-            diagram_lines.append(f"{main_class_name} --> Client : return (ResponseEntity)")
+            # Client final return with actual return type
+            final_return_type = top_method_return_type if top_method_return_type else "void"
+            diagram_lines.append(f"{main_class_name} --> Client : return ({final_return_type})")
             diagram_lines.append(f"deactivate {main_class_name}")
             diagram_lines.append(f"deactivate Client")
 
@@ -549,6 +635,17 @@ Files saved in: {output_dir}/ directory"""
             return True
             
         return target_class in external_classes
+
+    def _get_table_schema(self, session, table_name: str, project_name: Optional[str]) -> Optional[str]:
+        """Get table schema information from database."""
+        query = """
+        MATCH (t:Table {name: $table_name})
+        WHERE (t.project_name IS NULL OR t.project_name = $project_name)
+        RETURN t.schema as schema
+        """
+        result = session.run(query, table_name=table_name, project_name=project_name)
+        record = result.single()
+        return record['schema'] if record and record['schema'] else None
 
     def _should_filter_call(self, call: Dict) -> bool:
         """Filter out incorrect call relationships."""

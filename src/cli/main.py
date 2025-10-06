@@ -938,7 +938,7 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
 @click.option('--format', default='plantuml', type=click.Choice(['mermaid', 'plantuml']), help='Diagram format (default: plantuml)')
-@click.option('--output-dir', default='output/sequence-diagram', help='Output directory for sequence diagrams (default: output/sequence-diagram)')
+@click.option('--output-dir', default=os.getenv("SEQUENCE_DIAGRAM_OUTPUT_DIR", "output/sequence-diagram"), help='Output directory for sequence diagrams (default: output/sequence-diagram)')
 def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, project_name, output_file, output_image, image_format, image_width, image_height, format, output_dir):
     """Generate sequence diagram for a specific class and optionally a method."""
     
