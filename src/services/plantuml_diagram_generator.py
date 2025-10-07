@@ -179,8 +179,9 @@ Files saved in: {final_output_dir}/ directory"""
         WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
         MATCH path = (m)-[:CALLS*0..{max_depth}]->(calling_method:Method)
         MATCH (source_class:Class)-[:HAS_METHOD]->(calling_method)
-        MATCH (mapper_node:MyBatisMapper {{name: source_class.name, project_name: $project_name}})
-        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name, project_name: $project_name}})
+        MATCH (mapper_node:MyBatisMapper {{name: source_class.name}})
+        WHERE mapper_node.project_name = $project_name OR $project_name IS NULL
+        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name}})
         WITH m, path, source_class, calling_method, sql, mapper_node
         WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL
         RETURN DISTINCT m.name as top_level_method, source_class.name AS source_class, calling_method.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, length(path) + 1 AS depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
@@ -189,8 +190,9 @@ Files saved in: {final_output_dir}/ directory"""
         
         MATCH (c:Class)-[:HAS_METHOD]->(m:Method) 
         WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
-        MATCH (mapper_node:MyBatisMapper {{name: $class_name, project_name: $project_name}})
-        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name, project_name: $project_name}})
+        MATCH (mapper_node:MyBatisMapper {{name: $class_name}})
+        WHERE mapper_node.project_name = $project_name OR $project_name IS NULL
+        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name}})
         WHERE sql IS NOT NULL
         RETURN DISTINCT m.name as top_level_method, $class_name AS source_class, m.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, 1 AS depth, "" as table_name, "" as sql_type, c.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
         
@@ -200,8 +202,9 @@ Files saved in: {final_output_dir}/ directory"""
         WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
         MATCH path = (m)-[:CALLS*0..{max_depth}]->(calling_method:Method)
         MATCH (source_class:Class)-[:HAS_METHOD]->(calling_method)
-        MATCH (mapper_node:MyBatisMapper {{name: source_class.name, project_name: $project_name}})
-        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name, project_name: $project_name}})
+        MATCH (mapper_node:MyBatisMapper {{name: source_class.name}})
+        WHERE mapper_node.project_name = $project_name OR $project_name IS NULL
+        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name}})
         WITH m, path, source_class, calling_method, sql, mapper_node
         WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
@@ -211,8 +214,9 @@ Files saved in: {final_output_dir}/ directory"""
         
         MATCH (c:Class)-[:HAS_METHOD]->(m:Method) 
         WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
-        MATCH (mapper_node:MyBatisMapper {{name: $class_name, project_name: $project_name}})
-        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name, project_name: $project_name}})
+        MATCH (mapper_node:MyBatisMapper {{name: $class_name}})
+        WHERE mapper_node.project_name = $project_name OR $project_name IS NULL
+        MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name}})
         WHERE sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
         RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
