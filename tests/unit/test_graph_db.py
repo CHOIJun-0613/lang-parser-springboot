@@ -2,8 +2,8 @@ import pytest
 from unittest.mock import MagicMock, patch
 import json # Added import for json
 
-from src.services.graph_db import GraphDB
-from src.models.graph_entities import Class, Field, Method, MethodCall # Import Method and Field
+from csa.services.graph_db import GraphDB
+from csa.models.graph_entities import Class, Field, Method, MethodCall # Import Method and Field
 
 @pytest.fixture
 def mock_db():

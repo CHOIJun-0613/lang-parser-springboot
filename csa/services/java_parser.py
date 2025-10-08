@@ -5,9 +5,9 @@ from pathlib import Path
 
 import javalang
 
-from src.models.graph_entities import Class, Method, MethodCall, Field, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, JpaRepository, JpaQuery, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration, Table
-from src.services.sql_parser import SQLParser
-from src.utils.logger import get_logger
+from csa.models.graph_entities import Class, Method, MethodCall, Field, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, JpaRepository, JpaQuery, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration, Table
+from csa.services.sql_parser import SQLParser
+from csa.utils.logger import get_logger
 from typing import Optional, List, Literal, Any
 
 
@@ -975,6 +975,7 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
         MyBatisMapper object
     """
     import xml.etree.ElementTree as ET
+    logger = get_logger(__name__)
     
     try:
         tree = ET.parse(file_path)
@@ -1070,10 +1071,10 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
         return mapper
         
     except ET.ParseError as e:
-        print(f"Error parsing XML file {file_path}: {e}")
+        logger.error(f"Error parsing XML file {file_path}: {e}")
         return None
     except Exception as e:
-        print(f"Error reading XML file {file_path}: {e}")
+        logger.error(f"Error reading XML file {file_path}: {e}")
         return None
 
 
@@ -1790,6 +1791,8 @@ def parse_yaml_config(file_path: str) -> ConfigFile:
     Returns:
         ConfigFile object
     """
+    logger = get_logger(__name__)
+    
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             documents = list(yaml.safe_load_all(f))
@@ -1834,7 +1837,7 @@ def parse_yaml_config(file_path: str) -> ConfigFile:
         )
     
     except Exception as e:
-        print(f"Error parsing YAML file {file_path}: {e}")
+        logger.error(f"Error parsing YAML file {file_path}: {e}")
         return ConfigFile(
             name=os.path.basename(file_path),
             file_path=file_path,
@@ -1855,6 +1858,8 @@ def parse_properties_config(file_path: str) -> ConfigFile:
     Returns:
         ConfigFile object
     """
+    logger = get_logger(__name__)
+    
     try:
         properties = {}
         sections = []
@@ -1922,7 +1927,7 @@ def parse_properties_config(file_path: str) -> ConfigFile:
         )
     
     except Exception as e:
-        print(f"Error parsing Properties file {file_path}: {e}")
+        logger.error(f"Error parsing Properties file {file_path}: {e}")
         return ConfigFile(
             name=os.path.basename(file_path),
             file_path=file_path,
@@ -2497,11 +2502,9 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
     
     try:
         tree = javalang.parse.parse(file_content)
-        print(f"DEBUG: Successfully parsed file: {file_path}")
         logger.info(f"Successfully parsed file: {file_path}")
         
         package_name = tree.package.name if tree.package else ""
-        print(f"DEBUG: Parsed package name: {package_name}")
         logger.info(f"Parsed package name: {package_name}")
         
         if package_name:
@@ -2659,8 +2662,14 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             params = []
                             for param in declaration.parameters:
                                 param_type_name = 'Unknown'
-                                if hasattr(param.type, 'name'):
-                                    param_type_name = param.type.name
+                                if param.type:
+                                    # ReferenceType의 경우 - 내부 클래스 지원
+                                    if hasattr(param.type, 'sub_type') and param.type.sub_type:
+                                        # PaymentDto.RefundRequest 형태
+                                        param_type_name = f"{param.type.name}.{param.type.sub_type.name}"
+                                    elif hasattr(param.type, 'name') and param.type.name:
+                                        # 일반 타입
+                                        param_type_name = param.type.name
                                 local_var_map[param.name] = param_type_name
                                 params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
 
@@ -2713,8 +2722,48 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             )
                             classes[class_key].methods.append(method)
 
+                            # Step 1: 로그 메서드가 있는 라인 번호 수집 (더 포괄적으로)
+                            log_lines = set()
+                            for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
+                                # 로그 메서드 감지 (더 포괄적)
+                                is_log_method = False
+                                
+                                # log.info, logger.debug 등
+                                if invocation.qualifier and invocation.qualifier in ['log', 'logger', 'LOGGER']:
+                                    if hasattr(invocation, 'member') and invocation.member in ['info', 'debug', 'warn', 'error', 'trace']:
+                                        is_log_method = True
+                                
+                                # System.out.println, System.err.println
+                                elif invocation.qualifier and invocation.qualifier in ['System']:
+                                    if hasattr(invocation, 'member') and invocation.member in ['out', 'err']:
+                                        is_log_method = True
+                                
+                                # println 메서드 직접 호출
+                                elif hasattr(invocation, 'member') and invocation.member in ['println', 'print']:
+                                    is_log_method = True
+                                
+                                if is_log_method and invocation.position:
+                                    # 로그 메서드가 있는 라인과 인접한 라인들도 포함 (멀티라인 로그 지원)
+                                    log_line = invocation.position.line
+                                    log_lines.add(log_line)
+                                    log_lines.add(log_line + 1)  # 다음 라인도 포함
+
+                            # Step 2: 메서드 호출 추출 (로그 라인 제외)
                             call_order = 0
                             for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
+                                # position이 없는 호출은 건너뛰기 (순서를 알 수 없음)
+                                if not invocation.position:
+                                    continue
+                                
+                                # 로그 라인에 있는 모든 메서드 호출 제외
+                                if invocation.position.line in log_lines:
+                                    continue
+                                
+                                # 로그 메서드 자체 제외
+                                if invocation.qualifier and invocation.qualifier in ['log', 'logger', 'LOGGER']:
+                                    if hasattr(invocation, 'member') and invocation.member in ['info', 'debug', 'warn', 'error', 'trace']:
+                                        continue
+                                    
                                 target_class_name = None
                                 resolved_target_package = ""
                                 resolved_target_class_name = ""

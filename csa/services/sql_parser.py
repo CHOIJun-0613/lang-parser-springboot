@@ -1,6 +1,6 @@
 import re
 from typing import List, Dict, Any, Optional, Set, Tuple
-from src.utils.logger import get_logger
+from csa.utils.logger import get_logger
 
 
 class SQLParser:

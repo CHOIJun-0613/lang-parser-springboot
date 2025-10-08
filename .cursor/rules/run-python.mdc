@@ -1,15 +1,29 @@
 ---
-description: python 실행시키기 위한 규칙칙
+description: python 실행시키기 위한 규칙
 globs:
 alwaysApply: true
 ---
-1. 새로운 Terminal을 오픈하거나 채팅창에서 명령어를 실행할 때는 항상  Command Prompt를 사용할 것
-2. 채팅창에서 command를 실행할 때는 command 실행 결과가 오류발 수 있다는 점을 알고 실행할 것.
+## java source parser 프로젝트
+
+## 기술 stack
+1. python 언어로 구현
+2. springboot프레임워크 기반 java 소스 분석
+3. 분석 결과는 Neo4J Database에 저장 
+
+### 행동 지침
+1. 모든 답변은 한국어로 공손하게 할 것
+2. 임의로 어플리케이션 구조를 변경하지 말 것
+3. 항상 면저 생각하고, 영향도를 판단한 후, 수정 반영 여부를 내게 확인하고 수정할 것
+4. 수정 후 수정 이유와 수정 사항을 텍스트로 보여줄 것 
+5. 새로운 Terminal을 오픈하거나 채팅창에서 명령어를 실행할 때는 항상  Command Prompt를 사용할 것
+6. 채팅창에서 command를 실행할 때는 command 실행 결과가 오류 발생할 수 있다는 점을 알고 실행할 것.
   - 채팅창에서 command를 실행했는데, 그 결과가 오류인 경우에는 hang 상태로 멈춰버린 것 같음
-3. python  프로그램을 실행할 때는 가상환경에서 실행시킬 것
+  - stderr를 redirection을 하지 않은 것 같음음
+7. python  프로그램을 실행할 때는 반드시 가상환경에서 실행시킬 것
   - 명령어; .venv\Scripts\activate 또든 runvenv.bat
-4. debug나 임시 test 소스를 생성할 때는 /test 폴더에 생성하고 테스트 할 것
-5. neo4j 접속해서 쿼리를 수행할 경우 아래 정보를 사용할 것것
+8. debug나 임시 test 소스를 생성할 때는 ./test 폴더에 생성하고 테스트할 것
+9. neo4j 접속해서 쿼리를 수행할 경우 아래 정보를 사용할 것
   - NEO4J_URI=neo4j://127.0.0.1:7687
   - NEO4J_USER=neo4j
   - NEO4J_PASSWORD=devpass123
+10. neo4j Object의 모델 정보는 ./csa/models/graph_entities.py를 참조할 것

@@ -3,8 +3,8 @@ from datetime import datetime
 
 from neo4j import Driver, GraphDatabase
 
-from src.models.graph_entities import Class, Package, Bean, BeanDependency, Endpoint, MyBatisMapper, SqlStatement, JpaEntity, JpaRepository, JpaQuery, ConfigFile, TestClass, Database, Table, Column, Index, Constraint
-from src.utils.logger import get_logger
+from csa.models.graph_entities import Project, Class, Package, Bean, BeanDependency, Endpoint, MyBatisMapper, SqlStatement, JpaEntity, JpaRepository, JpaQuery, ConfigFile, TestClass, Database, Table, Column, Index, Constraint
+from csa.utils.logger import get_logger
 
 
 class GraphDB:
@@ -23,6 +23,45 @@ class GraphDB:
     def close(self):
         """Closes the database connection."""
         self._driver.close()
+
+    def add_project(self, project: Project):
+        """Adds or updates a project node in the database."""
+        with self._driver.session() as session:
+            session.execute_write(self._create_project_node_tx, project)
+
+    @staticmethod
+    def _create_project_node_tx(tx, project: Project):
+        """A transaction function to create or update a project node."""
+        current_timestamp = GraphDB._get_current_timestamp()
+        
+        # If created_at is not set, use current timestamp
+        created_at = project.created_at if project.created_at else current_timestamp
+        
+        project_query = (
+            "MERGE (p:Project {name: $name}) "
+            "SET p.display_name = $display_name, "
+            "p.description = $description, "
+            "p.repository_url = $repository_url, "
+            "p.language = $language, "
+            "p.framework = $framework, "
+            "p.version = $version, "
+            "p.ai_description = $ai_description, "
+            "p.updated_at = $updated_at, "
+            "p.created_at = COALESCE(p.created_at, $created_at)"
+        )
+        tx.run(
+            project_query,
+            name=project.name,
+            display_name=project.display_name or "",
+            description=project.description or "",
+            repository_url=project.repository_url or "",
+            language=project.language or "Java",
+            framework=project.framework or "",
+            version=project.version or "",
+            ai_description=project.ai_description or "",
+            updated_at=current_timestamp,
+            created_at=created_at,
+        )
 
     def add_package(self, package_node: Package, project_name: str):
         """Adds a package to the database."""
@@ -57,6 +96,18 @@ class GraphDB:
             description=package_node.description or "",
             ai_description=package_node.ai_description or "",
             updated_at=current_timestamp,
+        )
+        
+        # Create relationship between Project and Package
+        project_package_query = (
+            "MATCH (proj:Project {name: $project_name}) "
+            "MATCH (pkg:Package {name: $package_name}) "
+            "MERGE (proj)-[:CONTAINS]->(pkg)"
+        )
+        tx.run(
+            project_package_query,
+            project_name=project_name,
+            package_name=package_node.name,
         )
 
     @staticmethod
@@ -106,6 +157,18 @@ class GraphDB:
                 package_name=package_name,
                 class_name=class_node.name,
             )
+        
+        # Create relationship between Project and Class
+        project_class_query = (
+            "MATCH (proj:Project {name: $project_name}) "
+            "MATCH (c:Class {name: $class_name}) "
+            "MERGE (proj)-[:CONTAINS]->(c)"
+        )
+        tx.run(
+            project_class_query,
+            project_name=project_name,
+            class_name=class_node.name,
+        )
 
         # --- Start of new inheritance relationships logic ---
         # Create EXTENDS relationship
@@ -297,7 +360,9 @@ class GraphDB:
                 "r.source_method = $source_method, "
                 "r.target_package = $target_package, "
                 "r.target_class = $target_class, "
-                "r.target_method = $target_method"
+                "r.target_method = $target_method, "
+                "r.call_order = $call_order, "
+                "r.line_number = $line_number"
             )
             tx.run(
                 call_query,
@@ -307,6 +372,8 @@ class GraphDB:
                 target_method=method_call.target_method,
                 target_class=method_call.target_class,
                 target_package=method_call.target_package,
+                call_order=method_call.call_order,
+                line_number=method_call.line_number,
             )
 
     def add_bean(self, bean: Bean, project_name: str):
@@ -856,7 +923,7 @@ class GraphDB:
         )
 
     def get_crud_matrix(self, project_name: str = None):
-        """Get CRUD matrix showing class-table relationships."""
+        """Get CRUD matrix showing class-table relationships with schema information."""
         query = """
         MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
         MATCH (m)-[:CALLS]->(s:SqlStatement)
@@ -871,28 +938,25 @@ class GraphDB:
              END as crud_operation
         RETURN c.name as class_name,
                c.package_name as package_name,
+               m.name as method_name,
                s.tables as tables_json,
                crud_operation as operation,
                s.id as sql_id
-        ORDER BY c.name
+        ORDER BY c.name, m.name
         """
         
         with self._driver.session() as session:
             result = session.run(query)
             raw_data = [record.data() for record in result]
             
-            # 클래스별로 그룹화하여 매트릭스 생성
-            class_matrix = {}
+            # 각 메서드별로 주요 SQL 작업만 표시 (그룹화하여 중복 제거)
+            matrix_rows = []
+            
             for row in raw_data:
                 class_name = row['class_name']
-                if class_name not in class_matrix:
-                    class_matrix[class_name] = {
-                        'class_name': class_name,
-                        'package_name': row['package_name'],
-                        'tables': set(),
-                        'operations': set(),
-                        'sql_statements': set()
-                    }
+                package_name = row['package_name']
+                method_name = row['method_name']
+                operation = row['operation']
                 
                 # 실제 테이블 정보 파싱
                 try:
@@ -901,23 +965,66 @@ class GraphDB:
                         tables = json.loads(tables_json)
                         for table_info in tables:
                             if isinstance(table_info, dict) and 'name' in table_info:
-                                class_matrix[class_name]['tables'].add(table_info['name'])
+                                table_name = table_info['name']
+                                
+                                # Table 노드에서 schema 정보 조회
+                                schema_query = """
+                                MATCH (t:Table {name: $table_name})
+                                RETURN t.schema AS schema
+                                """
+                                schema_result = session.run(schema_query, table_name=table_name)
+                                schema_record = schema_result.single()
+                                schema = schema_record['schema'] if schema_record else 'unknown'
+                                
+                                matrix_rows.append({
+                                    'class_name': class_name,
+                                    'method_name': method_name,
+                                    'package_name': package_name,
+                                    'schema': schema,
+                                    'table_name': table_name,
+                                    'operation': operation
+                                })
                 except (json.JSONDecodeError, TypeError):
                     continue
-                
-                class_matrix[class_name]['operations'].add(row['operation'])
-                class_matrix[class_name]['sql_statements'].add(row['sql_id'])
             
-            # set을 list로 변환
+            # 메서드별로 주요 SQL 작업만 표시 (메서드 이름 기반 추론)
+            grouped_rows = {}
+            for row in matrix_rows:
+                key = (row['class_name'], row['method_name'], row['package_name'], row['schema'], row['table_name'])
+                if key not in grouped_rows:
+                    # 메서드 이름을 기반으로 주요 CRUD 작업 추론
+                    method_name_lower = row['method_name'].lower()
+                    primary_operation = 'O'  # 기본값
+                    
+                    if any(keyword in method_name_lower for keyword in ['find', 'get', 'select', 'search', 'list', 'count', 'exists']):
+                        primary_operation = 'R'
+                    elif any(keyword in method_name_lower for keyword in ['save', 'insert', 'create', 'add']):
+                        primary_operation = 'C'
+                    elif any(keyword in method_name_lower for keyword in ['update', 'modify', 'change', 'set']):
+                        primary_operation = 'U'
+                    elif any(keyword in method_name_lower for keyword in ['delete', 'remove']):
+                        primary_operation = 'D'
+                    
+                    grouped_rows[key] = {
+                        'class_name': row['class_name'],
+                        'method_name': row['method_name'],
+                        'package_name': row['package_name'],
+                        'schema': row['schema'],
+                        'table_name': row['table_name'],
+                        'operations': [primary_operation]  # 주요 작업만 표시
+                    }
+            
+            # 최종 결과 생성
             return [
                 {
                     'class_name': data['class_name'],
+                    'method_name': data['method_name'],
                     'package_name': data['package_name'],
-                    'tables': list(data['tables']),
-                    'operations': list(data['operations']),
-                    'sql_statements': list(data['sql_statements'])
+                    'schema': data['schema'],
+                    'table_name': data['table_name'],
+                    'operations': data['operations']
                 }
-                for data in class_matrix.values()
+                for data in grouped_rows.values()
             ]
 
     def get_table_crud_summary(self, project_name: str = None):
@@ -975,7 +1082,8 @@ class GraphDB:
         WHERE c.name ENDS WITH 'Repository' OR c.name ENDS WITH 'Mapper'
         MATCH (c)-[:HAS_METHOD]->(m:Method)
         MATCH (s:SqlStatement {project_name: $project_name})
-        WHERE s.mapper_name = c.name
+        WHERE s.mapper_name = c.name 
+          AND s.id = m.name
         MERGE (m)-[:CALLS]->(s)
         RETURN count(*) as relationships_created
         """

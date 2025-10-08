@@ -210,3 +210,9 @@ __marimo__/
 #output
 output/
 
+# External tools
+plantuml.jar
+
+# External libraries
+libs/
+

@@ -3,8 +3,8 @@ import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from src.models.graph_entities import Database, Table, Column, Index, Constraint
-from src.utils.logger import get_logger
+from csa.models.graph_entities import Database, Table, Column, Index, Constraint
+from csa.utils.logger import get_logger
 
 
 class DBParser:

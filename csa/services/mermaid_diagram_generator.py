@@ -1,15 +1,17 @@
 import logging
 import copy
 import os
+import subprocess
+import tempfile
 from datetime import datetime
 from typing import List, Dict, Set, Optional
 from neo4j import Driver
-from src.utils.logger import get_logger
+from csa.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-class SequenceDiagramGenerator:
-    """Generates sequence diagrams from Java code analysis data."""
+class MermaidDiagramGenerator:
+    """Generates Mermaid sequence diagrams from Java code analysis data."""
 
     def __init__(self, driver: Driver, external_packages: Optional[Set[str]] = None):
         self.driver = driver
@@ -21,8 +23,11 @@ class SequenceDiagramGenerator:
         max_depth: int = 10,
         include_external_calls: bool = True,
         project_name: Optional[str] = None,
-        output_dir: str = "output"
-    ) -> str:
+        output_dir: str = "output",
+        image_format: str = "png",
+        image_width: int = 1200,
+        image_height: int = 800
+    ) -> Dict:
         try:
             with self.driver.session() as session:
                 class_info = self._get_class_info(session, class_name, project_name)
@@ -31,23 +36,155 @@ class SequenceDiagramGenerator:
 
                 # 클래스 단위인 경우: 클래스의 메서드들을 리스트업하고 각 메서드마다 반복
                 if method_name is None:
-                    return self._generate_class_level_diagram(session, class_info, max_depth, include_external_calls, project_name, output_dir)
+                    return self._generate_class_level_diagram(session, class_info, max_depth, include_external_calls, project_name, output_dir, image_format, image_width, image_height)
                 
                 # 메서드 단위인 경우: 기존 로직 사용
                 call_chain = self._fetch_call_chain(session, class_name, method_name, max_depth, project_name)
                 if not call_chain:
-                    return f"""```mermaid
-sequenceDiagram
-    participant {class_name}
-    note over {class_name}: No outbound calls found for {method_name}.
-```"""
+                    return {
+                        "type": "method",
+                        "class_name": class_name,
+                        "method_name": method_name,
+                        "diagram_path": None,
+                        "image_path": None,
+                        "error": f"No outbound calls found for {method_name}."
+                    }
 
                 flows = self._build_flows(call_chain, method_name)
                 diagram = self._generate_mermaid_diagram(session, class_info, flows, include_external_calls, method_name, project_name)
-                return diagram
+                
+                # 메서드 단위 파일 생성
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                package_name = class_info.get('package_name', '')
+                # project_name 획득: class_info에서 가져오거나 파라미터 사용
+                actual_project_name = class_info.get('project_name', project_name or 'default_project')
+                
+                # 패키지명을 디렉토리 경로로 변환
+                if package_name:
+                    package_path = package_name.replace('.', os.sep)
+                    final_output_dir = os.path.join(output_dir, actual_project_name, package_path)
+                else:
+                    final_output_dir = os.path.join(output_dir, actual_project_name)
+                
+                # 파일명 생성: SEQ_클래스명_메서드명_YYYYMMDD-HH24MiSS.md
+                filename = f"SEQ_{class_name}_{method_name}_{timestamp}.md"
+                os.makedirs(final_output_dir, exist_ok=True)
+                diagram_path = os.path.join(final_output_dir, filename)
+                
+                with open(diagram_path, 'w', encoding='utf-8') as f:
+                    f.write(diagram)
+                
+                logger.info(f"Generated sequence diagram: {diagram_path}")
+                
+                result = {
+                    "type": "method",
+                    "class_name": class_name,
+                    "method_name": method_name,
+                    "diagram_path": diagram_path,
+                    "image_path": None
+                }
+                
+                # 이미지 변환
+                if image_format and image_format != "none":
+                    image_filename = f"SEQ_{class_name}_{method_name}_{timestamp}-M.{image_format}"
+                    image_path = os.path.join(final_output_dir, image_filename)
+                    
+                    if self._convert_to_image(diagram, image_path, image_format, image_width, image_height):
+                        result["image_path"] = image_path
+                        logger.info(f"Generated image: {image_path}")
+                
+                return result
         except Exception as e:
             logger.error(f"Error generating sequence diagram: {e}", exc_info=True)
             return f"Error: {e}"
+
+    def _generate_class_level_diagram(self, session, class_info: Dict, max_depth: int, include_external_calls: bool, project_name: Optional[str], output_dir: str, image_format: str = "png", image_width: int = 1200, image_height: int = 800) -> Dict:
+        """클래스 단위 다이어그램 생성: 각 메서드별로 별도 파일 생성"""
+        class_name = class_info['name']
+        package_name = class_info.get('package_name', '')
+        # project_name 획득: class_info에서 가져오거나 파라미터 사용
+        actual_project_name = class_info.get('project_name', project_name or 'default_project')
+        
+        # 패키지명을 디렉토리 경로로 변환
+        if package_name:
+            package_path = package_name.replace('.', os.sep)
+            final_output_dir = os.path.join(output_dir, actual_project_name, package_path)
+        else:
+            final_output_dir = os.path.join(output_dir, actual_project_name)
+        
+        # 1. 클래스의 메서드들을 리스트업
+        methods = self._get_class_methods(session, class_name, project_name)
+        if not methods:
+            return {
+                "type": "class",
+                "class_name": class_name,
+                "files": [],
+                "output_dir": final_output_dir,
+                "error": "No methods found in this class."
+            }
+        
+        # 2. 각 메서드별로 개별 다이어그램 파일 생성
+        generated_files = []
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        for method in methods:
+            method_name = method['name']
+            # 메서드 단위 호출 체인 가져오기 (메서드 단위와 동일한 로직 사용)
+            call_chain = self._fetch_call_chain(session, class_name, method_name, max_depth, project_name)
+            
+            if call_chain:
+                # 메서드 단위 플로우 빌딩 (메서드 단위와 동일한 로직 사용)
+                method_flows = self._build_flows(call_chain, method_name)
+                
+                if method_flows:
+                    # 개별 메서드 다이어그램 생성
+                    diagram = self._generate_mermaid_diagram(session, class_info, method_flows, include_external_calls, method_name, project_name)
+                    
+                    # 파일명 생성: SEQ_클래스명_메서드명_YYYYMMDD-HH24MiSS.md
+                    filename = f"SEQ_{class_name}_{method_name}_{timestamp}.md"
+                    
+                    # 지정된 디렉토리에 파일 저장 (패키지 구조 반영)
+                    os.makedirs(final_output_dir, exist_ok=True)
+                    diagram_path = os.path.join(final_output_dir, filename)
+                    
+                    with open(diagram_path, 'w', encoding='utf-8') as f:
+                        f.write(diagram)
+                    
+                    logger.info(f"Generated sequence diagram: {diagram_path}")
+                    
+                    file_info = {
+                        "diagram_path": diagram_path,
+                        "image_path": None
+                    }
+                    
+                    # 이미지 변환
+                    if image_format and image_format != "none":
+                        image_filename = f"SEQ_{class_name}_{method_name}_{timestamp}-M.{image_format}"
+                        image_path = os.path.join(final_output_dir, image_filename)
+                        
+                        if self._convert_to_image(diagram, image_path, image_format, image_width, image_height):
+                            file_info["image_path"] = image_path
+                            logger.info(f"Generated image: {image_path}")
+                    
+                    generated_files.append(file_info)
+        
+        return {
+            "type": "class",
+            "class_name": class_name,
+            "files": generated_files,
+            "output_dir": final_output_dir
+        }
+
+    def _get_class_methods(self, session, class_name: str, project_name: Optional[str]) -> List[Dict]:
+        """클래스의 메서드들을 가져옵니다."""
+        query = """
+        MATCH (c:Class {name: $class_name})-[:HAS_METHOD]->(m:Method)
+        WHERE ($project_name IS NULL OR c.project_name = $project_name)
+        RETURN m.name as name, m.return_type as return_type, m.visibility as visibility
+        ORDER BY m.name
+        """
+        result = session.run(query, class_name=class_name, project_name=project_name)
+        return [dict(record) for record in result]
 
     def _get_class_info(self, session, class_name: str, project_name: Optional[str]) -> Optional[Dict]:
         """Get class information from database."""
@@ -81,12 +218,13 @@ sequenceDiagram
         WHERE c.name = $class_name AND ({method_condition}) AND (c.project_name = $project_name OR $project_name IS NULL)
         MATCH path = (m)-[:CALLS*0..{max_depth}]->(callee:Method)
         UNWIND range(0, size(nodes(path))-1) as i
-        WITH m.name as top_level_method, nodes(path)[i] AS source_method, nodes(path)[i+1] AS target_method, (i + 1) as depth
+        WITH m.name as top_level_method, nodes(path)[i] AS source_method, nodes(path)[i+1] AS target_method, (i + 1) as depth, relationships(path)[i] as rel
         MATCH (source_class:Class)-[:HAS_METHOD]->(source_method)
         MATCH (target_class:Class)-[:HAS_METHOD]->(target_method)
-        WITH top_level_method, source_class, source_method, target_class, target_method, depth
+        WITH top_level_method, source_class, source_method, target_class, target_method, depth, rel
         WHERE source_class.project_name IS NOT NULL AND target_class.project_name IS NOT NULL
-        RETURN DISTINCT top_level_method, source_class.name AS source_class, source_method.name AS source_method, target_class.name AS target_class, target_method.name AS target_method, target_method.return_type AS return_type, depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, target_class.package_name as target_package, "" as mapper_name, "" as mapper_namespace, "" as mapper_file_path
+        RETURN DISTINCT top_level_method, source_class.name AS source_class, source_method.name AS source_method, target_class.name AS target_class, target_method.name AS target_method, target_method.return_type AS return_type, depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, target_class.package_name as target_package, "" as mapper_name, "" as mapper_namespace, "" as mapper_file_path, COALESCE(rel.call_order, 999) as call_order
+        ORDER BY top_level_method, call_order, depth
         
         UNION ALL
         
@@ -99,7 +237,7 @@ sequenceDiagram
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: calling_method.name}})
         WITH m, path, source_class, calling_method, sql, mapper_node
         WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL
-        RETURN DISTINCT m.name as top_level_method, source_class.name AS source_class, calling_method.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, length(path) + 1 AS depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
+        RETURN DISTINCT m.name as top_level_method, source_class.name AS source_class, calling_method.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, length(path) + 1 AS depth, "" as table_name, "" as sql_type, source_class.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path, 999 as call_order
         
         UNION ALL
         
@@ -109,7 +247,7 @@ sequenceDiagram
         WHERE mapper_node.project_name = $project_name OR $project_name IS NULL
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name}})
         WHERE sql IS NOT NULL
-        RETURN DISTINCT m.name as top_level_method, $class_name AS source_class, m.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, 1 AS depth, "" as table_name, "" as sql_type, c.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
+        RETURN DISTINCT m.name as top_level_method, $class_name AS source_class, m.name AS source_method, 'SQL' AS target_class, sql.id AS target_method, 'Result' AS return_type, 1 AS depth, "" as table_name, "" as sql_type, c.package_name as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path, 999 as call_order
         
         UNION ALL
         
@@ -123,7 +261,7 @@ sequenceDiagram
         WITH m, path, source_class, calling_method, sql, mapper_node
         WHERE source_class.project_name IS NOT NULL AND sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
-        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, length(path) + 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
+        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, length(path) + 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path, 999 as call_order
         
         UNION ALL
         
@@ -134,7 +272,7 @@ sequenceDiagram
         MATCH (mapper_node)-[:HAS_SQL_STATEMENT]->(sql:SqlStatement {{id: m.name}})
         WHERE sql IS NOT NULL AND sql.tables IS NOT NULL
         UNWIND apoc.convert.fromJsonList(sql.tables) as table_info
-        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path
+        RETURN DISTINCT m.name as top_level_method, 'SQL' AS source_class, sql.id AS source_method, table_info.name AS target_class, sql.sql_type AS target_method, 'Data' AS return_type, 2 AS depth, table_info.name as table_name, sql.sql_type as sql_type, "" as source_package, "" as target_package, sql.mapper_name as mapper_name, mapper_node.namespace as mapper_namespace, mapper_node.file_path as mapper_file_path, 999 as call_order
         """
 
         result = session.run(final_query, query_params)
@@ -184,6 +322,15 @@ sequenceDiagram
             # Build flows from validated method calls
             flows = method_calls
         
+        # 각 메서드별로 호출 순서 정렬
+        for method_name, calls in flows.items():
+            # 간단하고 명확한 정렬: depth 우선, 그 다음 call_order
+            sorted_calls = sorted(calls, key=lambda c: (
+                c.get('depth', 0),      # depth 우선
+                c.get('call_order', 999)  # 같은 depth 내에서는 call_order로 정렬
+            ))
+            flows[method_name] = sorted_calls
+        
         # 디버깅 로그 추가
         all_flow_calls = [call for flow in flows.values() for call in flow]
         sql_calls_in_flows = [call for call in all_flow_calls if call.get('target_class') == 'SQL']
@@ -207,11 +354,6 @@ sequenceDiagram
         main_class_name = class_info['name']
         main_class_package = class_info.get('package_name', '')
         all_calls = [call for flow in flows.values() for call in flow]
-
-        # 디버깅 로그 추가
-        sql_calls = [call for call in all_calls if call.get('target_class') == 'SQL']
-        table_calls = [call for call in all_calls if call.get('source_class') == 'SQL']
-        logger.info(f"_generate_mermaid_diagram: 총 {len(all_calls)}개 호출, SQL 호출: {len(sql_calls)}개, Table 호출: {len(table_calls)}개")
 
         # Participant별 package 정보 수집
         participant_packages = {}
@@ -254,7 +396,8 @@ sequenceDiagram
         seen_participants = {'Client', main_class_name}
         sql_participant = None
 
-        all_calls.sort(key=lambda x: x.get('depth') or 0)
+        # all_calls는 이미 _build_flows에서 정렬되었으므로 다시 정렬하지 않음
+        # all_calls.sort(key=lambda x: x.get('depth') or 0)  # 제거
 
         # Collect table schema information
         table_schemas = {}
@@ -320,9 +463,9 @@ sequenceDiagram
                 # Add schema as alias (without quotes)
                 schema = table_schemas.get(p, None)
                 if schema:
-                    diagram_lines.append(f'    participant {p} as {p}<br/>(Table : {schema})')
+                    diagram_lines.append(f'    participant {p} as Table : {p}<br/>(Schema : {schema})')
                 else:
-                    diagram_lines.append(f'    participant {p} as {p}<br/>(Table)')
+                    diagram_lines.append(f'    participant {p} as Table : {p}')
             else:
                 # Add package information as alias if available (without quotes)
                 package_info = participant_packages.get(p, '')
@@ -468,20 +611,8 @@ sequenceDiagram
             """DFS to build events in proper order."""
             key = (source_class, source_method)
             if key in calls_from_source:
-                # Sort children by method name for consistent ordering
-                def sort_key(call):
-                    method_name = call['target_method']
-                    order_map = {
-                        'getCurrentUser': 1,
-                        'getUserList': 2,
-                        'getUserCount': 3,
-                        'success': 4,
-                        'getAuthentication': 5,
-                        'equals': 6
-                    }
-                    return order_map.get(method_name, 999)
-                
-                sorted_children = sorted(calls_from_source[key], key=sort_key)
+                # Sort children by call_order for proper sequence
+                sorted_children = sorted(calls_from_source[key], key=lambda call: call.get('call_order', 999))
                 
                 # Process each call
                 for call in sorted_children:
@@ -591,71 +722,100 @@ sequenceDiagram
         result = session.run(query, class_name=class_name, project_name=project_name)
         return [dict(record) for record in result]
 
-    def _generate_class_level_diagram(self, session, class_info: Dict, max_depth: int, include_external_calls: bool, project_name: Optional[str], output_dir: str) -> str:
-        """클래스 단위 다이어그램 생성: 각 메서드별로 별도 파일 생성"""
-        class_name = class_info['name']
-        package_name = class_info.get('package_name', '')
+    def _convert_to_image(self, diagram_content: str, output_file: str, image_format: str, width: int, height: int) -> bool:
+        """Convert Mermaid diagram to image using mermaid-cli"""
+        # Try different possible locations for mmdc
+        mmdc_commands = ['mmdc', 'mmdc.cmd', r'C:\Users\cjony\AppData\Roaming\npm\mmdc', r'C:\Users\cjony\AppData\Roaming\npm\mmdc.cmd']
         
-        # 패키지명을 디렉토리 경로로 변환
-        if package_name:
-            package_path = package_name.replace('.', os.sep)
-            final_output_dir = os.path.join(output_dir, package_path)
-        else:
-            final_output_dir = output_dir
+        mmdc_cmd = None
+        for cmd in mmdc_commands:
+            try:
+                subprocess.run([cmd, '--version'], capture_output=True, check=True, timeout=5)
+                mmdc_cmd = cmd
+                break
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                continue
         
-        # 1. 클래스의 메서드들을 리스트업
-        methods = self._get_class_methods(session, class_name, project_name)
-        if not methods:
-            return f"""```mermaid
-sequenceDiagram
-    participant {class_name}
-    note over {class_name}: No methods found in this class.
-```"""
+        if not mmdc_cmd:
+            logger.error("mermaid-cli is not installed or not found in PATH.")
+            logger.error("Please install it with: npm install -g @mermaid-js/mermaid-cli")
+            return False
         
-        # 2. 각 메서드별로 개별 다이어그램 파일 생성
-        generated_files = []
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        
-        for method in methods:
-            method_name = method['name']
-            # 메서드 단위 호출 체인 가져오기 (메서드 단위와 동일한 로직 사용)
-            call_chain = self._fetch_call_chain(session, class_name, method_name, max_depth, project_name)
+        try:
+            # Create temporary file for mermaid content
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8', newline='') as temp_file:
+                temp_file.write(diagram_content)
+                temp_file_path = temp_file.name
             
-            if call_chain:
-                # 메서드 단위 플로우 빌딩 (메서드 단위와 동일한 로직 사용)
-                method_flows = self._build_flows(call_chain, method_name)
-                
-                if method_flows:
-                    # 개별 메서드 다이어그램 생성
-                    diagram = self._generate_mermaid_diagram(session, class_info, method_flows, include_external_calls, method_name, project_name)
-                    
-                    # 파일명 생성: SEQ_클래스명_메서드명_YYYYMMDD-HH24MiSS.md
-                    filename = f"SEQ_{class_name}_{method_name}_{timestamp}.md"
-                    
-                    # 지정된 디렉토리에 파일 저장 (패키지 구조 반영)
-                    os.makedirs(final_output_dir, exist_ok=True)
-                    filepath = os.path.join(final_output_dir, filename)
-                    
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        f.write(diagram)
-                    
-                    generated_files.append(filepath)
-                    logger.info(f"Generated sequence diagram: {filepath}")
-        
-        if not generated_files:
-            return f"""```mermaid
-sequenceDiagram
-    participant {class_name}
-    note over {class_name}: No outbound calls found for any method in this class.
-```"""
-        
-        # 3. 생성된 파일 목록을 반환
-        files_info = "\n".join([f"- {os.path.basename(f)}" for f in generated_files])
-        return f"""Generated {len(generated_files)} sequence diagram files for class '{class_name}':
-
-{files_info}
-
-Files saved in: {final_output_dir}/ directory"""
+            # Determine format from output file extension
+            file_extension = output_file.split('.')[-1].lower()
+            actual_format = file_extension if file_extension in ['png', 'svg', 'pdf'] else image_format
+            
+            # Convert to image using mermaid-cli
+            cmd = [
+                mmdc_cmd,
+                '-i', temp_file_path,
+                '-o', output_file,
+                '-e', actual_format,
+                '-w', str(width),
+                '-H', str(height)
+            ]
+            
+            # Add PDF-specific options
+            if image_format.lower() == 'pdf':
+                # Set background color for PDF
+                cmd.extend(['-b', 'white'])
+                # Add PDF fit option
+                cmd.append('-f')
+            
+            logger.info(f"Running command: {' '.join(cmd)}")
+            
+            # Set environment variables for UTF-8 encoding
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            env['LANG'] = 'en_US.UTF-8'
+            env['LC_ALL'] = 'en_US.UTF-8'
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8', errors='ignore', env=env)
+            
+            # Clean up temporary file
+            os.unlink(temp_file_path)
+            
+            # Check if the expected output file was created
+            if os.path.exists(output_file):
+                logger.info(f"Image saved to: {output_file}")
+                return True
+            else:
+                # Check for files with similar names (mermaid-cli sometimes adds numbers)
+                import glob
+                pattern = output_file.replace('.pdf', '-*.pdf').replace('.png', '-*.png').replace('.svg', '-*.svg')
+                matching_files = glob.glob(pattern)
+                if matching_files:
+                    actual_file = matching_files[0]
+                    # Rename the file to the intended name
+                    try:
+                        os.rename(actual_file, output_file)
+                        logger.info(f"Image saved to: {output_file} (renamed from {actual_file})")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to rename {actual_file} to {output_file}: {e}")
+                        logger.info(f"Image saved to: {actual_file}")
+                        return True
+                else:
+                    logger.error(f"Expected file {output_file} not found")
+                    return False
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error converting to image: {e}")
+            logger.error(f"Error output: {e.stderr}")
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            return False
 
     def _should_filter_call(self, call: Dict) -> bool:
         """Filter out incorrect call relationships."""

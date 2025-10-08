@@ -7,17 +7,19 @@
 ## 2. 프로젝트 구조
 
 ```
-src/
+csa/  (Code Static Analyzer)
 ├── cli/
 │   └── main.py           # CLI(Command Line Interface) 엔트리 포인트
 ├── models/
-│   └── graph_entities.py # Graph DB에 저장될 데이터 모델 (Node, Relationship) 정의
+│   └── graph_entities.py # Graph DB에 저장될 데이터 모델 (Project, Class, Method 등)
 ├── services/
 │   ├── java_parser.py    # Java 소스 코드를 파싱하여 AST(Abstract Syntax Tree) 생성 및 분석
 │   ├── sql_parser.py     # 코드 내 SQL 문을 파싱하고 분석
 │   ├── db_call_analysis.py # Java 코드와 DB 호출 관계 분석
 │   ├── graph_db.py       # Neo4j 데이터베이스 연결 및 데이터 CRUD 관리
-│   └── sequence_diagram_generator.py # 분석 데이터를 기반으로 시퀀스 다이어그램 생성
+│   ├── sequence_diagram_generator.py # 시퀀스 다이어그램 생성 Facade (PlantUML/Mermaid 통합)
+│   ├── mermaid_diagram_generator.py # Mermaid 시퀀스 다이어그램 생성
+│   └── plantuml_diagram_generator.py # PlantUML 시퀀스 다이어그램 생성
 └── utils/
     └── logger.py         # 로깅 유틸리티
 ```
@@ -60,8 +62,30 @@ src/
 
 ## 4. 실행 방법
 
-커맨드 라인에서 `src/cli/main.py`를 실행하여 분석을 시작할 수 있습니다. 분석할 Java 프로젝트의 경로를 인자로 전달해야 합니다.
+커맨드 라인에서 `csa/cli/main.py`를 실행하여 분석을 시작할 수 있습니다. 분석할 Java 프로젝트의 경로를 인자로 전달해야 합니다.
 
 ```bash
-python -m src.cli.main --project_path <분석할 프로젝트 경로>
+python -m csa.cli.main --project_path <분석할 프로젝트 경로>
+```
+
+## 5. Prerequisites
+
+### PlantUML (이미지 생성용)
+시퀀스 다이어그램을 이미지로 변환하려면 PlantUML이 필요합니다.
+
+1. [PlantUML 다운로드 페이지](https://plantuml.com/download)에서 `plantuml.jar` 다운로드
+2. 프로젝트 루트에 `libs` 폴더 생성 (없는 경우)
+3. `libs` 폴더에 `plantuml.jar` 파일 저장
+
+```bash
+# 프로젝트 루트에서
+mkdir -p libs
+curl -L https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar -o libs/plantuml.jar
+```
+
+### Mermaid CLI (이미지 생성용)
+Mermaid 다이어그램을 이미지로 변환하려면 Mermaid CLI가 필요합니다.
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
 ```
