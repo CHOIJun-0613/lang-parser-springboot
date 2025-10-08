@@ -7,6 +7,7 @@ import javalang
 
 from csa.models.graph_entities import Class, Method, MethodCall, Field, Package, Annotation, Bean, BeanDependency, Endpoint, MyBatisMapper, MyBatisSqlStatement, MyBatisResultMap, SqlStatement, JpaEntity, JpaColumn, JpaRelationship, JpaRepository, JpaQuery, ConfigFile, DatabaseConfig, ServerConfig, SecurityConfig, LoggingConfig, TestClass, TestMethod, TestConfiguration, Table
 from csa.services.sql_parser import SQLParser
+from csa.services.graph_db import GraphDB
 from csa.utils.logger import get_logger
 from typing import Optional, List, Literal, Any
 
@@ -137,6 +138,7 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
             
             sql_statement = SqlStatement(
                 id=sql_dict.get('id', ''),
+                logical_name=sql_dict.get('logical_name', ''),
                 sql_type=sql_type,
                 sql_content=sql_content,
                 parameter_type=sql_dict.get('parameter_type', ''),
@@ -953,6 +955,7 @@ def extract_mybatis_mappers_from_classes(classes: list[Class]) -> list[MyBatisMa
         # Create mapper
         mapper = MyBatisMapper(
             name=cls.name,
+            logical_name="",
             type="interface",
             namespace=f"{cls.package_name}.{cls.name}",
             methods=mapper_methods,
@@ -978,10 +981,18 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
     logger = get_logger(__name__)
     
     try:
+        # XML 원본 파일 읽기 (주석 추출용)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            xml_content = f.read()
+        
         tree = ET.parse(file_path)
         root = tree.getroot()
         
         namespace = root.get("namespace", "")
+        
+        # Mapper 논리명 추출
+        from csa.services.java_parser_addon_r001 import extract_mapper_logical_name_from_xml_content
+        mapper_logical_name = extract_mapper_logical_name_from_xml_content(xml_content, namespace)
         
         sql_statements = []
         for statement in root.findall(".//*[@id]"):
@@ -1020,8 +1031,13 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
             result_type = statement.get("resultType", "")
             result_map = statement.get("resultMap", "")
             
+            # SQL 논리명 추출
+            from csa.services.java_parser_addon_r001 import extract_sql_logical_name_from_xml_content
+            sql_logical_name = extract_sql_logical_name_from_xml_content(xml_content, statement_id)
+            
             sql_statement = {
                 "id": statement_id,
+                "logical_name": sql_logical_name if sql_logical_name else "",
                 "sql_type": sql_type,
                 "sql_content": sql_content,
                 "parameter_type": parameter_type,
@@ -1060,6 +1076,7 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
         
         mapper = MyBatisMapper(
             name=mapper_name,
+            logical_name=mapper_logical_name if mapper_logical_name else "",
             type="xml",
             namespace=namespace,
             methods=[],  # XML mappers don't have Java methods
@@ -1078,11 +1095,13 @@ def parse_mybatis_xml_file(file_path: str) -> MyBatisMapper:
         return None
 
 
-def extract_mybatis_xml_mappers(directory: str) -> list[MyBatisMapper]:
+def extract_mybatis_xml_mappers(directory: str, project_name: str = "", graph_db: GraphDB = None) -> list[MyBatisMapper]:
     """Extract MyBatis XML mappers from directory.
     
     Args:
         directory: Directory to search for XML mapper files
+        project_name: Project name for logical name extraction
+        graph_db: GraphDB instance for logical name extraction
         
     Returns:
         List of MyBatisMapper objects
@@ -1096,6 +1115,7 @@ def extract_mybatis_xml_mappers(directory: str) -> list[MyBatisMapper]:
                 mapper = parse_mybatis_xml_file(file_path)
                 if mapper:
                     mappers.append(mapper)
+                    # Rule001 논리명 추출 로직 제거 - 이미 파싱 시 처리됨
     
     return mappers
 
@@ -2425,7 +2445,7 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         setter_name = f"set{prop.name[0].upper()}{prop.name[1:]}"
         setter_param = Field(
             name=prop.name,
-            logical_name=f"{package_name}.{class_name}.{prop.name}",
+            logical_name="",
             type=prop.type,
             package_name=package_name,
             class_name=class_name
@@ -2449,7 +2469,7 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
         name="equals",
         logical_name=f"{package_name}.{class_name}.equals",
         return_type="boolean",
-        parameters=[Field(name="obj", logical_name=f"{package_name}.{class_name}.obj", type="Object", package_name=package_name, class_name=class_name)],
+        parameters=[Field(name="obj", logical_name="", type="Object", package_name=package_name, class_name=class_name)],
         modifiers=["public"],
         source="",  # Generated method, no source
         package_name=package_name,
@@ -2493,7 +2513,7 @@ def generate_lombok_methods(properties: list[Field], class_name: str, package_na
     return methods
 
 
-def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, Class, str]:
+def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB = None) -> tuple[Package, Class, str]:
     """Parse a single Java file and return parsed entities."""
     logger = get_logger(__name__)
     
@@ -2517,12 +2537,260 @@ def parse_single_java_file(file_path: str, project_name: str) -> tuple[Package, 
         for imp in tree.imports:
             class_name = imp.path.split('.')[-1]
             import_map[class_name] = imp.path
+        
+        # 클래스 선언 찾기
+        class_declaration = None
+        for type_decl in tree.types:
+            if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
+                class_declaration = type_decl
+                break
+        
+        if not class_declaration:
+            logger.error(f"No class declaration found in file: {file_path}")
+            return None, None, ""
+        
+        class_name = class_declaration.name
+        class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
+        class_type = "interface" if isinstance(class_declaration, javalang.tree.InterfaceDeclaration) else "class"
+        
+        # sub_type 추출
+        sub_type = extract_sub_type(package_name, class_name, class_annotations)
+        
+        # 논리명 추출 시도
+        from csa.services.java_parser_addon_r001 import extract_java_class_logical_name
+        class_logical_name = extract_java_class_logical_name(file_content, class_name, project_name)
+        
+        class_node = Class(
+            name=class_name,
+            logical_name=class_logical_name if class_logical_name else "",
+            file_path=file_path,
+            type=class_type,
+            sub_type=sub_type,
+            source=file_content,
+            annotations=class_annotations,
+            package_name=package_name,
+            project_name=project_name,
+            description="",
+            ai_description=""
+        )
+        
+        # imports 추가
+        for imp in tree.imports:
+            class_node.imports.append(imp.path)
+        
+        # 상속 관계 처리
+        if class_declaration.extends:
+            superclass_name = class_declaration.extends.name
+            if superclass_name in import_map:
+                class_node.superclass = import_map[superclass_name]
+            else:
+                class_node.superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
+        
+        # 인터페이스 구현 처리
+        if hasattr(class_declaration, 'implements') and class_declaration.implements:
+            for impl_ref in class_declaration.implements:
+                interface_name = impl_ref.name
+                if interface_name in import_map:
+                    class_node.interfaces.append(import_map[interface_name])
+                else:
+                    class_node.interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
+        
+        # 필드 처리
+        field_map = {}
+        for field_declaration in class_declaration.fields:
+            for declarator in field_declaration.declarators:
+                field_map[declarator.name] = field_declaration.type.name
+                
+                field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
+                
+                initial_value = ""
+                if hasattr(declarator, 'initializer') and declarator.initializer:
+                    if hasattr(declarator.initializer, 'value'):
+                        initial_value = str(declarator.initializer.value)
+                    elif hasattr(declarator.initializer, 'type'):
+                        initial_value = str(declarator.initializer.type)
+                    else:
+                        initial_value = str(declarator.initializer)
+                
+                # 필드 논리명 추출 시도
+                from csa.services.java_parser_addon_r001 import extract_java_field_logical_name
+                field_logical_name = extract_java_field_logical_name(file_content, declarator.name, project_name)
+                
+                prop = Field(
+                    name=declarator.name,
+                    logical_name=field_logical_name if field_logical_name else "",
+                    type=field_declaration.type.name,
+                    modifiers=list(field_declaration.modifiers),
+                    package_name=package_name,
+                    class_name=class_name,
+                    annotations=field_annotations,
+                    initial_value=initial_value,
+                    description="",
+                    ai_description=""
+                )
+                class_node.properties.append(prop)
+        
+        # 메서드 처리
+        all_declarations = class_declaration.methods + class_declaration.constructors
+        
+        for declaration in all_declarations:
+            local_var_map = field_map.copy()
+            params = []
+            for param in declaration.parameters:
+                param_type_name = 'Unknown'
+                if param.type:
+                    if hasattr(param.type, 'sub_type') and param.type.sub_type:
+                        param_type_name = f"{param.type.name}.{param.type.sub_type.name}"
+                    elif hasattr(param.type, 'name') and param.type.name:
+                        param_type_name = param.type.name
+                local_var_map[param.name] = param_type_name
+                params.append(Field(name=param.name, logical_name=f"{package_name}.{class_name}.{param.name}", type=param_type_name, package_name=package_name, class_name=class_name))
+            
+            if declaration.body:
+                for _, var_decl in declaration.filter(javalang.tree.LocalVariableDeclaration):
+                    for declarator in var_decl.declarators:
+                        local_var_map[declarator.name] = var_decl.type.name
+            
+            if isinstance(declaration, javalang.tree.MethodDeclaration):
+                return_type = declaration.return_type.name if declaration.return_type else "void"
+            else:
+                return_type = "constructor"
+            
+            modifiers = list(declaration.modifiers)
+            method_annotations = parse_annotations(declaration.annotations, "method") if hasattr(declaration, 'annotations') else []
+            
+            method_source = ""
+            if declaration.position:
+                lines = file_content.splitlines(keepends=True)
+                start_line = declaration.position.line - 1
+                
+                brace_count = 0
+                end_line = start_line
+                for i in range(start_line, len(lines)):
+                    line = lines[i]
+                    for char in line:
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end_line = i
+                                break
+                    if brace_count == 0:
+                        break
+                
+                method_source = "".join(lines[start_line:end_line + 1])
+            
+            # 논리명 추출 시도
+            from csa.services.java_parser_addon_r001 import extract_java_method_logical_name
+            method_logical_name = extract_java_method_logical_name(file_content, declaration.name, project_name)
+            
+            method = Method(
+                name=declaration.name,
+                logical_name=method_logical_name if method_logical_name else "",
+                return_type=return_type,
+                parameters=params,
+                modifiers=modifiers,
+                source=method_source,
+                package_name=package_name,
+                annotations=method_annotations,
+                description="",
+                calls=[]  # 명시적으로 calls 속성 초기화
+            )
+            
+            # 메서드 호출 분석 - MethodCall 객체 생성
+            if declaration.body:
+                call_order = 1
+                for _, invocation in declaration.filter(javalang.tree.MethodInvocation):
+                    if not invocation.position:
+                        continue
+                    
+                    # 로그 메서드 자체 제외
+                    if invocation.qualifier and invocation.qualifier in ['log', 'logger', 'LOGGER']:
+                        if hasattr(invocation, 'member') and invocation.member in ['info', 'debug', 'warn', 'error', 'trace']:
+                            continue
+                    
+                    target_class_name = None
+                    resolved_target_package = ""
+                    resolved_target_class_name = ""
+                    
+                    if invocation.qualifier:
+                        if invocation.qualifier in local_var_map:
+                            target_class_name = local_var_map[invocation.qualifier]
+                        else:
+                            target_class_name = invocation.qualifier
+                        
+                        if target_class_name:
+                            if target_class_name == "System.out":
+                                resolved_target_package = "java.io"
+                                resolved_target_class_name = "PrintStream"
+                            else:
+                                if invocation.qualifier in local_var_map:
+                                    resolved_target_class_name = target_class_name
+                                    if target_class_name in import_map:
+                                        resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                    else:
+                                        resolved_target_package = package_name
+                                        
+                                        # 패키지 기반 추론 로직
+                                        if package_name and 'controller' in package_name:
+                                            service_package = package_name.replace('controller', 'service')
+                                            resolved_target_package = service_package
+                                        
+                                        elif package_name and 'domain' in package_name:
+                                            domain_parts = package_name.split('.')
+                                            if len(domain_parts) >= 3:
+                                                domain_base = '.'.join(domain_parts[:3])
+                                                service_package = f"{domain_base}.{domain_parts[2]}.service"
+                                                resolved_target_package = service_package
+                                
+                                if '<' in target_class_name:
+                                    base_type = target_class_name.split('<')[0]
+                                    resolved_target_class_name = base_type
+                                
+                                if not resolved_target_class_name:
+                                    if target_class_name in import_map:
+                                        resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
+                                    else:
+                                        resolved_target_package = package_name
+                                    resolved_target_class_name = target_class_name
+                    else:
+                        resolved_target_package = package_name
+                        resolved_target_class_name = class_name
+
+                    if resolved_target_class_name:
+                        method_name = invocation.member
+                        # Stream API 메서드 필터링
+                        if method_name in {'collect', 'map', 'filter', 'forEach', 'stream', 'reduce', 'findFirst', 'findAny', 'anyMatch', 'allMatch', 'noneMatch', 'count', 'distinct', 'sorted', 'limit', 'skip', 'peek', 'flatMap', 'toArray'}:
+                            continue
+                            
+                        line_number = invocation.position.line if invocation.position else 0
+
+                        call = MethodCall(
+                            source_package=package_name,
+                            source_class=class_name,
+                            source_method=declaration.name,
+                            target_package=resolved_target_package,
+                            target_class=resolved_target_class_name,
+                            target_method=invocation.member,
+                            call_order=call_order,
+                            line_number=line_number,
+                            return_type="void"
+                        )
+                        class_node.calls.append(call)
+                        call_order += 1
+            
+            class_node.methods.append(method)
+        
+        logger.info(f"Successfully parsed single file: {file_path}")
+        return package_node, class_node, package_name
+        
     except Exception as e:
         logger.error(f"Error parsing file: {e}")
         return None, None, ""
 
 
-def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[JpaRepository], list[JpaQuery], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
+def parse_java_project(directory: str, graph_db: GraphDB = None) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[JpaRepository], list[JpaQuery], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
     """Parse Java project and return parsed entities."""
     logger = get_logger(__name__)
     
@@ -2589,9 +2857,13 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                             # sub_type 추출 (package name의 마지막 단어)
                             sub_type = extract_sub_type(package_name, class_name, class_annotations)
                             
+                            # 논리명 추출 시도
+                            from csa.services.java_parser_addon_r001 import extract_java_class_logical_name
+                            class_logical_name = extract_java_class_logical_name(file_content, class_name, project_name)
+                            
                             classes[class_key] = Class(
                                 name=class_name,
-                                logical_name=class_key,
+                                logical_name=class_logical_name if class_logical_name else "",
                                 file_path=file_path,
                                 type=class_type,
                                 sub_type=sub_type,
@@ -2641,9 +2913,13 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                     else:
                                         initial_value = str(declarator.initializer)
                                 
+                                # 필드 논리명 추출 시도
+                                from csa.services.java_parser_addon_r001 import extract_java_field_logical_name
+                                field_logical_name = extract_java_field_logical_name(file_content, declarator.name, project_name)
+                                
                                 prop = Field(
                                     name=declarator.name,
-                                    logical_name=f"{package_name}.{class_name}.{declarator.name}",
+                                    logical_name=field_logical_name if field_logical_name else "",
                                     type=field_declaration.type.name,
                                     modifiers=list(field_declaration.modifiers),
                                     package_name=package_name,
@@ -2708,9 +2984,13 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                                 
                                 method_source = "".join(lines[start_line:end_line + 1])
 
+                            # 논리명 추출 시도
+                            from csa.services.java_parser_addon_r001 import extract_java_method_logical_name
+                            method_logical_name = extract_java_method_logical_name(file_content, declaration.name, project_name)
+
                             method = Method(
                                 name=declaration.name,
-                                logical_name=f"{class_key}.{declaration.name}",
+                                logical_name=method_logical_name if method_logical_name else "",
                                 return_type=return_type,
                                 parameters=params,
                                 modifiers=modifiers,
@@ -2840,6 +3120,8 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
                     
                     processed_file_count += 1
                     logger.debug(f"Successfully processed file: {file_path}")
+                    
+                    # Rule001 논리명 추출 로직 제거 - 이미 파싱 시 처리됨
                 
                 except Exception as e:
                     logger.error(f"Error processing file {file_path}: {e}")
@@ -2856,7 +3138,7 @@ def parse_java_project(directory: str) -> tuple[list[Package], list[Class], dict
     config_files = extract_config_files(directory)
     test_classes = extract_test_classes_from_classes(classes_list)
     
-    xml_mappers = extract_mybatis_xml_mappers(directory)
+    xml_mappers = extract_mybatis_xml_mappers(directory, project_name, graph_db)
     mybatis_mappers.extend(xml_mappers)
     
     sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)

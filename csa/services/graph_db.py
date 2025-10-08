@@ -540,7 +540,7 @@ class GraphDB:
         current_timestamp = GraphDB._get_current_timestamp()
         mapper_query = (
             "MERGE (m:MyBatisMapper {name: $name, project_name: $project_name}) "
-            "SET m.type = $type, m.namespace = $namespace, m.methods = $methods, "
+            "SET m.logical_name = $logical_name, m.type = $type, m.namespace = $namespace, m.methods = $methods, "
             "m.sql_statements = $sql_statements, m.file_path = $file_path, "
             "m.package_name = $package_name, m.description = $description, m.ai_description = $ai_description, "
             "m.updated_at = $updated_at"
@@ -548,6 +548,7 @@ class GraphDB:
         tx.run(
             mapper_query,
             name=mapper.name,
+            logical_name=mapper.logical_name or "",
             project_name=project_name,
             type=mapper.type,
             namespace=mapper.namespace,
@@ -704,7 +705,7 @@ class GraphDB:
         current_timestamp = GraphDB._get_current_timestamp()
         sql_query = (
             "MERGE (s:SqlStatement {id: $id, mapper_name: $mapper_name}) "
-            "SET s.sql_type = $sql_type, s.sql_content = $sql_content, "
+            "SET s.logical_name = $logical_name, s.sql_type = $sql_type, s.sql_content = $sql_content, "
             "s.parameter_type = $parameter_type, s.result_type = $result_type, "
             "s.result_map = $result_map, s.annotations = $annotations, "
             "s.project_name = $project_name, s.description = $description, s.ai_description = $ai_description, "
@@ -714,6 +715,7 @@ class GraphDB:
         tx.run(
             sql_query,
             id=sql_statement.id,
+            logical_name=sql_statement.logical_name or "",
             mapper_name=sql_statement.mapper_name,
             sql_type=sql_statement.sql_type,
             sql_content=sql_statement.sql_content,
