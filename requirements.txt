@@ -1,6 +1,6 @@
 pytest
 neo4j
-javalang
+javalang>=0.13.0
 click
 pydantic
 python-dotenv

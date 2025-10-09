@@ -288,269 +288,284 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
       # Dry run (parse without database connection)
       python -m csa.cli.main analyze --db-object --dry-run
     """
+    # Initialize logger for analyze command
+    from csa.utils.logger import set_command_context
+    set_command_context("analyze")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== analyze 작업 시작 =====")
+    
     # Handle --all-objects option
     if all_objects:
         db_object = True
         java_object = True
-        click.echo("--all-objects option detected: Analyzing both Java objects and database objects")
+        logger.info("--all-objects option detected: Analyzing both Java objects and database objects")
     
     # Check if at least one analysis type is specified
     if not db_object and not java_object and not class_name and not update:
         # Default to full analysis (Java + DB) if no flags are specified
         java_object = True
         db_object = True
-        click.echo("No analysis type specified. Defaulting to full analysis (Java + DB objects).")
-        click.echo("Use --db-object, --java-object, --all-objects, --class-name, or --update to specify analysis type.")
+        logger.info("No analysis type specified. Defaulting to full analysis (Java + DB objects).")
+        logger.info("Use --db-object, --java-object, --all-objects, --class-name, or --update to specify analysis type.")
     
     # Check java_source_folder requirement for Java-related operations
     if java_object or class_name or update or (not db_object):
         if not java_source_folder:
-            click.echo("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required for Java object analysis.", err=True)
+            logger.error("Error: JAVA_SOURCE_FOLDER environment variable or --java-source-folder option is required for Java object analysis.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
 
-    # Determine project name with priority:
-    # 1. --project-name option (highest priority)
-    # 2. parse_java_project function result (if java_object)
-    # 3. Previous analysis project name or default (lowest priority)
+        # Determine project name with priority:
+        # 1. --project-name option (highest priority)
+        # 2. parse_java_project function result (if java_object)
+        # 3. Previous analysis project name or default (lowest priority)
+        
+        final_project_name = None
     
-    final_project_name = None
-    
-    # Handle Java object analysis (only when db_object is False and class_name is not specified)
-    if java_object and not db_object and not class_name:
-        click.echo("Analyzing Java objects from source code...")
-        
-        if not java_source_folder:
-            click.echo("Error: JAVA_SOURCE_FOLDER environment variable is required for --java_object option.", err=True)
-            click.echo("Please set JAVA_SOURCE_FOLDER in your .env file or environment variables.")
-            exit(1)
-        
-        if not os.path.exists(java_source_folder):
-            click.echo(f"Error: Java source folder {java_source_folder} does not exist.", err=True)
-            exit(1)
-        
-        try:
-            # Parse Java project
-            click.echo(f"Parsing Java project at: {java_source_folder}")
-            packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, jpa_repositories, jpa_queries, config_files, test_classes, sql_statements, detected_project_name = parse_java_project(java_source_folder)
+        # Handle Java object analysis (only when db_object is False and class_name is not specified)
+        if java_object and not db_object and not class_name:
+            logger.info("Analyzing Java objects from source code...")
             
-            logger = get_logger(__name__)
+            if not java_source_folder:
+                logger.error("Error: JAVA_SOURCE_FOLDER environment variable is required for --java_object option.")
+                logger.error("Please set JAVA_SOURCE_FOLDER in your .env file or environment variables.")
+                logger.info("===== analyze 작업 완료 =====")
+                exit(1)
             
-            # Priority 1: Use --project-name if provided
-            if project_name:
-                final_project_name = project_name
-                logger.info(f"Using provided project name: {final_project_name}")
-            # Priority 2: Use detected project name from parse_java_project
-            else:
-                final_project_name = detected_project_name
-                logger.info(f"Using detected project name: {final_project_name}")
+            if not os.path.exists(java_source_folder):
+                logger.error(f"Error: Java source folder {java_source_folder} does not exist.")
+                logger.info("===== analyze 작업 완료 =====")
+                exit(1)
             
-            logger.info(f"Project name: {final_project_name}")
-            logger.info(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
-            
-            if dry_run:
-                click.echo("Dry run mode - not connecting to database.")
-                click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
-                click.echo(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
-                click.echo(f"Found {len(endpoints)} REST API endpoints.")
-                click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
-                click.echo(f"Found {len(jpa_entities)} JPA entities.")
-                click.echo(f"Found {len(jpa_repositories)} JPA repositories.")
-                click.echo(f"Found {len(jpa_queries)} JPA queries.")
-                click.echo(f"Found {len(config_files)} configuration files.")
-                click.echo(f"Found {len(test_classes)} test classes.")
-                click.echo(f"Found {len(sql_statements)} SQL statements.")
-                click.echo("Java object analysis complete (dry run).")
-                return
-            
-            # Connect to database
-            logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
-            db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
-            
-            # Create or update Project node
-            from csa.models.graph_entities import Project
-            project_node = Project(
-                name=final_project_name,
-                display_name=final_project_name,
-                language="Java",
-            )
-            db.add_project(project_node)
-            click.echo(f"Project node created/updated: {final_project_name}")
-            
-            if clean:
-                click.echo("Cleaning Java objects...")
-                with db._driver.session() as session:
-                    # Delete only Java-related nodes
-                    session.run("MATCH (n:Package) DETACH DELETE n")
-                    session.run("MATCH (n:Class) DETACH DELETE n")
-                    session.run("MATCH (n:Method) DETACH DELETE n")
-                    session.run("MATCH (n:Field) DETACH DELETE n")
-                    session.run("MATCH (n:Bean) DETACH DELETE n")
-                    session.run("MATCH (n:Endpoint) DETACH DELETE n")
-                    session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
-                    session.run("MATCH (n:JpaEntity) DETACH DELETE n")
-                    session.run("MATCH (n:ConfigFile) DETACH DELETE n")
-                    session.run("MATCH (n:TestClass) DETACH DELETE n")
-                    session.run("MATCH (n:SqlStatement) DETACH DELETE n")
+            try:
+                # Parse Java project
+                logger.info(f"Parsing Java project at: {java_source_folder}")
+                packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, jpa_repositories, jpa_queries, config_files, test_classes, sql_statements, detected_project_name = parse_java_project(java_source_folder)
                 
-                # --db-object 또는 --all-objects와 함께 사용하면 DB 객체도 삭제
-                if db_object or all_objects:
-                    logger.info("Cleaning database objects...")
+                # logger already initialized at function start
+                
+                # Priority 1: Use --project-name if provided
+                if project_name:
+                    final_project_name = project_name
+                    logger.info(f"Using provided project name: {final_project_name}")
+                # Priority 2: Use detected project name from parse_java_project
+                else:
+                    final_project_name = detected_project_name
+                    logger.info(f"Using detected project name: {final_project_name}")
+                
+                logger.info(f"Project name: {final_project_name}")
+                logger.info(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+                
+                if dry_run:
+                    logger.info("Dry run mode - not connecting to database.")
+                    logger.info(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+                    logger.info(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
+                    logger.info(f"Found {len(endpoints)} REST API endpoints.")
+                    logger.info(f"Found {len(mybatis_mappers)} MyBatis mappers.")
+                    logger.info(f"Found {len(jpa_entities)} JPA entities.")
+                    logger.info(f"Found {len(jpa_repositories)} JPA repositories.")
+                    logger.info(f"Found {len(jpa_queries)} JPA queries.")
+                    logger.info(f"Found {len(config_files)} configuration files.")
+                    logger.info(f"Found {len(test_classes)} test classes.")
+                    logger.info(f"Found {len(sql_statements)} SQL statements.")
+                    logger.info("Java object analysis complete (dry run).")
+                    logger.info("===== analyze 작업 완료 =====")
+                    return
+                
+                # Connect to database
+                logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
+                db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
+                
+                # Create or update Project node
+                from csa.models.graph_entities import Project
+                project_node = Project(
+                    name=final_project_name,
+                    display_name=final_project_name,
+                    language="Java",
+                )
+                db.add_project(project_node)
+                logger.info(f"Project node created/updated: {final_project_name}")
+                
+                if clean:
+                    logger.info("Cleaning Java objects...")
                     with db._driver.session() as session:
-                        session.run("MATCH (n:Database) DETACH DELETE n")
-                        session.run("MATCH (n:Table) DETACH DELETE n")
-                        session.run("MATCH (n:Column) DETACH DELETE n")
-                        session.run("MATCH (n:Index) DETACH DELETE n")
-                        session.run("MATCH (n:Constraint) DETACH DELETE n")
-            
-            # Add packages
-            logger.info("Adding packages to database...")
-            for package_node in packages_to_add:
-                db.add_package(package_node, final_project_name)
-            
-            # Add classes
-            logger.info("Adding classes to database...")
-            logger.info(f"Total classes to add: {len(classes_to_add)}")
-            
-            import time
-            logger = get_logger(__name__)
-            start_time = time.time()
-            
-            for i, class_node in enumerate(classes_to_add):
-                try:
-                    # Find the package for this class using the mapping
-                    # class_to_package_map의 키는 "package_name.class_name" 형식
-                    class_key = f"{class_node.package_name}.{class_node.name}"
-                    package_name = class_to_package_map.get(class_key, class_node.package_name)
+                        # Delete only Java-related nodes
+                        session.run("MATCH (n:Package) DETACH DELETE n")
+                        session.run("MATCH (n:Class) DETACH DELETE n")
+                        session.run("MATCH (n:Method) DETACH DELETE n")
+                        session.run("MATCH (n:Field) DETACH DELETE n")
+                        session.run("MATCH (n:Bean) DETACH DELETE n")
+                        session.run("MATCH (n:Endpoint) DETACH DELETE n")
+                        session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
+                        session.run("MATCH (n:JpaEntity) DETACH DELETE n")
+                        session.run("MATCH (n:ConfigFile) DETACH DELETE n")
+                        session.run("MATCH (n:TestClass) DETACH DELETE n")
+                        session.run("MATCH (n:SqlStatement) DETACH DELETE n")
                     
-                    if not package_name:
-                        # Fallback: use the package_name from the class node itself
-                        package_name = class_node.package_name
-                    
-                    class_start_time = time.time()
-                    logger.debug(f"Adding class {i+1}/{len(classes_to_add)}: {class_node.name} (package: {package_name})")
-                    db.add_class(class_node, package_name, final_project_name)
-                    
-                    class_elapsed = time.time() - class_start_time
-                    if class_elapsed > 1.0:  # 1초 이상 걸린 경우에만 시간 표시
-                        logger.debug(f"  ✓ Completed in {class_elapsed:.2f}s")
-                    
-                    # 10개마다 전체 진행상태 표시
-                    if (i + 1) % 10 == 0:
-                        elapsed = time.time() - start_time
-                        remaining = (elapsed / (i + 1)) * (len(classes_to_add) - i - 1)
-                        logger.info(f"  Progress: {i+1}/{len(classes_to_add)} classes processed ({elapsed:.1f}s elapsed, ~{remaining:.1f}s remaining)")
-                    
-                except Exception as e:
-                    click.echo(f"Error adding class {class_node.name}: {e}")
-                    continue
+                    # --db-object 또는 --all-objects와 함께 사용하면 DB 객체도 삭제
+                    if db_object or all_objects:
+                        logger.info("Cleaning database objects...")
+                        with db._driver.session() as session:
+                            session.run("MATCH (n:Database) DETACH DELETE n")
+                            session.run("MATCH (n:Table) DETACH DELETE n")
+                            session.run("MATCH (n:Column) DETACH DELETE n")
+                            session.run("MATCH (n:Index) DETACH DELETE n")
+                            session.run("MATCH (n:Constraint) DETACH DELETE n")
             
-            total_elapsed = time.time() - start_time
-            logger.info(f"✓ All {len(classes_to_add)} classes added successfully in {total_elapsed:.2f}s")
-            
-            # Add Spring Boot analysis results
-            if beans:
-                logger.info(f"Adding {len(beans)} Spring Beans to database...")
+                # Add packages
+                logger.info("Adding packages to database...")
+                for package_node in packages_to_add:
+                    db.add_package(package_node, final_project_name)
+                
+                # Add classes
+                logger.info("Adding classes to database...")
+                logger.info(f"Total classes to add: {len(classes_to_add)}")
+                
+                import time
+                # logger already initialized at function start
                 start_time = time.time()
-                for i, bean in enumerate(beans):
-                    db.add_bean(bean, final_project_name)
-                    if (i + 1) % 20 == 0:
-                        logger.info(f"  Progress: {i+1}/{len(beans)} beans processed")
-                logger.info(f"✓ Added {len(beans)} Spring Beans in {time.time() - start_time:.2f}s")
-            
-            if dependencies:
-                logger.info(f"Adding {len(dependencies)} Bean dependencies to database...")
-                start_time = time.time()
-                for dependency in dependencies:
-                    db.add_bean_dependency(dependency, final_project_name)
-                logger.info(f"✓ Added {len(dependencies)} Bean dependencies in {time.time() - start_time:.2f}s")
-            
-            if endpoints:
-                logger.info(f"Adding {len(endpoints)} REST API endpoints to database...")
-                start_time = time.time()
-                for i, endpoint in enumerate(endpoints):
-                    db.add_endpoint(endpoint, final_project_name)
-                    if (i + 1) % 50 == 0:
-                        logger.info(f"  Progress: {i+1}/{len(endpoints)} endpoints processed")
-                logger.info(f"✓ Added {len(endpoints)} REST API endpoints in {time.time() - start_time:.2f}s")
-            
-            if mybatis_mappers:
-                logger.info(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
-                start_time = time.time()
-                for mapper in mybatis_mappers:
-                    db.add_mybatis_mapper(mapper, final_project_name)
-                logger.info(f"✓ Added {len(mybatis_mappers)} MyBatis mappers in {time.time() - start_time:.2f}s")
-            
-            if jpa_entities:
-                click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
-                start_time = time.time()
-                for entity in jpa_entities:
-                    db.add_jpa_entity(entity, final_project_name)
-                click.echo(f"✓ Added {len(jpa_entities)} JPA entities in {time.time() - start_time:.2f}s")
-            
-            if jpa_repositories:
-                logger.info(f"Adding {len(jpa_repositories)} JPA repositories to database...")
-                start_time = time.time()
-                for repository in jpa_repositories:
-                    db.add_jpa_repository(repository, final_project_name)
-                logger.info(f"✓ Added {len(jpa_repositories)} JPA repositories in {time.time() - start_time:.2f}s")
-            
-            if jpa_queries:
-                logger.info(f"Adding {len(jpa_queries)} JPA queries to database...")
-                start_time = time.time()
-                for i, query in enumerate(jpa_queries):
-                    db.add_jpa_query(query, final_project_name)
-                    if (i + 1) % 50 == 0:
-                        logger.info(f"  Progress: {i+1}/{len(jpa_queries)} queries processed")
-                logger.info(f"✓ Added {len(jpa_queries)} JPA queries in {time.time() - start_time:.2f}s")
-            
-            if config_files:
-                logger.info(f"Adding {len(config_files)} configuration files to database...")
-                start_time = time.time()
-                for config_file in config_files:
-                    db.add_config_file(config_file, final_project_name)
-                logger.info(f"✓ Added {len(config_files)} configuration files in {time.time() - start_time:.2f}s")
-            
-            if test_classes:
-                logger.info(f"Adding {len(test_classes)} test classes to database...")
-                start_time = time.time()
-                for test_class in test_classes:
-                    db.add_test_class(test_class, final_project_name)
-                logger.info(f"✓ Added {len(test_classes)} test classes in {time.time() - start_time:.2f}s")
-            
-            if sql_statements:
-                logger.info(f"Adding {len(sql_statements)} SQL statements to database...")
-                start_time = time.time()
-                for i, sql_statement in enumerate(sql_statements):
-                    db.add_sql_statement(sql_statement, final_project_name)
-                    # Create relationship between mapper and SQL statement
-                    with db._driver.session() as session:
-                        session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, final_project_name)
-                    if (i + 1) % 100 == 0:
-                        logger.info(f"  Progress: {i+1}/{len(sql_statements)} SQL statements processed")
-                logger.info(f"✓ Added {len(sql_statements)} SQL statements in {time.time() - start_time:.2f}s")
-            
-            db.close()
-            click.echo("Java object analysis complete.")
-            return
-            
-        except Exception as e:
-            import traceback
-            click.echo(f"Error analyzing Java objects: {e}")
-            click.echo(f"\nFull traceback:")
-            traceback.print_exc()
-            click.echo("Use --dry-run flag to parse without database connection.")
-            exit(1)
+                
+                for i, class_node in enumerate(classes_to_add):
+                    try:
+                        # Find the package for this class using the mapping
+                        # class_to_package_map의 키는 "package_name.class_name" 형식
+                        class_key = f"{class_node.package_name}.{class_node.name}"
+                        package_name = class_to_package_map.get(class_key, class_node.package_name)
+                        
+                        if not package_name:
+                            # Fallback: use the package_name from the class node itself
+                            package_name = class_node.package_name
+                        
+                        class_start_time = time.time()
+                        logger.debug(f"Adding class {i+1}/{len(classes_to_add)}: {class_node.name} (package: {package_name})")
+                        db.add_class(class_node, package_name, final_project_name)
+                        
+                        class_elapsed = time.time() - class_start_time
+                        if class_elapsed > 1.0:  # 1초 이상 걸린 경우에만 시간 표시
+                            logger.debug(f"  ✓ Completed in {class_elapsed:.2f}s")
+                        
+                        # 10개마다 전체 진행상태 표시
+                        if (i + 1) % 10 == 0:
+                            elapsed = time.time() - start_time
+                            remaining = (elapsed / (i + 1)) * (len(classes_to_add) - i - 1)
+                            logger.info(f"  Progress: {i+1}/{len(classes_to_add)} classes processed ({elapsed:.1f}s elapsed, ~{remaining:.1f}s remaining)")
+                        
+                    except Exception as e:
+                        logger.error(f"Error adding class {class_node.name}: {e}")
+                        continue
+                
+                total_elapsed = time.time() - start_time
+                logger.info(f"✓ All {len(classes_to_add)} classes added successfully in {total_elapsed:.2f}s")
+                
+                # Add Spring Boot analysis results
+                if beans:
+                    logger.info(f"Adding {len(beans)} Spring Beans to database...")
+                    start_time = time.time()
+                    for i, bean in enumerate(beans):
+                        db.add_bean(bean, final_project_name)
+                        if (i + 1) % 20 == 0:
+                            logger.info(f"  Progress: {i+1}/{len(beans)} beans processed")
+                    logger.info(f"✓ Added {len(beans)} Spring Beans in {time.time() - start_time:.2f}s")
+                
+                if dependencies:
+                    logger.info(f"Adding {len(dependencies)} Bean dependencies to database...")
+                    start_time = time.time()
+                    for dependency in dependencies:
+                        db.add_bean_dependency(dependency, final_project_name)
+                    logger.info(f"✓ Added {len(dependencies)} Bean dependencies in {time.time() - start_time:.2f}s")
+                
+                if endpoints:
+                    logger.info(f"Adding {len(endpoints)} REST API endpoints to database...")
+                    start_time = time.time()
+                    for i, endpoint in enumerate(endpoints):
+                        db.add_endpoint(endpoint, final_project_name)
+                        if (i + 1) % 50 == 0:
+                            logger.info(f"  Progress: {i+1}/{len(endpoints)} endpoints processed")
+                    logger.info(f"✓ Added {len(endpoints)} REST API endpoints in {time.time() - start_time:.2f}s")
+                
+                if mybatis_mappers:
+                    logger.info(f"Adding {len(mybatis_mappers)} MyBatis mappers to database...")
+                    start_time = time.time()
+                    for mapper in mybatis_mappers:
+                        db.add_mybatis_mapper(mapper, final_project_name)
+                    logger.info(f"✓ Added {len(mybatis_mappers)} MyBatis mappers in {time.time() - start_time:.2f}s")
+                
+                if jpa_entities:
+                    logger.info(f"Adding {len(jpa_entities)} JPA entities to database...")
+                    start_time = time.time()
+                    for entity in jpa_entities:
+                        db.add_jpa_entity(entity, final_project_name)
+                    logger.info(f"✓ Added {len(jpa_entities)} JPA entities in {time.time() - start_time:.2f}s")
+                
+                if jpa_repositories:
+                    logger.info(f"Adding {len(jpa_repositories)} JPA repositories to database...")
+                    start_time = time.time()
+                    for repository in jpa_repositories:
+                        db.add_jpa_repository(repository, final_project_name)
+                    logger.info(f"✓ Added {len(jpa_repositories)} JPA repositories in {time.time() - start_time:.2f}s")
+                
+                if jpa_queries:
+                    logger.info(f"Adding {len(jpa_queries)} JPA queries to database...")
+                    start_time = time.time()
+                    for i, query in enumerate(jpa_queries):
+                        db.add_jpa_query(query, final_project_name)
+                        if (i + 1) % 50 == 0:
+                            logger.info(f"  Progress: {i+1}/{len(jpa_queries)} queries processed")
+                    logger.info(f"✓ Added {len(jpa_queries)} JPA queries in {time.time() - start_time:.2f}s")
+                
+                if config_files:
+                    logger.info(f"Adding {len(config_files)} configuration files to database...")
+                    start_time = time.time()
+                    for config_file in config_files:
+                        db.add_config_file(config_file, final_project_name)
+                    logger.info(f"✓ Added {len(config_files)} configuration files in {time.time() - start_time:.2f}s")
+                
+                if test_classes:
+                    logger.info(f"Adding {len(test_classes)} test classes to database...")
+                    start_time = time.time()
+                    for test_class in test_classes:
+                        db.add_test_class(test_class, final_project_name)
+                    logger.info(f"✓ Added {len(test_classes)} test classes in {time.time() - start_time:.2f}s")
+                
+                if sql_statements:
+                    logger.info(f"Adding {len(sql_statements)} SQL statements to database...")
+                    start_time = time.time()
+                    for i, sql_statement in enumerate(sql_statements):
+                        db.add_sql_statement(sql_statement, final_project_name)
+                        # Create relationship between mapper and SQL statement
+                        with db._driver.session() as session:
+                            session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, final_project_name)
+                        if (i + 1) % 100 == 0:
+                            logger.info(f"  Progress: {i+1}/{len(sql_statements)} SQL statements processed")
+                    logger.info(f"✓ Added {len(sql_statements)} SQL statements in {time.time() - start_time:.2f}s")
+                
+                db.close()
+                logger.info("Java object analysis complete.")
+                logger.info("===== analyze 작업 완료 =====")
+                return
+                
+            except Exception as e:
+                import traceback
+                logger.error(f"Error analyzing Java objects: {e}")
+                logger.error(f"\nFull traceback:")
+                traceback.print_exc()
+                logger.error("Use --dry-run flag to parse without database connection.")
+                logger.info("===== analyze 작업 완료 =====")
+                exit(1)
 
     # Handle DB object analysis (only when java_object is False)
     if db_object and not java_object:
-        click.echo("Analyzing database objects from DDL scripts...")
+        logger.info("Analyzing database objects from DDL scripts...")
         
         # Determine project name for DB analysis
         if not final_project_name:
             # Priority 1: Use --project-name if provided
             if project_name:
                 final_project_name = project_name
-                click.echo(f"Using provided project name: {final_project_name}")
+                logger.info(f"Using provided project name: {final_project_name}")
             # Priority 3: Use previous analysis project name or default
             else:
                 from pathlib import Path
@@ -558,19 +573,21 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                     final_project_name = Path(java_source_folder).resolve().name
                 else:
                     final_project_name = os.getenv("PROJECT_NAME", "default_project")
-                click.echo(f"Using fallback project name: {final_project_name}")
+                logger.info(f"Using fallback project name: {final_project_name}")
         
-        click.echo(f"Project name: {final_project_name}")
+        logger.info(f"Project name: {final_project_name}")
         
         # Get DB script folder from environment variable
         db_script_folder = os.getenv("DB_SCRIPT_FOLDER")
         if not db_script_folder:
-            click.echo("Error: DB_SCRIPT_FOLDER environment variable is required for --db_object option.", err=True)
-            click.echo("Please set DB_SCRIPT_FOLDER in your .env file or environment variables.")
+            logger.error("Error: DB_SCRIPT_FOLDER environment variable is required for --db_object option.")
+            logger.error("Please set DB_SCRIPT_FOLDER in your .env file or environment variables.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
         
         if not os.path.exists(db_script_folder):
-            click.echo(f"Error: DB script folder {db_script_folder} does not exist.", err=True)
+            logger.error(f"Error: DB script folder {db_script_folder} does not exist.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
         
         try:
@@ -579,10 +596,11 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             all_db_objects = db_parser.parse_ddl_directory(db_script_folder, None)
             
             if not all_db_objects:
-                click.echo("No DDL files found or parsed successfully.")
+                logger.info("No DDL files found or parsed successfully.")
+                logger.info("===== analyze 작업 완료 =====")
                 return
             
-            click.echo(f"Found {len(all_db_objects)} DDL files to process.")
+            logger.info(f"Found {len(all_db_objects)} DDL files to process.")
             
             # Show summary of what will be processed
             total_tables = sum(len(db_objects['tables']) for db_objects in all_db_objects)
@@ -590,32 +608,33 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             total_indexes = sum(len(db_objects['indexes']) for db_objects in all_db_objects)
             total_constraints = sum(len(db_objects['constraints']) for db_objects in all_db_objects)
             
-            click.echo(f"Summary:")
-            click.echo(f"  Total databases: {len(all_db_objects)}")
-            click.echo(f"  Total tables: {total_tables}")
-            click.echo(f"  Total columns: {total_columns}")
-            click.echo(f"  Total indexes: {total_indexes}")
-            click.echo(f"  Total constraints: {total_constraints}")
+            logger.info(f"Summary:")
+            logger.info(f"  Total databases: {len(all_db_objects)}")
+            logger.info(f"  Total tables: {total_tables}")
+            logger.info(f"  Total columns: {total_columns}")
+            logger.info(f"  Total indexes: {total_indexes}")
+            logger.info(f"  Total constraints: {total_constraints}")
             
             if dry_run:
-                click.echo("\nDry run mode - not connecting to database.")
+                logger.info("\nDry run mode - not connecting to database.")
                 for i, db_objects in enumerate(all_db_objects):
-                    click.echo(f"\nDDL file {i+1}:")
-                    click.echo(f"  Database: {db_objects['database'].name}")
-                    click.echo(f"  Environment: {db_objects['database'].environment}")
-                    click.echo(f"  Tables: {len(db_objects['tables'])}")
-                    click.echo(f"  Columns: {len(db_objects['columns'])}")
-                    click.echo(f"  Indexes: {len(db_objects['indexes'])}")
-                    click.echo(f"  Constraints: {len(db_objects['constraints'])}")
-                click.echo("\nDB object analysis complete (dry run).")
+                    logger.info(f"\nDDL file {i+1}:")
+                    logger.info(f"  Database: {db_objects['database'].name}")
+                    logger.info(f"  Environment: {db_objects['database'].environment}")
+                    logger.info(f"  Tables: {len(db_objects['tables'])}")
+                    logger.info(f"  Columns: {len(db_objects['columns'])}")
+                    logger.info(f"  Indexes: {len(db_objects['indexes'])}")
+                    logger.info(f"  Constraints: {len(db_objects['constraints'])}")
+                logger.info("\nDB object analysis complete (dry run).")
+                logger.info("===== analyze 작업 완료 =====")
                 return
             
             # Connect to database
-            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
             db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
             
             if clean:
-                click.echo("Cleaning database objects...")
+                logger.info("Cleaning database objects...")
                 with db._driver.session() as session:
                     # Delete only database-related nodes
                     session.run("MATCH (n:Database) DETACH DELETE n")
@@ -629,51 +648,53 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 logger.info(f"Processing DDL file {i+1}...")
                 
                 # Add database
-                click.echo(f"Adding database: {db_objects['database'].name}")
+                logger.info(f"Adding database: {db_objects['database'].name}")
                 db.add_database(db_objects['database'], None)
                 
                 # Add tables
                 for table_obj in db_objects['tables']:
-                    click.echo(f"Adding table: {table_obj.name}")
+                    logger.info(f"Adding table: {table_obj.name}")
                     db.add_table(table_obj, db_objects['database'].name, None)
                 
                 # Add columns
                 for column_obj in db_objects['columns']:
                     table_name = getattr(column_obj, 'table_name', 'unknown')
-                    click.echo(f"Adding column: {column_obj.name} to table {table_name}")
+                    logger.info(f"Adding column: {column_obj.name} to table {table_name}")
                     db.add_column(column_obj, table_name, None)
                 
                 # Add indexes
                 for index_obj, table_name in db_objects['indexes']:
-                    click.echo(f"Adding index: {index_obj.name} to table {table_name}")
+                    logger.info(f"Adding index: {index_obj.name} to table {table_name}")
                     db.add_index(index_obj, table_name, None)
                 
                 # Add constraints
                 for constraint_obj, table_name in db_objects['constraints']:
-                    click.echo(f"Adding constraint: {constraint_obj.name} to table {table_name}")
+                    logger.info(f"Adding constraint: {constraint_obj.name} to table {table_name}")
                     db.add_constraint(constraint_obj, table_name, None)
             
             db.close()
-            click.echo(f"\nDB object analysis complete!")
-            click.echo(f"Successfully processed {len(all_db_objects)} DDL files.")
-            click.echo(f"Added {total_tables} tables, {total_columns} columns, {total_indexes} indexes, and {total_constraints} constraints to the database.")
+            logger.info(f"\nDB object analysis complete!")
+            logger.info(f"Successfully processed {len(all_db_objects)} DDL files.")
+            logger.info(f"Added {total_tables} tables, {total_columns} columns, {total_indexes} indexes, and {total_constraints} constraints to the database.")
+            logger.info("===== analyze 작업 완료 =====")
             return
             
         except Exception as e:
-            click.echo(f"Error analyzing DB objects: {e}")
-            click.echo("Use --dry-run flag to parse without database connection.")
+            logger.error(f"Error analyzing DB objects: {e}")
+            logger.error("Use --dry-run flag to parse without database connection.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
 
     # If analyzing a specific class
     if class_name:
-        click.echo(f"Analyzing specific class: {class_name}")
+        logger.info(f"Analyzing specific class: {class_name}")
         
         # Determine project name for class analysis
         if not final_project_name:
             # Priority 1: Use --project-name if provided
             if project_name:
                 final_project_name = project_name
-                click.echo(f"Using provided project name: {final_project_name}")
+                logger.info(f"Using provided project name: {final_project_name}")
             # Priority 3: Use previous analysis project name or default
             else:
                 from pathlib import Path
@@ -681,7 +702,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                     final_project_name = Path(java_source_folder).resolve().name
                 else:
                     final_project_name = os.getenv("PROJECT_NAME", "default_project")
-                click.echo(f"Using fallback project name: {final_project_name}")
+                logger.info(f"Using fallback project name: {final_project_name}")
         
         # Find the Java file for this class
         java_file_path = None
@@ -694,10 +715,11 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 break
         
         if not java_file_path:
-            click.echo(f"Error: Could not find Java file for class '{class_name}'", err=True)
+            logger.error(f"Error: Could not find Java file for class '{class_name}'")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
         
-        click.echo(f"Found Java file: {java_file_path}")
+        logger.info(f"Found Java file: {java_file_path}")
         
         try:
             # Parse the single Java file
@@ -706,35 +728,37 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             package_node, class_node, package_name = parse_single_java_file(java_file_path, final_project_name)
             
             if package_node is None or class_node is None:
-                click.echo(f"Error: Failed to parse Java file: {java_file_path}", err=True)
-                click.echo("Please check if the file contains valid Java code.")
+                logger.error(f"Error: Failed to parse Java file: {java_file_path}")
+                logger.error("Please check if the file contains valid Java code.")
+                logger.info("===== analyze 작업 완료 =====")
                 exit(1)
             
-            click.echo(f"Parsed class: {class_node.name}")
-            click.echo(f"Package: {package_name}")
-            click.echo(f"Methods: {len(class_node.methods)}")
-            click.echo(f"Properties: {len(class_node.properties)}")
-            click.echo(f"Method calls: {len(class_node.calls)}")
+            logger.info(f"Parsed class: {class_node.name}")
+            logger.info(f"Package: {package_name}")
+            logger.info(f"Methods: {len(class_node.methods)}")
+            logger.info(f"Properties: {len(class_node.properties)}")
+            logger.info(f"Method calls: {len(class_node.calls)}")
             
             if dry_run:
-                click.echo("Dry run mode - not connecting to database.")
+                logger.info("Dry run mode - not connecting to database.")
                 logger.info("Analysis complete (dry run).")
+                logger.info("===== analyze 작업 완료 =====")
                 return
             
             # Connect to database
-            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
             db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
             
             # Delete existing data for this class
-            click.echo(f"Deleting existing data for class '{class_name}'...")
+            logger.info(f"Deleting existing data for class '{class_name}'...")
             db.delete_class_and_related_data(class_name, final_project_name)
             
             # Add package
-            click.echo("Adding package to database...")
+            logger.info("Adding package to database...")
             db.add_package(package_node, final_project_name)
             
             # Add class
-            click.echo("Adding class to database...")
+            logger.info("Adding class to database...")
             db.add_class(class_node, package_name, final_project_name)
             
             # Extract and add related Spring Boot analysis results for this class only
@@ -751,12 +775,12 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             
             # Add Spring Boot analysis results
             if beans:
-                click.echo(f"Adding {len(beans)} Spring Beans to database...")
+                logger.info(f"Adding {len(beans)} Spring Beans to database...")
                 for bean in beans:
                     db.add_bean(bean, final_project_name)
             
             if dependencies:
-                click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
+                logger.info(f"Adding {len(dependencies)} Bean dependencies to database...")
                 for dependency in dependencies:
                     db.add_bean_dependency(dependency, final_project_name)
             
@@ -771,7 +795,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                     db.add_mybatis_mapper(mapper, final_project_name)
             
             if jpa_entities:
-                click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
+                logger.info(f"Adding {len(jpa_entities)} JPA entities to database...")
                 for entity in jpa_entities:
                     db.add_jpa_entity(entity, final_project_name)
             
@@ -789,25 +813,27 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                         session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, final_project_name)
             
             db.close()
-            click.echo("Class analysis complete.")
+            logger.info("Class analysis complete.")
+            logger.info("===== analyze 작업 완료 =====")
             
         except Exception as e:
-            click.echo(f"Error analyzing class: {e}")
-            click.echo("Use --dry-run flag to parse without database connection.")
+            logger.error(f"Error analyzing class: {e}")
+            logger.error("Use --dry-run flag to parse without database connection.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
         
         return
 
     # If updating all classes individually
     if update:
-        click.echo("Updating all classes individually...")
+        logger.info("Updating all classes individually...")
         
         # Determine project name for update analysis
         if not final_project_name:
             # Priority 1: Use --project-name if provided
             if project_name:
                 final_project_name = project_name
-                click.echo(f"Using provided project name: {final_project_name}")
+                logger.info(f"Using provided project name: {final_project_name}")
             # Priority 3: Use previous analysis project name or default
             else:
                 from pathlib import Path
@@ -815,7 +841,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                     final_project_name = Path(java_source_folder).resolve().name
                 else:
                     final_project_name = os.getenv("PROJECT_NAME", "default_project")
-                click.echo(f"Using fallback project name: {final_project_name}")
+                logger.info(f"Using fallback project name: {final_project_name}")
         
         # Find all Java files
         java_files = []
@@ -825,26 +851,28 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                     java_files.append(os.path.join(root, file))
         
         if not java_files:
-            click.echo("No Java files found in the specified directory.", err=True)
+            logger.error("No Java files found in the specified directory.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
         
-        click.echo(f"Found {len(java_files)} Java files to process.")
+        logger.info(f"Found {len(java_files)} Java files to process.")
         
         if dry_run:
-            click.echo("Dry run mode - not connecting to database.")
+            logger.info("Dry run mode - not connecting to database.")
             for java_file in java_files:
                 try:
                     from csa.services.java_parser import parse_single_java_file
                     package_node, class_node, package_name = parse_single_java_file(java_file, final_project_name)
-                    click.echo(f"  {class_node.name} ({package_name}) - Methods: {len(class_node.methods)}, Properties: {len(class_node.properties)}")
+                    logger.info(f"  {class_node.name} ({package_name}) - Methods: {len(class_node.methods)}, Properties: {len(class_node.properties)}")
                 except Exception as e:
-                    click.echo(f"  Error parsing {java_file}: {e}")
-            click.echo("Update analysis complete (dry run).")
+                    logger.error(f"  Error parsing {java_file}: {e}")
+            logger.info("Update analysis complete (dry run).")
+            logger.info("===== analyze 작업 완료 =====")
             return
         
         try:
             # Connect to database
-            click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+            logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
             db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
             
             processed_count = 0
@@ -852,17 +880,17 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             
             for java_file in java_files:
                 try:
-                    click.echo(f"Processing: {java_file}")
+                    logger.info(f"Processing: {java_file}")
                     
                     # Parse the single Java file
                     from csa.services.java_parser import parse_single_java_file, extract_beans_from_classes, analyze_bean_dependencies, extract_endpoints_from_classes, extract_mybatis_mappers_from_classes, extract_jpa_entities_from_classes, extract_test_classes_from_classes, extract_sql_statements_from_mappers
                     
                     package_node, class_node, package_name = parse_single_java_file(java_file, final_project_name)
                     
-                    click.echo(f"  Parsed class: {class_node.name} (Package: {package_name})")
+                    logger.info(f"  Parsed class: {class_node.name} (Package: {package_name})")
                     
                     # Delete existing data for this class
-                    click.echo(f"  Deleting existing data for class '{class_node.name}'...")
+                    logger.info(f"  Deleting existing data for class '{class_node.name}'...")
                     db.delete_class_and_related_data(class_node.name, final_project_name)
                     
                     # Add package
@@ -916,26 +944,28 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                                 session.execute_write(db._create_mapper_sql_relationship_tx, sql_statement.mapper_name, sql_statement.id, final_project_name)
                     
                     processed_count += 1
-                    click.echo(f"  [OK] Successfully processed {class_node.name}")
+                    logger.info(f"  [OK] Successfully processed {class_node.name}")
                     
                 except Exception as e:
                     error_count += 1
-                    click.echo(f"  [ERROR] Error processing {java_file}: {e}")
+                    logger.error(f"  [ERROR] Error processing {java_file}: {e}")
                     continue
             
             db.close()
-            click.echo(f"Update complete. Processed: {processed_count}, Errors: {error_count}")
+            logger.info(f"Update complete. Processed: {processed_count}, Errors: {error_count}")
+            logger.info("===== analyze 작업 완료 =====")
             
         except Exception as e:
-            click.echo(f"Error during update: {e}")
-            click.echo("Use --dry-run flag to parse without database connection.")
+            logger.error(f"Error during update: {e}")
+            logger.error("Use --dry-run flag to parse without database connection.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
         
         return
 
     # Original full project analysis (when both java_object and db_object are True)
     if java_object and db_object and not class_name and not update:
-        click.echo(f"Parsing Java project at: {java_source_folder}")
+        logger.info(f"Parsing Java project at: {java_source_folder}")
         packages_to_add, classes_to_add, class_to_package_map, beans, dependencies, endpoints, mybatis_mappers, jpa_entities, jpa_repositories, jpa_queries, config_files, test_classes, sql_statements, detected_project_name = parse_java_project(java_source_folder)
     
         # Determine project name for full analysis
@@ -943,37 +973,37 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             # Priority 1: Use --project-name if provided
             if project_name:
                 final_project_name = project_name
-                click.echo(f"Using provided project name: {final_project_name}")
+                logger.info(f"Using provided project name: {final_project_name}")
             # Priority 2: Use detected project name from parse_java_project
             else:
                 final_project_name = detected_project_name
-                click.echo(f"Using detected project name: {final_project_name}")
+                logger.info(f"Using detected project name: {final_project_name}")
         
-        click.echo(f"Project name: {final_project_name}")
+        logger.info(f"Project name: {final_project_name}")
         
-        click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+        logger.info(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
         
         if dry_run:
-            click.echo("Dry run mode - not connecting to database.")
-            click.echo(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
-            click.echo(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
-            click.echo(f"Found {len(endpoints)} REST API endpoints.")
-            click.echo(f"Found {len(mybatis_mappers)} MyBatis mappers.")
-            click.echo(f"Found {len(jpa_entities)} JPA entities.")
-            click.echo(f"Found {len(jpa_repositories)} JPA repositories.")
-            click.echo(f"Found {len(jpa_queries)} JPA queries.")
-            click.echo(f"Found {len(config_files)} configuration files.")
-            click.echo(f"Found {len(test_classes)} test classes.")
-            click.echo(f"Found {len(sql_statements)} SQL statements.")
+            logger.info("Dry run mode - not connecting to database.")
+            logger.info(f"Found {len(packages_to_add)} packages and {len(classes_to_add)} classes.")
+            logger.info(f"Found {len(beans)} Spring Beans and {len(dependencies)} dependencies.")
+            logger.info(f"Found {len(endpoints)} REST API endpoints.")
+            logger.info(f"Found {len(mybatis_mappers)} MyBatis mappers.")
+            logger.info(f"Found {len(jpa_entities)} JPA entities.")
+            logger.info(f"Found {len(jpa_repositories)} JPA repositories.")
+            logger.info(f"Found {len(jpa_queries)} JPA queries.")
+            logger.info(f"Found {len(config_files)} configuration files.")
+            logger.info(f"Found {len(test_classes)} test classes.")
+            logger.info(f"Found {len(sql_statements)} SQL statements.")
             
             for package_node in packages_to_add:
-                click.echo(f"Package: {package_node.name}")
+                logger.info(f"Package: {package_node.name}")
             for class_node in classes_to_add:
-                click.echo(f"Class: {class_node.name}")
-                click.echo(f"  Methods: {len(class_node.methods)}")
-                click.echo(f"  Properties: {len(class_node.properties)}")
-                click.echo(f"  Method calls: {len(class_node.calls)}")
-            click.echo("Java object analysis complete (dry run).")
+                logger.info(f"Class: {class_node.name}")
+                logger.info(f"  Methods: {len(class_node.methods)}")
+                logger.info(f"  Properties: {len(class_node.properties)}")
+                logger.info(f"  Method calls: {len(class_node.calls)}")
+            logger.info("Java object analysis complete (dry run).")
             
             # Also analyze DB objects if DB_SCRIPT_FOLDER is set
             db_script_folder = os.getenv("DB_SCRIPT_FOLDER")
@@ -985,7 +1015,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                     all_db_objects = db_parser.parse_ddl_directory(db_script_folder, None)
                     
                     if all_db_objects:
-                        click.echo(f"Found {len(all_db_objects)} DDL files to process.")
+                        logger.info(f"Found {len(all_db_objects)} DDL files to process.")
                         
                         # Show summary of what will be processed
                         total_tables = sum(len(db_objects['tables']) for db_objects in all_db_objects)
@@ -993,31 +1023,31 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                         total_indexes = sum(len(db_objects['indexes']) for db_objects in all_db_objects)
                         total_constraints = sum(len(db_objects['constraints']) for db_objects in all_db_objects)
                         
-                        click.echo(f"Summary:")
-                        click.echo(f"  Total databases: {len(all_db_objects)}")
-                        click.echo(f"  Total tables: {total_tables}")
-                        click.echo(f"  Total columns: {total_columns}")
-                        click.echo(f"  Total indexes: {total_indexes}")
-                        click.echo(f"  Total constraints: {total_constraints}")
+                        logger.info(f"Summary:")
+                        logger.info(f"  Total databases: {len(all_db_objects)}")
+                        logger.info(f"  Total tables: {total_tables}")
+                        logger.info(f"  Total columns: {total_columns}")
+                        logger.info(f"  Total indexes: {total_indexes}")
+                        logger.info(f"  Total constraints: {total_constraints}")
                         
                         for i, db_objects in enumerate(all_db_objects):
-                            click.echo(f"\nDDL file {i+1}:")
-                            click.echo(f"  Database: {db_objects['database'].name}")
-                            click.echo(f"  Environment: {db_objects['database'].environment}")
-                            click.echo(f"  Tables: {len(db_objects['tables'])}")
-                            click.echo(f"  Columns: {len(db_objects['columns'])}")
-                            click.echo(f"  Indexes: {len(db_objects['indexes'])}")
-                            click.echo(f"  Constraints: {len(db_objects['constraints'])}")
+                            logger.info(f"\nDDL file {i+1}:")
+                            logger.info(f"  Database: {db_objects['database'].name}")
+                            logger.info(f"  Environment: {db_objects['database'].environment}")
+                            logger.info(f"  Tables: {len(db_objects['tables'])}")
+                            logger.info(f"  Columns: {len(db_objects['columns'])}")
+                            logger.info(f"  Indexes: {len(db_objects['indexes'])}")
+                            logger.info(f"  Constraints: {len(db_objects['constraints'])}")
                     else:
-                        click.echo("No DDL files found or parsed successfully.")
+                        logger.info("No DDL files found or parsed successfully.")
                 except Exception as e:
-                    click.echo(f"Warning: Could not analyze DB objects: {e}")
+                    logger.warning(f"Warning: Could not analyze DB objects: {e}")
             
             logger.info("Analysis complete (dry run).")
             return
 
         try:
-            logger = get_logger(__name__)
+            # logger already initialized at function start
             logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
             db = GraphDB(uri=neo4j_uri, user=neo4j_user, password=neo4j_password)
 
@@ -1034,7 +1064,7 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
             logger.info(f"Total classes to add: {len(classes_to_add)}")
             
             import time
-            logger = get_logger(__name__)
+            # logger already initialized at function start
             start_time = time.time()
             
             for i, class_node in enumerate(classes_to_add):
@@ -1068,20 +1098,20 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
         
             # Add Spring Boot analysis results
             if beans:
-                click.echo(f"Adding {len(beans)} Spring Beans to database...")
+                logger.info(f"Adding {len(beans)} Spring Beans to database...")
                 start_time = time.time()
                 for i, bean in enumerate(beans):
                     db.add_bean(bean, final_project_name)
                     if (i + 1) % 20 == 0:
-                        click.echo(f"  Progress: {i+1}/{len(beans)} beans processed")
-                click.echo(f"✓ Added {len(beans)} Spring Beans in {time.time() - start_time:.2f}s")
+                        logger.info(f"  Progress: {i+1}/{len(beans)} beans processed")
+                logger.info(f"✓ Added {len(beans)} Spring Beans in {time.time() - start_time:.2f}s")
         
             if dependencies:
-                click.echo(f"Adding {len(dependencies)} Bean dependencies to database...")
+                logger.info(f"Adding {len(dependencies)} Bean dependencies to database...")
                 start_time = time.time()
                 for dependency in dependencies:
                     db.add_bean_dependency(dependency, final_project_name)
-                click.echo(f"✓ Added {len(dependencies)} Bean dependencies in {time.time() - start_time:.2f}s")
+                logger.info(f"✓ Added {len(dependencies)} Bean dependencies in {time.time() - start_time:.2f}s")
         
             if endpoints:
                 logger.info(f"Adding {len(endpoints)} REST API endpoints to database...")
@@ -1100,11 +1130,11 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                 logger.info(f"✓ Added {len(mybatis_mappers)} MyBatis mappers in {time.time() - start_time:.2f}s")
             
             if jpa_entities:
-                click.echo(f"Adding {len(jpa_entities)} JPA entities to database...")
+                logger.info(f"Adding {len(jpa_entities)} JPA entities to database...")
                 start_time = time.time()
                 for entity in jpa_entities:
                     db.add_jpa_entity(entity, final_project_name)
-                click.echo(f"✓ Added {len(jpa_entities)} JPA entities in {time.time() - start_time:.2f}s")
+                logger.info(f"✓ Added {len(jpa_entities)} JPA entities in {time.time() - start_time:.2f}s")
             
             if jpa_repositories:
                 logger.info(f"Adding {len(jpa_repositories)} JPA repositories to database...")
@@ -1183,14 +1213,15 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
                         db.close()
                         logger.info(f"Added {len(all_db_objects)} database schemas.")
                     else:
-                        click.echo("No DDL files found or parsed successfully.")
+                        logger.info("No DDL files found or parsed successfully.")
                 except Exception as e:
-                    click.echo(f"Warning: Could not analyze DB objects: {e}")
+                    logger.warning(f"Warning: Could not analyze DB objects: {e}")
             
             logger.info("Analysis complete.")
         except Exception as e:
-            click.echo(f"Error connecting to database: {e}")
-            click.echo("Use --dry-run flag to parse without database connection.")
+            logger.error(f"Error connecting to database: {e}")
+            logger.error("Use --dry-run flag to parse without database connection.")
+            logger.info("===== analyze 작업 완료 =====")
             exit(1)
 
 @cli.command()
@@ -1204,6 +1235,15 @@ def analyze(java_source_folder, neo4j_uri, neo4j_user, neo4j_password, clean, cl
 @click.option('--package', is_flag=True, help='Run package-based class query')
 def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inheritance, package):
     """Execute queries against the Neo4j database."""
+    
+    # Initialize logger for run command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== 작업 시작 =====")
     
     # 미리 정의된 쿼리들
     queries = {
@@ -1275,30 +1315,30 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
         cypher_query = queries['package']
         description = "Package Query"
     else:
-        click.echo("Error: Please specify a query type or provide a custom query.")
-        click.echo("Available options: --basic, --detailed, --inheritance, --package, or --query")
+        logger.error("Error: Please specify a query type or provide a custom query.")
+        logger.error("Available options: --basic, --detailed, --inheritance, --package, or --query")
         return
     
     try:
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         
         with driver.session() as session:
-            click.echo(f"Executing: {description}")
-            click.echo("=" * 50)
+            logger.info(f"Executing: {description}")
+            logger.info("=" * 50)
             
             result = session.run(cypher_query)
             records = list(result)
             
             if not records:
-                click.echo("No results found.")
+                logger.info("No results found.")
                 return
             
             # 첫 번째 레코드의 키들을 헤더로 사용
             headers = list(records[0].keys())
             
             # 헤더 출력
-            click.echo(" | ".join(f"{header:20}" for header in headers))
-            click.echo("-" * (len(headers) * 23))
+            logger.info(" | ".join(f"{header:20}" for header in headers))
+            logger.info("-" * (len(headers) * 23))
             
             # 데이터 출력
             for record in records:
@@ -1311,14 +1351,16 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
                         row.append(str(value)[:50] + "..." if len(str(value)) > 50 else str(value))
                     else:
                         row.append(str(value)[:20])
-                click.echo(" | ".join(f"{cell:20}" for cell in row))
+                logger.info(" | ".join(f"{cell:20}" for cell in row))
             
-            click.echo(f"\nTotal: {len(records)} results found.")
+            logger.info(f"\nTotal: {len(records)} results found.")
             
     except Exception as e:
-        click.echo(f"Error executing query: {e}")
+        logger.error(f"Error executing query: {e}")
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1331,32 +1373,41 @@ def query(neo4j_uri, neo4j_user, neo4j_password, query, basic, detailed, inherit
 @click.option('--image-format', default='none', type=click.Choice(['none', 'png', 'svg', 'pdf']), help='Image format (default: none - no image generation)')
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
-@click.option('--format', default='plantuml', type=click.Choice(['mermaid', 'plantuml']), help='Diagram format (default: plantuml)')
+@click.option('--format', default='mermaid', type=click.Choice(['mermaid', 'plantuml']), help='Diagram format (default: mermaid)')
 @click.option('--output-dir', default=os.getenv("SEQUENCE_DIAGRAM_OUTPUT_DIR", "output/sequence-diagram"), help='Output directory for sequence diagrams (default: output/sequence-diagram)')
 def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_external, project_name, image_format, image_width, image_height, format, output_dir):
     """Generate sequence diagram for a specific class and optionally a method."""
     
+    # Initialize logger for sequence command
+    from csa.utils.logger import set_command_context
+    set_command_context("sequence")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== sequence 작업 시작 =====")
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
-        click.echo(f"Connecting to Neo4j at {neo4j_uri}...")
+        logger.info(f"Connecting to Neo4j at {neo4j_uri}...")
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         
         # Create generator with specified format
         generator = SequenceDiagramGenerator(driver, format=format)
         
         # Generate the sequence diagram
-        click.echo(f"Generating {format} sequence diagram for class: {class_name}")
+        logger.info(f"Generating {format} sequence diagram for class: {class_name}")
         if method_name:
-            click.echo(f"Focusing on method: {method_name}")
+            logger.info(f"Focusing on method: {method_name}")
         if project_name:
-            click.echo(f"Using project: {project_name}")
+            logger.info(f"Using project: {project_name}")
         else:
-            click.echo("Auto-detecting project name...")
+            logger.info("Auto-detecting project name...")
         
         diagram = generator.generate_sequence_diagram(
             class_name=class_name,
@@ -1372,40 +1423,42 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
         
         # Check if diagram contains error message
         if isinstance(diagram, str) and diagram.startswith("Error:"):
-            click.echo(f"Error: {diagram}")
+            logger.error(f"Error: {diagram}")
             return
         
         # Handle different return types
         if isinstance(diagram, dict):
             if diagram.get("type") == "class":
-                click.echo(f"Generated {len(diagram['files'])} sequence diagram files for class '{class_name}':")
-                click.echo("")
+                logger.info(f"Generated {len(diagram['files'])} sequence diagram files for class '{class_name}':")
+                logger.info("")
                 
                 for file_info in diagram['files']:
-                    click.echo(f"- Diagram: {os.path.basename(file_info['diagram_path'])}")
+                    logger.info(f"- Diagram: {os.path.basename(file_info['diagram_path'])}")
                     if file_info['image_path']:
-                        click.echo(f"  Image: {os.path.basename(file_info['image_path'])}")
+                        logger.info(f"  Image: {os.path.basename(file_info['image_path'])}")
                 
-                click.echo(f"\nFiles saved in: {diagram['output_dir']}/ directory")
+                logger.info(f"\nFiles saved in: {diagram['output_dir']}/ directory")
                 
             elif diagram.get("type") == "method":
-                click.echo(f"Generated sequence diagram for method '{method_name}':")
-                click.echo(f"- Diagram: {os.path.basename(diagram['diagram_path'])}")
+                logger.info(f"Generated sequence diagram for method '{method_name}':")
+                logger.info(f"- Diagram: {os.path.basename(diagram['diagram_path'])}")
                 if diagram['image_path']:
-                    click.echo(f"- Image: {os.path.basename(diagram['image_path'])}")
+                    logger.info(f"- Image: {os.path.basename(diagram['image_path'])}")
         else:
             # Fallback for string return (should not happen with new implementation)
-            click.echo(f"Diagram generated (length: {len(diagram)})")
-            click.echo(diagram)
+            logger.info(f"Diagram generated (length: {len(diagram)})")
+            logger.info(diagram)
         
     except Exception as e:
-        click.echo(f"Error generating sequence diagram: {e}")
+        logger.error(f"Error generating sequence diagram: {e}")
         import traceback
-        click.echo(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return
     finally:
         if 'driver' in locals():
             driver.close()
+        logger.info("===== 작업 완료 =====")
+        logger.info("===== sequence 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1413,11 +1466,20 @@ def sequence(neo4j_uri, neo4j_user, class_name, method_name, max_depth, include_
 def list_classes(neo4j_uri, neo4j_user):
     """List all available classes in the database."""
     
+    # Initialize logger for run command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== 작업 시작 =====")
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -1426,26 +1488,28 @@ def list_classes(neo4j_uri, neo4j_user):
         classes = generator.get_available_classes()
         
         if not classes:
-            click.echo("No classes found in the database.")
+            logger.info("No classes found in the database.")
             return
         
-        click.echo("Available classes:")
-        click.echo("=" * 80)
-        click.echo(f"{'Class Name':<30} {'Package':<30} {'Type':<10}")
-        click.echo("-" * 80)
+        logger.info("Available classes:")
+        logger.info("=" * 80)
+        logger.info(f"{'Class Name':<30} {'Package':<30} {'Type':<10}")
+        logger.info("-" * 80)
         
         for cls in classes:
             package_name = cls.get('package_name') or 'N/A'
             class_type = cls.get('type') or 'N/A'
-            click.echo(f"{cls['name']:<30} {package_name:<30} {class_type:<10}")
+            logger.info(f"{cls['name']:<30} {package_name:<30} {class_type:<10}")
         
-        click.echo(f"\nTotal: {len(classes)} classes found.")
+        logger.info(f"\nTotal: {len(classes)} classes found.")
         
     except Exception as e:
-        click.echo(f"Error listing classes: {e}")
+        logger.error(f"Error listing classes: {e}")
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1454,11 +1518,20 @@ def list_classes(neo4j_uri, neo4j_user):
 def list_methods(neo4j_uri, neo4j_user, class_name):
     """List all methods for a specific class."""
     
+    # Initialize logger for run command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== 작업 시작 =====")
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -1467,13 +1540,13 @@ def list_methods(neo4j_uri, neo4j_user, class_name):
         methods = generator.get_class_methods(class_name)
         
         if not methods:
-            click.echo(f"No methods found for class '{class_name}'.")
+            logger.info(f"No methods found for class '{class_name}'.")
             return
         
-        click.echo(f"Methods for class '{class_name}':")
-        click.echo("=" * 80)
+        logger.info(f"Methods for class '{class_name}':")
+        logger.info("=" * 80)
         click.echo(f"{'Method Name':<30} {'Return Type':<20} {'Logical Name':<30}")
-        click.echo("-" * 80)
+        logger.info("-" * 80)
         
         for method in methods:
             click.echo(f"{method['name']:<30} {method['return_type']:<20} {method['logical_name']:<30}")
@@ -1481,10 +1554,12 @@ def list_methods(neo4j_uri, neo4j_user, class_name):
         click.echo(f"\nTotal: {len(methods)} methods found.")
         
     except Exception as e:
-        click.echo(f"Error listing methods: {e}")
+        logger.error(f"Error listing methods: {e}")
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1496,41 +1571,50 @@ def list_methods(neo4j_uri, neo4j_user, class_name):
 def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_relationships):
     """Show CRUD matrix for classes and tables."""
     
+    # Initialize logger for crud-matrix command
+    from csa.utils.logger import set_command_context
+    set_command_context("crud-matrix")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== crud-matrix 작업 시작 =====")
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         db = GraphDB(neo4j_uri, neo4j_user, neo4j_password)
         
-        click.echo("CRUD Matrix - Class to Table Operations")
-        click.echo("=" * 80)
+        logger.info("CRUD Matrix - Class to Table Operations")
+        logger.info("=" * 80)
         
         # 먼저 CRUD 매트릭스 확인
         matrix = db.get_crud_matrix(project_name)
         
         # CRUD 매트릭스가 없고 자동 생성 옵션이 활성화된 경우 관계 생성
         if not matrix and auto_create_relationships:
-            click.echo("No CRUD operations found. Creating Method-SqlStatement relationships...")
+            logger.info("No CRUD operations found. Creating Method-SqlStatement relationships...")
             relationships_created = db.create_method_sql_relationships(project_name)
             if relationships_created:
-                click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+                logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
                 # 관계 생성 후 다시 CRUD 매트릭스 확인
                 matrix = db.get_crud_matrix(project_name)
             else:
-                click.echo("No relationships could be created.")
+                logger.info("No relationships could be created.")
         
         if not matrix:
-            click.echo("No CRUD operations found.")
+            logger.info("No CRUD operations found.")
             if not auto_create_relationships:
-                click.echo("Tip: Use --auto-create-relationships flag to automatically create Method-SqlStatement relationships.")
+                logger.info("Tip: Use --auto-create-relationships flag to automatically create Method-SqlStatement relationships.")
             return
         
-        click.echo(f"{'Package':<35} {'Class Name':<30} {'Method':<25} {'Schema':<10} {'Table':<20} {'Operations':<15}")
-        click.echo("-" * 135)
+        logger.info(f"{'Package':<35} {'Class Name':<30} {'Method':<25} {'Schema':<10} {'Table':<20} {'Operations':<15}")
+        logger.info("-" * 135)
         
         for row in matrix:
             package_name = row['package_name'] or 'N/A'
@@ -1540,9 +1624,9 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
             table_name = row['table_name']
             operations = ', '.join(row['operations']) if row['operations'] else 'None'
             
-            click.echo(f"{package_name:<35} {class_name:<30} {method_name:<25} {schema:<10} {table_name:<20} {operations:<15}")
+            logger.info(f"{package_name:<35} {class_name:<30} {method_name:<25} {schema:<10} {table_name:<20} {operations:<15}")
         
-        click.echo(f"\nTotal: {len(matrix)} class-table relationships.")
+        logger.info(f"\nTotal: {len(matrix)} class-table relationships.")
         
         # 출력 디렉토리 및 타임스탬프 준비
         output_dir = os.getenv("CRUD_MATRIX_OUTPUT_DIR", "./output/crud-matrix")
@@ -1575,7 +1659,7 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
         with open(md_filepath, 'w', encoding='utf-8') as f:
             f.write(markdown_content)
         
-        click.echo(f"\nCRUD matrix (Markdown) saved to: {md_filepath}")
+        logger.info(f"\nCRUD matrix (Markdown) saved to: {md_filepath}")
         
         # 추가 형식 파일 생성 (output_format이 지정된 경우)
         if output_format:
@@ -1584,24 +1668,26 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
                 excel_filepath = os.path.join(output_dir, excel_filename)
                 success = _save_crud_matrix_as_excel(matrix, project_name, excel_filepath)
                 if success:
-                    click.echo(f"CRUD matrix (Excel) saved to: {excel_filepath}")
+                    logger.info(f"CRUD matrix (Excel) saved to: {excel_filepath}")
                 else:
-                    click.echo("Failed to generate Excel file. Check logs for details.")
+                    logger.info("Failed to generate Excel file. Check logs for details.")
             
             elif output_format.lower() in ['svg', 'png']:
                 image_filename = f"CRUD_{project_name}_{timestamp}.{output_format.lower()}"
                 image_filepath = os.path.join(output_dir, image_filename)
                 success = _save_crud_matrix_as_image(matrix, project_name, image_filepath, output_format.lower())
                 if success:
-                    click.echo(f"CRUD matrix ({output_format.upper()}) saved to: {image_filepath}")
+                    logger.info(f"CRUD matrix ({output_format.upper()}) saved to: {image_filepath}")
                 else:
-                    click.echo(f"Failed to generate {output_format.upper()} file. Check logs for details.")
+                    logger.info(f"Failed to generate {output_format.upper()} file. Check logs for details.")
         
     except Exception as e:
-        click.echo(f"Error getting CRUD matrix: {e}")
+        logger.error(f"Error getting CRUD matrix: {e}")
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
+        logger.info("===== crud-matrix 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1611,18 +1697,27 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
 def db_analysis(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
     """Show database call relationship analysis."""
     
+    # Initialize logger for run command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== 작업 시작 =====")
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         db = GraphDB(neo4j_uri, neo4j_user, neo4j_password)
         
-        click.echo("Database Call Relationship Analysis")
-        click.echo("=" * 80)
+        logger.info("Database Call Relationship Analysis")
+        logger.info("=" * 80)
         
         # 먼저 SQL 문 통계 확인
         sql_stats = db.get_sql_statistics(project_name)
@@ -1683,6 +1778,7 @@ def db_analysis(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1692,11 +1788,16 @@ def db_analysis(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
 def table_summary(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
     """Show CRUD summary for each table."""
     
+    # Initialize logger for table-summary command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -1742,6 +1843,7 @@ def table_summary(neo4j_uri, neo4j_user, project_name, auto_create_relationships
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1754,11 +1856,20 @@ def table_summary(neo4j_uri, neo4j_user, project_name, auto_create_relationships
 def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method, output_file, auto_create_relationships):
     """Analyze database call chain relationships."""
     
+    # Initialize logger for run command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
+    # 작업 시작 로그
+    logger.info("")
+    logger.info("===== 작업 시작 =====")
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -1790,7 +1901,7 @@ def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method
                 click.echo("No relationships could be created.")
         
         if 'error' in result:
-            click.echo(f"Error: {result['error']}")
+            logger.error(f"Error: {result['error']}")
             return
         
         # 결과 출력
@@ -1798,10 +1909,10 @@ def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method
         missing_nodes = result['missing_nodes']
         summary = result['analysis_summary']
         
-        click.echo(f"\nAnalysis Summary:")
-        click.echo(f"  Total calls: {summary['total_calls']}")
-        click.echo(f"  Unique classes: {summary['unique_classes']}")
-        click.echo(f"  Unique methods: {summary['unique_methods']}")
+        logger.info(f"\nAnalysis Summary:")
+        logger.info(f"  Total calls: {summary['total_calls']}")
+        logger.info(f"  Unique classes: {summary['unique_classes']}")
+        logger.info(f"  Unique methods: {summary['unique_methods']}")
         click.echo(f"  Unique SQL statements: {summary['unique_sql_statements']}")
         click.echo(f"  Unique tables: {summary['unique_tables']}")
         click.echo(f"  Unique columns: {summary['unique_columns']}")
@@ -1821,9 +1932,9 @@ def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method
         # 호출 체인 상세 정보
         if call_chain:
             click.echo(f"\nCall Chain Details:")
-            click.echo("-" * 80)
+            logger.info("-" * 80)
             click.echo(f"{'Source':<25} {'Target':<25} {'SQL Type':<10} {'Table':<20}")
-            click.echo("-" * 80)
+            logger.info("-" * 80)
             
             for call in call_chain[:20]:  # 처음 20개만 표시
                 source = f"{call['source_class']}.{call['source_method']}" if call['source_method'] else call['source_class']
@@ -1848,6 +1959,7 @@ def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1859,11 +1971,16 @@ def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method
 def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel, auto_create_relationships):
     """Generate CRUD matrix analysis."""
     
+    # Initialize logger for crud-analysis command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -1888,7 +2005,7 @@ def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel
                 click.echo("No relationships could be created.")
         
         if 'error' in result:
-            click.echo(f"Error: {result['error']}")
+            logger.error(f"Error: {result['error']}")
             return
         
         table_matrix = result['table_matrix']
@@ -1962,13 +2079,14 @@ def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel
             if success:
                 click.echo(f"CRUD matrix Excel file saved to: {output_excel}")
             else:
-                click.echo("Failed to generate Excel file. Check logs for details.")
+                logger.info("Failed to generate Excel file. Check logs for details.")
         
     except Exception as e:
         click.echo(f"Error generating CRUD matrix: {e}")
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -1985,11 +2103,16 @@ def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel
 def db_call_diagram(neo4j_uri, neo4j_user, project_name, start_class, start_method, output_file, output_image, image_format, image_width, image_height, auto_create_relationships):
     """Generate database call chain diagram."""
     
+    # Initialize logger for db-call-diagram command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -2052,6 +2175,7 @@ def db_call_diagram(neo4j_uri, neo4j_user, project_name, start_class, start_meth
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -2064,11 +2188,16 @@ def db_call_diagram(neo4j_uri, neo4j_user, project_name, start_class, start_meth
 def crud_visualization(neo4j_uri, neo4j_user, project_name, output_format, image_width, image_height, auto_create_relationships):
     """Generate CRUD matrix visualization diagram showing class-table relationships."""
     
+    # Initialize logger for crud-visualization command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -2150,6 +2279,7 @@ def crud_visualization(neo4j_uri, neo4j_user, project_name, output_format, image
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -2161,11 +2291,16 @@ def crud_visualization(neo4j_uri, neo4j_user, project_name, output_format, image
 def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, auto_create_relationships):
     """Analyze impact of table changes on application code."""
     
+    # Initialize logger for table-impact command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -2191,7 +2326,7 @@ def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, a
                 click.echo("No relationships could be created.")
         
         if 'error' in result:
-            click.echo(f"Error: {result['error']}")
+            logger.error(f"Error: {result['error']}")
             return
         
         impacted_classes = result['impacted_classes']
@@ -2210,9 +2345,9 @@ def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, a
         # 영향받는 클래스 상세 정보
         if impacted_classes:
             click.echo(f"\nImpacted Classes:")
-            click.echo("-" * 80)
+            logger.info("-" * 80)
             click.echo(f"{'Class':<25} {'Method':<25} {'SQL Type':<10} {'Complexity':<12}")
-            click.echo("-" * 80)
+            logger.info("-" * 80)
             
             for cls in impacted_classes:
                 class_name = cls['class_name']
@@ -2241,6 +2376,7 @@ def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, a
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
@@ -2251,11 +2387,16 @@ def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, a
 def db_statistics(neo4j_uri, neo4j_user, project_name, output_file, auto_create_relationships):
     """Show database usage statistics."""
     
+    # Initialize logger for db-statistics command
+    from csa.utils.logger import set_command_context
+    set_command_context("run")
+    logger = get_logger(__name__)
+    
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
         
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -2280,7 +2421,7 @@ def db_statistics(neo4j_uri, neo4j_user, project_name, output_file, auto_create_
                 click.echo("No relationships could be created.")
         
         if 'error' in result:
-            click.echo(f"Error: {result['error']}")
+            logger.error(f"Error: {result['error']}")
             return
         
         sql_stats = result['sql_statistics']
@@ -2329,6 +2470,7 @@ def db_statistics(neo4j_uri, neo4j_user, project_name, output_file, auto_create_
         return
     finally:
         driver.close()
+        logger.info("===== 작업 완료 =====")
 
 if __name__ == '__main__':
     cli()
