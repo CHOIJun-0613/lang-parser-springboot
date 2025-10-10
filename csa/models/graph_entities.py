@@ -418,7 +418,7 @@ class Table(BaseModel):
     """Represents a database table."""
     
     name: str
-    schema: str = "public"
+    schema_name: str = "public"
     comment: str = ""
     ai_description: str = ""
     updated_at: str = ""

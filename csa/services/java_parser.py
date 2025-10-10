@@ -2805,6 +2805,33 @@ def parse_java_project(directory: str, graph_db: GraphDB = None) -> tuple[list[P
     java_file_count = 0
     processed_file_count = 0
     
+    # 클래스 파싱 진행 상황 추적을 위한 변수들
+    total_classes = 0
+    processed_classes = 0
+    last_logged_percent = 0
+    
+    # 먼저 전체 클래스 개수를 계산
+    logger.info("클래스 개수 계산 중...")
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".java"):
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        file_content = f.read()
+                    
+                    if '<html' in file_content.lower() or '<body' in file_content.lower() or '<div' in file_content.lower():
+                        continue
+                    
+                    tree = javalang.parse.parse(file_content)
+                    for type_decl in tree.types:
+                        if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
+                            total_classes += 1
+                except Exception:
+                    continue
+    
+    logger.info(f"총 {total_classes}개 클래스 발견")
+    
     for root, _, files in os.walk(directory):
         for file in files:
             if file.endswith(".java"):
@@ -2875,7 +2902,15 @@ def parse_java_project(directory: str, graph_db: GraphDB = None) -> tuple[list[P
                                 ai_description=""
                             )
                             class_to_package_map[class_key] = package_name
-                            logger.info(f"Successfully added class to classes dict: {class_name} (key: {class_key})")
+                            logger.debug(f"Successfully added class to classes dict: {class_name} (key: {class_key})")
+                            
+                            # 진행 상황을 10% 단위로 표시
+                            processed_classes += 1
+                            current_percent = int((processed_classes / total_classes) * 100) if total_classes > 0 else 0
+                            
+                            if current_percent >= last_logged_percent + 10 or processed_classes == total_classes:
+                                last_logged_percent = current_percent
+                                logger.info(f"클래스 파싱 진행중 [{processed_classes}/{total_classes}] ({current_percent}%) - 최근: {class_name}")
                         else:
                             logger.debug(f"Class {class_name} already exists, skipping")
                         

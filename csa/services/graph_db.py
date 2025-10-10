@@ -10,9 +10,10 @@ from csa.utils.logger import get_logger
 class GraphDB:
     """A service for interacting with the Neo4j database."""
 
-    def __init__(self, uri, user, password):
+    def __init__(self, uri, user, password, database='neo4j'):
         """Initializes the database driver."""
         self._driver: Driver = GraphDatabase.driver(uri, auth=(user, password))
+        self._database = database
         self.logger = get_logger(__name__)
 
     @staticmethod
@@ -26,7 +27,7 @@ class GraphDB:
 
     def add_project(self, project: Project):
         """Adds or updates a project node in the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_project_node_tx, project)
 
     @staticmethod
@@ -65,7 +66,7 @@ class GraphDB:
 
     def add_package(self, package_node: Package, project_name: str):
         """Adds a package to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_package_node_tx, package_node, project_name)
 
     def add_class(self, class_node: Class, package_name: str, project_name: str):
@@ -73,7 +74,7 @@ class GraphDB:
         in a single transaction."""
         self.logger.debug(f"Adding class: {class_node.name}, package: {package_name}, project: {project_name}")
         try:
-            with self._driver.session() as session:
+            with self._driver.session(database=self._database) as session:
                 session.execute_write(self._create_class_node_tx, class_node, package_name, project_name)
             self.logger.debug(f"Successfully added class: {class_node.name}")
         except Exception as e:
@@ -378,77 +379,77 @@ class GraphDB:
 
     def add_bean(self, bean: Bean, project_name: str):
         """Adds a Spring Bean to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_bean_node_tx, bean, project_name)
 
     def add_bean_dependency(self, dependency: BeanDependency, project_name: str):
         """Adds a Bean dependency to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_bean_dependency_tx, dependency, project_name)
 
     def add_endpoint(self, endpoint: Endpoint, project_name: str):
         """Adds a REST API endpoint to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_endpoint_node_tx, endpoint, project_name)
 
     def add_mybatis_mapper(self, mapper: MyBatisMapper, project_name: str):
         """Adds a MyBatis mapper to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_mybatis_mapper_node_tx, mapper, project_name)
 
     def add_jpa_entity(self, entity: JpaEntity, project_name: str):
         """Adds a JPA entity to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_jpa_entity_node_tx, entity, project_name)
 
     def add_jpa_repository(self, repository: JpaRepository, project_name: str):
         """Adds a JPA repository to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_jpa_repository_node_tx, repository, project_name)
 
     def add_jpa_query(self, query: JpaQuery, project_name: str):
         """Adds a JPA query to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_jpa_query_node_tx, query, project_name)
 
     def add_config_file(self, config_file: ConfigFile, project_name: str):
         """Adds a configuration file to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_config_file_node_tx, config_file, project_name)
 
     def add_test_class(self, test_class: TestClass, project_name: str):
         """Adds a test class to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_test_class_node_tx, test_class, project_name)
 
     def add_sql_statement(self, sql_statement: SqlStatement, project_name: str):
         """Adds a SQL statement to the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_sql_statement_node_tx, sql_statement, project_name)
 
     def add_database(self, database: Database, project_name: str):
         """Adds a database to the graph."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_database_node_tx, database, project_name)
 
     def add_table(self, table: Table, database_name: str, project_name: str):
         """Adds a table to the graph."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_table_node_tx, table, database_name, project_name)
 
     def add_column(self, column: Column, table_name: str, project_name: str):
         """Adds a column to the graph."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_column_node_tx, column, table_name, project_name)
 
     def add_index(self, index: Index, table_name: str, project_name: str):
         """Adds an index to the graph."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_index_node_tx, index, table_name, project_name)
 
     def add_constraint(self, constraint: Constraint, table_name: str, project_name: str):
         """Adds a constraint to the graph."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_constraint_node_tx, constraint, table_name, project_name)
 
     @staticmethod
@@ -775,14 +776,14 @@ class GraphDB:
         current_timestamp = GraphDB._get_current_timestamp()
         table_query = (
             "MERGE (t:Table {name: $name}) "
-            "SET t.schema = $schema, t.database_name = $database_name, "
+            "SET t.schema = $schema_name, t.database_name = $database_name, "
             "t.project_name = $project_name, t.comment = $comment, "
             "t.ai_description = $ai_description, t.updated_at = $updated_at"
         )
         tx.run(
             table_query,
             name=table.name,
-            schema=table.schema,
+            schema_name=table.schema_name,
             database_name=database_name,
             project_name=project_name,
             comment=table.comment or "",
@@ -947,7 +948,7 @@ class GraphDB:
         ORDER BY c.name, m.name
         """
         
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             result = session.run(query)
             raw_data = [record.data() for record in result]
             
@@ -1037,7 +1038,7 @@ class GraphDB:
         RETURN s.tables as tables_json, s.sql_type as operation
         """
         
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             result = session.run(query, project_name=project_name)
             raw_data = [record.data() for record in result]
             
@@ -1072,7 +1073,7 @@ class GraphDB:
 
     def create_method_sql_relationships(self, project_name: str):
         """Create CALLS relationships between Methods and SqlStatements for MyBatis repositories."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_method_sql_relationships_tx, project_name)
 
     @staticmethod
@@ -1095,7 +1096,7 @@ class GraphDB:
 
     def delete_class_and_related_data(self, class_name: str, project_name: str):
         """Delete a specific class and all its related data from the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.execute_write(self._delete_class_and_related_data_tx, class_name, project_name)
 
     @staticmethod
@@ -1170,7 +1171,7 @@ class GraphDB:
 
     def get_sql_statistics(self, project_name: str = None) -> dict:
         """Get SQL statistics for the project."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             if project_name:
                 query = """
                 MATCH (s:SqlStatement)
@@ -1208,7 +1209,7 @@ class GraphDB:
 
     def get_table_usage_statistics(self, project_name: str = None) -> list:
         """Get table usage statistics."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             if project_name:
                 query = """
                 MATCH (s:SqlStatement)
@@ -1240,7 +1241,7 @@ class GraphDB:
 
     def get_sql_complexity_statistics(self, project_name: str = None) -> dict:
         """Get SQL complexity statistics."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             if project_name:
                 query = """
                 MATCH (s:SqlStatement)
@@ -1281,7 +1282,7 @@ class GraphDB:
 
     def get_mapper_sql_distribution(self, project_name: str = None) -> list:
         """Get mapper SQL distribution."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             if project_name:
                 query = """
                 MATCH (s:SqlStatement)
@@ -1306,7 +1307,35 @@ class GraphDB:
             
             return [record.data() for record in result]
 
+    def clean_java_objects(self):
+        """Clean only Java-related objects from database."""
+        with self._driver.session(database=self._database) as session:
+            # Java 관련 객체만 삭제
+            session.run("MATCH (n:Package) DETACH DELETE n")
+            session.run("MATCH (n:Class) DETACH DELETE n")
+            session.run("MATCH (n:Method) DETACH DELETE n")
+            session.run("MATCH (n:Field) DETACH DELETE n")
+            session.run("MATCH (n:Bean) DETACH DELETE n")
+            session.run("MATCH (n:Endpoint) DETACH DELETE n")
+            session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
+            session.run("MATCH (n:SqlStatement) DETACH DELETE n")
+            session.run("MATCH (n:JpaEntity) DETACH DELETE n")
+            session.run("MATCH (n:JpaRepository) DETACH DELETE n")
+            session.run("MATCH (n:JpaQuery) DETACH DELETE n")
+            session.run("MATCH (n:ConfigFile) DETACH DELETE n")
+            session.run("MATCH (n:TestClass) DETACH DELETE n")
+
+    def clean_db_objects(self):
+        """Clean only Database-related objects from database."""
+        with self._driver.session(database=self._database) as session:
+            # DB 관련 객체만 삭제
+            session.run("MATCH (n:Database) DETACH DELETE n")
+            session.run("MATCH (n:Table) DETACH DELETE n")
+            session.run("MATCH (n:Column) DETACH DELETE n")
+            session.run("MATCH (n:Index) DETACH DELETE n")
+            session.run("MATCH (n:Constraint) DETACH DELETE n")
+
     def clean_database(self):
         """Clean all nodes and relationships from the database."""
-        with self._driver.session() as session:
+        with self._driver.session(database=self._database) as session:
             session.run("MATCH (n) DETACH DELETE n")

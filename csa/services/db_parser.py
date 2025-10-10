@@ -58,7 +58,7 @@ class DBParser:
             for table_name, table_info in tables.items():
                 table = Table(
                     name=table_name,
-                    schema=table_info.get('schema', 'public'),
+                    schema_name=table_info.get('schema', 'public'),
                     comment=table_info.get('description', ''),
                     ai_description="",
                     updated_at=datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
