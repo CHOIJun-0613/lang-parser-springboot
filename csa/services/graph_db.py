@@ -1305,3 +1305,8 @@ class GraphDB:
                 result = session.run(query)
             
             return [record.data() for record in result]
+
+    def clean_database(self):
+        """Clean all nodes and relationships from the database."""
+        with self._driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
