@@ -97,6 +97,57 @@ def end(context, result=None):
     # Connection Pool은 애플리케이션 종료 시까지 유지
     # 개별 명령어마다 close하지 않음
 
+def with_command_lifecycle(command_name):
+    """
+    CLI 명령어의 공통 초기화/정리를 처리하는 데코레이터
+    
+    Args:
+        command_name: 명령어 이름 (로깅 및 통계용)
+    
+    Returns:
+        데코레이터 함수
+    """
+    def decorator(func):
+        from functools import wraps
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # 1. 공통 초기화 (start)
+            context = start(command_name)
+            
+            result = {
+                'success': False,
+                'message': '',
+                'stats': {},
+                'error': None
+            }
+            
+            try:
+                # 2. 원본 함수 실행
+                func_result = func(*args, **kwargs)
+                
+                # 함수 결과가 dict이고 result 구조를 따르는 경우 병합
+                if isinstance(func_result, dict):
+                    result.update(func_result)
+                else:
+                    # 결과가 None이거나 다른 타입인 경우 성공으로 처리
+                    result['success'] = True
+                    result['message'] = f'{command_name} completed'
+                
+                return func_result
+                
+            except Exception as e:
+                result['success'] = False
+                result['error'] = str(e)
+                raise
+                
+            finally:
+                # 3. 공통 정리 (end)
+                end(context, result)
+        
+        return wrapper
+    return decorator
+
 def format_duration(seconds):
     """초를 시:분:초 형식으로 변환"""
     hours = int(seconds // 3600)
@@ -1398,6 +1449,7 @@ def _handle_update_classes(java_source_folder, project_name, neo4j_uri, neo4j_us
 @click.option('--detailed', is_flag=True, help='Run detailed class query with methods and properties')
 @click.option('--inheritance', is_flag=True, help='Run inheritance relationship query')
 @click.option('--package', is_flag=True, help='Run package-based class query')
+@with_command_lifecycle('query')
 def query(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, basic, detailed, inheritance, package):
     """Execute queries against the Neo4j database."""
     
@@ -1536,11 +1588,9 @@ def query(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, basic, d
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
 @click.option('--format', default='plantuml', type=click.Choice(['mermaid', 'plantuml']), help='Diagram format (default: plantuml)')
 @click.option('--output-dir', default=os.getenv("SEQUENCE_DIAGRAM_OUTPUT_DIR", "output/sequence-diagram"), help='Output directory for sequence diagrams (default: output/sequence-diagram)')
+@with_command_lifecycle('sequence')
 def sequence(neo4j_uri, neo4j_user, neo4j_database, class_name, method_name, max_depth, include_external, project_name, image_format, image_width, image_height, format, output_dir):
     """Generate sequence diagram for a specific class and optionally a method."""
-    
-    # 1. start() 호출
-    context = start('sequence')
     
     result = {
         'success': False,
@@ -1550,13 +1600,12 @@ def sequence(neo4j_uri, neo4j_user, neo4j_database, class_name, method_name, max
         'files': []
     }
     
-    try:
-        neo4j_password = os.getenv("NEO4J_PASSWORD")
-        if not neo4j_password:
-            result['error'] = "NEO4J_PASSWORD environment variable is not set"
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
-            return result
+    neo4j_password = os.getenv("NEO4J_PASSWORD")
+    if not neo4j_password:
+        result['error'] = "NEO4J_PASSWORD environment variable is not set"
+        click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+        click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+        return result
         
         click.echo(f"Connecting to Neo4j at {neo4j_uri} (database: {neo4j_database})...")
         
@@ -1651,16 +1700,13 @@ def sequence(neo4j_uri, neo4j_user, neo4j_database, class_name, method_name, max
             import traceback
             click.echo(f"Traceback: {traceback.format_exc()}")
     
-    finally:
-        # 4. end() 호출
-        end(context, result)
-    
     return result
 
 @cli.command()
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--neo4j-database', default=os.getenv("NEO4J_DATABASE", "neo4j"), help='Neo4j database name')
+@with_command_lifecycle('list-classes')
 def list_classes(neo4j_uri, neo4j_user, neo4j_database):
     """List all available classes in the database."""
     
@@ -1702,6 +1748,7 @@ def list_classes(neo4j_uri, neo4j_user, neo4j_database):
 @click.option('--neo4j-uri', default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help='Neo4j URI')
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--class-name', required=True, help='Name of the class to list methods for')
+@with_command_lifecycle('list-methods')
 def list_methods(neo4j_uri, neo4j_user, class_name):
     """List all methods for a specific class."""
     
@@ -1744,11 +1791,9 @@ def list_methods(neo4j_uri, neo4j_user, class_name):
 @click.option('--output-format', default='excel', type=click.Choice(['excel', 'svg', 'png'], case_sensitive=False), 
               help='Output format: excel (*.xlsx), svg (*.svg), or png (*.png) (default: excel)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('crud-matrix')
 def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_relationships):
     """Show CRUD matrix for classes and tables."""
-    
-    # 1. start() 호출
-    context = start('crud-matrix')
     
     result = {
         'success': False,
@@ -1758,14 +1803,14 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
         'files': []
     }
     
+    neo4j_password = os.getenv("NEO4J_PASSWORD")
+    if not neo4j_password:
+        result['error'] = "NEO4J_PASSWORD environment variable is not set"
+        click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
+        click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+        return result
+    
     try:
-        neo4j_password = os.getenv("NEO4J_PASSWORD")
-        if not neo4j_password:
-            result['error'] = "NEO4J_PASSWORD environment variable is not set"
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
-            return result
-        
         neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
         neo4j_user = os.getenv("NEO4J_USER", "neo4j")
         neo4j_database = os.getenv("NEO4J_DATABASE", "neo4j")
@@ -1889,10 +1934,6 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
         result['error'] = str(e)
         click.echo(f"Error getting CRUD matrix: {e}")
     
-    finally:
-        # 4. end() 호출
-        end(context, result)
-    
     return result
 
 @cli.command()
@@ -1900,6 +1941,7 @@ def crud_matrix(neo4j_uri, neo4j_user, project_name, output_format, auto_create_
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--project-name', help='Project name to filter by (optional)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('db-analysis')
 def db_analysis(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
     """Show database call relationship analysis."""
     
@@ -1981,6 +2023,7 @@ def db_analysis(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
 @click.option('--neo4j-user', default=os.getenv("NEO4J_USER", "neo4j"), help='Neo4j username')
 @click.option('--project-name', help='Project name to filter by (optional)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('table-summary')
 def table_summary(neo4j_uri, neo4j_user, project_name, auto_create_relationships):
     """Show CRUD summary for each table."""
     
@@ -2043,6 +2086,7 @@ def table_summary(neo4j_uri, neo4j_user, project_name, auto_create_relationships
 @click.option('--start-method', help='Starting method for call chain analysis (optional)')
 @click.option('--output-file', help='Output file to save the analysis results (optional)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('db-call-chain')
 def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method, output_file, auto_create_relationships):
     """Analyze database call chain relationships."""
     
@@ -2148,6 +2192,7 @@ def db_call_chain(neo4j_uri, neo4j_user, project_name, start_class, start_method
 @click.option('--output-file', help='Output file to save the CRUD matrix (optional)')
 @click.option('--output-excel', help='Output Excel file to save the CRUD matrix (optional)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('crud-analysis')
 def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel, auto_create_relationships):
     """Generate CRUD matrix analysis."""
     
@@ -2274,6 +2319,7 @@ def crud_analysis(neo4j_uri, neo4j_user, project_name, output_file, output_excel
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('db-call-diagram')
 def db_call_diagram(neo4j_uri, neo4j_user, project_name, start_class, start_method, output_file, output_image, image_format, image_width, image_height, auto_create_relationships):
     """Generate database call chain diagram."""
     
@@ -2353,6 +2399,7 @@ def db_call_diagram(neo4j_uri, neo4j_user, project_name, start_class, start_meth
 @click.option('--image-width', default=1200, help='Image width in pixels (default: 1200)')
 @click.option('--image-height', default=800, help='Image height in pixels (default: 800)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('crud-visualization')
 def crud_visualization(neo4j_uri, neo4j_user, project_name, output_format, image_width, image_height, auto_create_relationships):
     """Generate CRUD matrix visualization diagram showing class-table relationships."""
     
@@ -2450,6 +2497,7 @@ def crud_visualization(neo4j_uri, neo4j_user, project_name, output_format, image
 @click.option('--table-name', required=True, help='Table name to analyze impact for')
 @click.option('--output-file', help='Output file to save the impact analysis (optional)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('table-impact')
 def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, auto_create_relationships):
     """Analyze impact of table changes on application code."""
     
@@ -2540,6 +2588,7 @@ def table_impact(neo4j_uri, neo4j_user, project_name, table_name, output_file, a
 @click.option('--project-name', required=True, help='Project name to analyze')
 @click.option('--output-file', help='Output file to save the statistics (optional)')
 @click.option('--auto-create-relationships', is_flag=True, default=True, help='Automatically create Method-SqlStatement relationships if needed (default: True)')
+@with_command_lifecycle('db-statistics')
 def db_statistics(neo4j_uri, neo4j_user, project_name, output_file, auto_create_relationships):
     """Show database usage statistics."""
     
@@ -2639,53 +2688,46 @@ def db_statistics(neo4j_uri, neo4j_user, project_name, output_file, auto_create_
 @click.option('--all-objects', is_flag=True, help='Analyze both Java and database objects')
 @click.option('--class-name', help='Analyze specific class only')
 @click.option('--update', is_flag=True, help='Update existing classes')
+@with_command_lifecycle('analyze')
 def analyze(java_source_folder, project_name, db_script_folder, neo4j_uri, neo4j_user, neo4j_password, neo4j_database, clean, dry_run, concurrent, workers, java_object, db_object, all_objects, class_name, update):
     """Analyze Java project and database objects."""
-    # start() 함수로 공통 초기화
-    context = start('analyze')
-    logger = context['logger']
+    # logger는 get_logger로 직접 가져오기
+    logger = get_logger(__name__, command='analyze')
     
-    try:
-        # Java 소스 폴더 기본값 설정
-        if not java_source_folder:
-            java_source_folder = os.getenv("JAVA_SOURCE_FOLDER", ".")
-            logger.info(f"Using default Java source folder: {java_source_folder}")
-        
-        # 옵션 검증
-        _validate_analyze_options(db_object, java_object, class_name, update, java_source_folder)
-        
-        # 프로젝트명 결정
-        detected_project_name = extract_project_name(java_source_folder)
-        final_project_name = _get_or_determine_project_name(project_name, detected_project_name, java_source_folder, logger)
-        
-        # 분석 실행
-        result = analyze_project(
-            java_source_folder=java_source_folder,
-            project_name=final_project_name,
-            db_script_folder=db_script_folder,
-            neo4j_uri=neo4j_uri,
-            neo4j_user=neo4j_user,
-            neo4j_password=neo4j_password,
-            neo4j_database=neo4j_database,
-            clean=clean,
-            dry_run=dry_run,
-            concurrent=concurrent,
-            workers=workers,
-            java_object=java_object,
-            db_object=db_object,
-            all_objects=all_objects,
-            class_name=class_name,
-            update=update,
-            logger=logger
-        )
-        
-        # end() 함수로 공통 정리
-        end(context, result)
-        
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
-        end(context, {'success': False, 'error': str(e)})
-        raise click.ClickException(f"Analysis failed: {e}")
+    # Java 소스 폴더 기본값 설정
+    if not java_source_folder:
+        java_source_folder = os.getenv("JAVA_SOURCE_FOLDER", ".")
+        logger.info(f"Using default Java source folder: {java_source_folder}")
+    
+    # 옵션 검증
+    _validate_analyze_options(db_object, java_object, class_name, update, java_source_folder)
+    
+    # 프로젝트명 결정
+    detected_project_name = extract_project_name(java_source_folder)
+    final_project_name = _get_or_determine_project_name(project_name, detected_project_name, java_source_folder, logger)
+    
+    # 분석 실행
+    result = analyze_project(
+        java_source_folder=java_source_folder,
+        project_name=final_project_name,
+        db_script_folder=db_script_folder,
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password,
+        neo4j_database=neo4j_database,
+        clean=clean,
+        dry_run=dry_run,
+        concurrent=concurrent,
+        workers=workers,
+        java_object=java_object,
+        db_object=db_object,
+        all_objects=all_objects,
+        class_name=class_name,
+        update=update,
+        logger=logger
+    )
+    
+    return result
 
 def analyze_project(java_source_folder, project_name, db_script_folder, neo4j_uri, neo4j_user, neo4j_password, neo4j_database, clean, dry_run, concurrent, workers, java_object, db_object, all_objects, class_name, update, logger):
     """실제 분석 로직을 수행하는 함수"""
