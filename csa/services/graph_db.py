@@ -69,13 +69,18 @@ class GraphDB:
         with self._driver.session(database=self._database) as session:
             session.execute_write(self._create_package_node_tx, package_node, project_name)
 
-    def add_class(self, class_node: Class, package_name: str, project_name: str):
+    def add_class(self, class_node: Class, package_name: str | None = None, project_name: str | None = None):
         """Adds a class and its relationships to the database
         in a single transaction."""
+        package_name = package_name or getattr(class_node, "package_name", None) or getattr(class_node, "package", "")
+        project_name = project_name or getattr(class_node, "project_name", None) or getattr(class_node, "project", "")
         self.logger.debug(f"Adding class: {class_node.name}, package: {package_name}, project: {project_name}")
         try:
             with self._driver.session(database=self._database) as session:
-                session.execute_write(self._create_class_node_tx, class_node, package_name, project_name)
+                if hasattr(session, "write_transaction"):
+                    session.write_transaction(self._create_class_node_tx, class_node, package_name, project_name)
+                else:
+                    session.execute_write(self._create_class_node_tx, class_node, package_name, project_name)
             self.logger.debug(f"Successfully added class: {class_node.name}")
         except Exception as e:
             self.logger.error(f"Error adding class {class_node.name}: {e}")
@@ -120,11 +125,11 @@ class GraphDB:
         current_timestamp = GraphDB._get_current_timestamp()
         # Create or merge the class node itself
         class_query = (
-            "MERGE (c:Class {name: $name}) "
+            "MERGE (c:Class {name: $name, package: $package}) "
             "SET c.file_path = $file_path, c.type = $type, c.sub_type = $sub_type, "
             "c.source = $source, c.logical_name = $logical_name, "
             "c.superclass = $superclass, c.interfaces = $interfaces, "
-            "c.imports = $imports, c.package_name = $package_name, "
+            "c.imports = $imports, c.package_name = $package_name, c.package = $package_name, "
             "c.project_name = $project_name, c.description = $description, c.ai_description = $ai_description, "
             "c.updated_at = $updated_at"  # Add updated_at timestamp
         )
@@ -140,6 +145,7 @@ class GraphDB:
             interfaces=class_node.interfaces,
             imports=class_node.imports,
             package_name=package_name,  # Add package_name
+            package=package_name,
             project_name=project_name,  # Add project_name
             description=class_node.description or "",  # Add description
             ai_description=class_node.ai_description or "",  # Add ai_description

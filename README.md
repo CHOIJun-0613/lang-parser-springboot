@@ -16,29 +16,28 @@
 
 ```
 lang-parser-springboot/
-├── csa/                          # Code Static Analyzer 핵심 모듈
-│   ├── cli/
-│   │   └── main.py              # CLI 엔트리 포인트
-│   ├── models/
-│   │   └── graph_entities.py    # Neo4j 그래프 데이터 모델
-│   ├── services/
-│   │   ├── java_parser.py       # Java 소스 파싱 및 분석
-│   │   ├── java_parser_addon_r001.py  # 논리명 추출 규칙 적용
-│   │   ├── sql_parser.py        # SQL 문 분석
-│   │   ├── db_parser.py         # DB 스키마 파싱
-│   │   ├── db_call_analysis.py  # DB 호출 관계 분석
-│   │   ├── graph_db.py          # Neo4j 데이터베이스 관리
-│   │   ├── sequence_diagram_generator.py  # 시퀀스 다이어그램 생성 Facade
-│   │   ├── plantuml_diagram_generator.py # PlantUML 다이어그램 생성
-│   │   └── mermaid_diagram_generator.py  # Mermaid 다이어그램 생성
-│   ├── rules/                   # 프로젝트별 논리명 추출 규칙
-│   └── utils/
-│       └── logger.py            # 로깅 유틸리티
-├── commands/                    # 배치 실행 스크립트
-├── docs/                        # 상세 문서
-├── libs/                        # 외부 라이브러리 (PlantUML 등)
-├── output/                      # 생성된 다이어그램 및 매트릭스
-└── tests/                       # 테스트 코드
+|-- csa/                          # Code Static Analyzer 핵심 모듈
+|   |-- cli/
+|   |   \-- main.py              # CLI 엔트리포인트
+|   |-- models/
+|   |   \-- graph_entities.py    # Neo4j 그래프 엔티티 정의
+|   \-- services/
+|       |-- analysis/            # 분석 오케스트레이션 서비스
+|       |-- java_analysis/       # Java 파싱 세부 모듈 (project/spring/mybatis/jpa 등)
+|       |-- java_parser.py       # java_analysis 서브모듈을 재노출하는 퍼사드
+|       |-- java_parser_addon_r001.py  # 논리명 추출 규칙 적용
+|       |-- sql_parser.py        # SQL 문 분석
+|       |-- db_parser.py         # DB 스키마 파싱
+|       |-- db_call_analysis.py  # DB 호출 관계 분석
+|       |-- graph_db.py          # Neo4j 데이터베이스 관리
+|       |-- sequence_diagram_generator.py  # 시퀀스 다이어그램 생성 Facade
+|       |-- plantuml_diagram_generator.py # PlantUML 다이어그램 생성
+|       \-- mermaid_diagram_generator.py  # Mermaid 다이어그램 생성
+|-- commands/                    # 배치 실행 스크립트
+|-- docs/                        # 참고 문서
+|-- libs/                        # 외부 라이브러리 (PlantUML 등)
+|-- output/                      # 생성된 다이어그램 및 산출물
+\-- tests/                       # 테스트 코드
 ```
 
 ## 🚀 설치 및 설정
@@ -103,6 +102,18 @@ curl -L https://github.com/plantuml/plantuml/releases/latest/download/plantuml.j
 ```bash
 npm install -g @mermaid-js/mermaid-cli
 ```
+
+설치 후 `mmdc` 실행 파일이 `PATH`에 없다면 환경 변수 `MMDC_PATH`를 설정해 주세요.
+
+```bash
+# Windows PowerShell
+setx MMDC_PATH "C:\Users\<USER>\AppData\Roaming\npm\mmdc.cmd"
+
+# macOS / Linux (쉘 세션에 일시 적용)
+export MMDC_PATH=/usr/local/bin/mmdc
+```
+
+`MMDC_PATH`는 프로젝트 실행 시 자동으로 참조되어 Mermaid CLI 위치를 찾습니다.
 
 ## 💻 사용법
 

@@ -1,0 +1,433 @@
+"""
+Helpers for persisting analysis results into Neo4j.
+"""
+from __future__ import annotations
+
+import os
+import time
+from datetime import datetime
+from typing import Optional, Sequence
+
+from csa.cli.core.lifecycle import format_duration
+from csa.models.analysis import JavaAnalysisArtifacts, JavaAnalysisStats
+from csa.models.graph_entities import Project
+from csa.services.analysis.summary import calculate_java_statistics
+from csa.services.graph_db import GraphDB
+from csa.services.java_parser import (
+    analyze_bean_dependencies,
+    extract_beans_from_classes,
+    extract_endpoints_from_classes,
+    extract_jpa_entities_from_classes,
+    extract_mybatis_mappers_from_classes,
+    extract_sql_statements_from_mappers,
+    extract_test_classes_from_classes,
+)
+from csa.services.neo4j_connection_pool import get_connection_pool
+
+
+def connect_to_neo4j_db(
+    neo4j_uri: str,
+    neo4j_user: str,
+    neo4j_password: str,
+    neo4j_database: str,
+    logger,
+) -> GraphDB:
+    """Initialise (or reuse) a Neo4j connection pool and GraphDB instance."""
+    logger.info("Connecting to Neo4j at %s...", neo4j_uri)
+    pool = get_connection_pool()
+    if not pool.is_initialized():
+        pool_size = int(os.getenv("NEO4J_POOL_SIZE", "10"))
+        logger.info("Initializing Neo4j connection pool with %s connections...", pool_size)
+        pool.initialize(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, pool_size)
+        logger.info("Connected to Neo4j at %s (database: %s)", neo4j_uri, neo4j_database)
+    else:
+        logger.info("Using existing connection pool (database: %s)", neo4j_database)
+
+    return GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
+
+
+def clean_java_objects(db: GraphDB, logger) -> None:
+    """Remove previously stored Java-related nodes."""
+    logger.info("Cleaning Java objects...")
+    conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
+    try:
+        if conn:
+            with conn.session() as session:
+                session.run("MATCH (n:Package) DETACH DELETE n")
+                session.run("MATCH (n:Class) DETACH DELETE n")
+                session.run("MATCH (n:Method) DETACH DELETE n")
+                session.run("MATCH (n:Field) DETACH DELETE n")
+                session.run("MATCH (n:Bean) DETACH DELETE n")
+                session.run("MATCH (n:Endpoint) DETACH DELETE n")
+                session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
+                session.run("MATCH (n:JpaEntity) DETACH DELETE n")
+                session.run("MATCH (n:ConfigFile) DETACH DELETE n")
+                session.run("MATCH (n:TestClass) DETACH DELETE n")
+                session.run("MATCH (n:SqlStatement) DETACH DELETE n")
+        else:
+            with db._driver.session() as session:  # pylint: disable=protected-access
+                session.run("MATCH (n:Package) DETACH DELETE n")
+                session.run("MATCH (n:Class) DETACH DELETE n")
+                session.run("MATCH (n:Method) DETACH DELETE n")
+                session.run("MATCH (n:Field) DETACH DELETE n")
+                session.run("MATCH (n:Bean) DETACH DELETE n")
+                session.run("MATCH (n:Endpoint) DETACH DELETE n")
+                session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
+                session.run("MATCH (n:JpaEntity) DETACH DELETE n")
+                session.run("MATCH (n:ConfigFile) DETACH DELETE n")
+                session.run("MATCH (n:TestClass) DETACH DELETE n")
+                session.run("MATCH (n:SqlStatement) DETACH DELETE n")
+    finally:
+        if conn and hasattr(db, "_pool"):
+            db._pool.release(conn)  # pylint: disable=protected-access
+
+
+def clean_db_objects(db: GraphDB, logger) -> None:
+    """Remove previously stored database-related nodes."""
+    logger.info("Cleaning database objects...")
+    conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
+    try:
+        if conn:
+            with conn.session() as session:
+                session.run("MATCH (n:Database) DETACH DELETE n")
+                session.run("MATCH (n:Table) DETACH DELETE n")
+                session.run("MATCH (n:Column) DETACH DELETE n")
+                session.run("MATCH (n:Index) DETACH DELETE n")
+                session.run("MATCH (n:Constraint) DETACH DELETE n")
+        else:
+            with db._driver.session() as session:  # pylint: disable=protected-access
+                session.run("MATCH (n:Database) DETACH DELETE n")
+                session.run("MATCH (n:Table) DETACH DELETE n")
+                session.run("MATCH (n:Column) DETACH DELETE n")
+                session.run("MATCH (n:Index) DETACH DELETE n")
+                session.run("MATCH (n:Constraint) DETACH DELETE n")
+    finally:
+        if conn and hasattr(db, "_pool"):
+            db._pool.release(conn)  # pylint: disable=protected-access
+
+
+def _log_progress(prefix: str, current: int, total: int, last_percent: int, logger) -> int:
+    """Log percentage progress in 10%% steps and return updated percentage."""
+    percent = int((current / total) * 100) if total else 100
+    if percent >= last_percent + 10 or current == total:
+        last_percent = percent
+        logger.info("   - %s 진행률 [%s/%s] (%s%%)", prefix, current, total, percent)
+    return last_percent
+
+
+def _log_duration(message: str, item_count: int, start_time: float, logger) -> None:
+    """Helper to log duration for batched operations."""
+    elapsed = time.time() - start_time
+    logger.info("? %s %s개 처리 (%.2fs)", message, item_count, elapsed)
+
+
+def add_springboot_objects(
+    db: GraphDB,
+    beans: Sequence[object],
+    dependencies: Sequence[object],
+    endpoints: Sequence[object],
+    mybatis_mappers: Sequence[object],
+    jpa_entities: Sequence[object],
+    jpa_repositories: Sequence[object],
+    jpa_queries: Sequence[object],
+    config_files: Sequence[object],
+    test_classes: Sequence[object],
+    sql_statements: Sequence[object],
+    project_name: str,
+    logger,
+) -> None:
+    """Persist Spring Boot–related artifacts to Neo4j."""
+    if beans:
+        logger.info("DB 저장 -  %s Spring Beans to database...", len(beans))
+        start_time = time.time()
+        last_percent = 0
+        for idx, bean in enumerate(beans, 1):
+            db.add_bean(bean, project_name)
+            last_percent = _log_progress("beans 저장", idx, len(beans), last_percent, logger)
+        _log_duration("Added Spring Beans", len(beans), start_time, logger)
+
+    if dependencies:
+        logger.info("DB 저장 -  %s Bean dependencies to database...", len(dependencies))
+        start_time = time.time()
+        for dependency in dependencies:
+            db.add_bean_dependency(dependency, project_name)
+        _log_duration("Added Bean dependencies", len(dependencies), start_time, logger)
+
+    if endpoints:
+        logger.info("DB 저장 -  %s REST endpoints to database...", len(endpoints))
+        start_time = time.time()
+        for endpoint in endpoints:
+            db.add_endpoint(endpoint, project_name)
+        _log_duration("Added REST endpoints", len(endpoints), start_time, logger)
+
+    if mybatis_mappers:
+        logger.info("DB 저장 -  %s MyBatis mappers to database...", len(mybatis_mappers))
+        start_time = time.time()
+        for mapper in mybatis_mappers:
+            db.add_mybatis_mapper(mapper, project_name)
+        _log_duration("Added MyBatis mappers", len(mybatis_mappers), start_time, logger)
+
+    if jpa_entities:
+        logger.info("DB 저장 -  %s JPA entities to database...", len(jpa_entities))
+        start_time = time.time()
+        for entity in jpa_entities:
+            db.add_jpa_entity(entity, project_name)
+        _log_duration("Added JPA entities", len(jpa_entities), start_time, logger)
+
+    if jpa_repositories:
+        logger.info("DB 저장 -  %s JPA repositories to database...", len(jpa_repositories))
+        start_time = time.time()
+        for repository in jpa_repositories:
+            db.add_jpa_repository(repository, project_name)
+        _log_duration("Added JPA repositories", len(jpa_repositories), start_time, logger)
+
+    if jpa_queries:
+        logger.info("DB 저장 -  %s JPA queries to database...", len(jpa_queries))
+        start_time = time.time()
+        last_percent = 0
+        for idx, query in enumerate(jpa_queries, 1):
+            db.add_jpa_query(query, project_name)
+            last_percent = _log_progress("jpa_queries 저장", idx, len(jpa_queries), last_percent, logger)
+        _log_duration("Added JPA queries", len(jpa_queries), start_time, logger)
+
+    if config_files:
+        logger.info("DB 저장 -  %s configuration files to database...", len(config_files))
+        start_time = time.time()
+        for config in config_files:
+            db.add_config_file(config, project_name)
+        _log_duration("Added configuration files", len(config_files), start_time, logger)
+
+    if test_classes:
+        logger.info("DB 저장 -  %s test classes to database...", len(test_classes))
+        start_time = time.time()
+        for test_class in test_classes:
+            db.add_test_class(test_class, project_name)
+        _log_duration("Added test classes", len(test_classes), start_time, logger)
+
+    if sql_statements:
+        logger.info("DB 저장 -  %s SQL statements to database...", len(sql_statements))
+        start_time = time.time()
+        last_percent = 0
+        for idx, sql_statement in enumerate(sql_statements, 1):
+            db.add_sql_statement(sql_statement, project_name)
+            conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
+            try:
+                if conn:
+                    with conn.session() as session:
+                        session.execute_write(
+                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                            sql_statement.mapper_name,
+                            sql_statement.id,
+                            project_name,
+                        )
+                else:
+                    with db._driver.session() as session:  # pylint: disable=protected-access
+                        session.execute_write(
+                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                            sql_statement.mapper_name,
+                            sql_statement.id,
+                            project_name,
+                        )
+            finally:
+                if conn and hasattr(db, "_pool"):
+                    db._pool.release(conn)  # pylint: disable=protected-access
+
+            last_percent = _log_progress("sql_statements 저장", idx, len(sql_statements), last_percent, logger)
+        _log_duration("Added SQL statements", len(sql_statements), start_time, logger)
+
+
+def add_single_class_objects(
+    db: GraphDB,
+    class_node,
+    package_name: str,
+    project_name: str,
+    logger,
+) -> None:
+    """Persist artifacts derived from a single class node."""
+    classes_list = [class_node]
+    beans = extract_beans_from_classes(classes_list)
+    dependencies = analyze_bean_dependencies(classes_list, beans)
+    endpoints = extract_endpoints_from_classes(classes_list)
+    mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
+    jpa_entities = extract_jpa_entities_from_classes(classes_list)
+    test_classes = extract_test_classes_from_classes(classes_list)
+    sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
+
+    if beans:
+        logger.info("DB 저장 -  %s Spring Beans to database...", len(beans))
+        for bean in beans:
+            db.add_bean(bean, project_name)
+
+    if dependencies:
+        logger.info("DB 저장 -  %s Bean dependencies to database...", len(dependencies))
+        for dependency in dependencies:
+            db.add_bean_dependency(dependency, project_name)
+
+    if endpoints:
+        logger.info("DB 저장 -  %s REST endpoints to database...", len(endpoints))
+        for endpoint in endpoints:
+            db.add_endpoint(endpoint, project_name)
+
+    if mybatis_mappers:
+        logger.info("DB 저장 -  %s MyBatis mappers to database...", len(mybatis_mappers))
+        for mapper in mybatis_mappers:
+            db.add_mybatis_mapper(mapper, project_name)
+
+    if jpa_entities:
+        logger.info("DB 저장 -  %s JPA entities to database...", len(jpa_entities))
+        for entity in jpa_entities:
+            db.add_jpa_entity(entity, project_name)
+
+    if test_classes:
+        logger.info("DB 저장 -  %s test classes to database...", len(test_classes))
+        for test_class in test_classes:
+            db.add_test_class(test_class, project_name)
+
+    if sql_statements:
+        logger.info("DB 저장 -  %s SQL statements to database...", len(sql_statements))
+        for sql_statement in sql_statements:
+            db.add_sql_statement(sql_statement, project_name)
+
+            conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
+            try:
+                if conn:
+                    with conn.session() as session:
+                        session.execute_write(
+                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                            sql_statement.mapper_name,
+                            sql_statement.id,
+                            project_name,
+                        )
+                else:
+                    with db._driver.session() as session:  # pylint: disable=protected-access
+                        session.execute_write(
+                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                            sql_statement.mapper_name,
+                            sql_statement.id,
+                            project_name,
+                        )
+            finally:
+                if conn and hasattr(db, "_pool"):
+                    db._pool.release(conn)  # pylint: disable=protected-access
+
+
+def _add_packages(db: GraphDB, packages: Sequence[object], project_name: str, logger) -> None:
+    """Helper for writing package nodes."""
+    logger.info("DB 저장 -  %s packages...", len(packages))
+    for package in packages:
+        db.add_package(package, project_name)
+
+
+def _add_classes(
+    db: GraphDB,
+    classes: Sequence[object],
+    class_to_package_map: dict,
+    project_name: str,
+    concurrent: bool,
+    workers: Optional[int],
+    logger,
+) -> None:
+    """Persist class nodes, optionally using concurrent helpers on GraphDB."""
+    if concurrent:
+        logger.info("DB 저장 -  %s classes with concurrent processing...", len(classes))
+        db.add_classes_concurrent(classes, class_to_package_map, project_name, workers)
+        return
+
+    total = len(classes)
+    logger.info("DB 저장 -  %s classes...", total)
+    last_percent = 0
+    for idx, class_obj in enumerate(classes, 1):
+        package_name = class_to_package_map.get(class_obj.name, "unknown")
+        db.add_class(class_obj, package_name, project_name)
+        last_percent = _log_progress("classes 저장", idx, total, last_percent, logger)
+
+
+def save_java_objects_to_neo4j(
+    db: Optional[GraphDB],
+    artifacts: JavaAnalysisArtifacts,
+    project_name: str,
+    clean: bool,
+    concurrent: bool,
+    workers: Optional[int],
+    logger,
+) -> JavaAnalysisStats:
+    """Persist Java analysis artifacts to Neo4j and return corresponding stats."""
+    java_start_time = datetime.now()
+
+    java_stats = calculate_java_statistics(
+        artifacts.packages,
+        artifacts.classes,
+        artifacts.beans,
+        artifacts.endpoints,
+        artifacts.mybatis_mappers,
+        artifacts.jpa_entities,
+        artifacts.jpa_repositories,
+        artifacts.jpa_queries,
+        artifacts.config_files,
+        artifacts.test_classes,
+        artifacts.sql_statements,
+    )
+    java_stats.project_name = project_name
+
+    if db is None:
+        logger.info("Connecting to Neo4j...")
+        neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        neo4j_user = os.getenv("NEO4J_USER", "neo4j")
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        neo4j_database = os.getenv("NEO4J_DATABASE", "neo4j")
+
+        if not neo4j_password:
+            logger.error("NEO4J_PASSWORD not set - cannot connect to database")
+            raise ValueError("NEO4J_PASSWORD environment variable is required")
+
+        db = connect_to_neo4j_db(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, logger)
+
+    logger.info("DB 저장 -  project: %s", project_name)
+    project = Project(
+        name=project_name,
+        display_name=project_name,
+        description=f"Java project: {project_name}",
+        repository_url="",
+        language="Java",
+        framework="Spring Boot",
+        version="1.0",
+        ai_description="",
+        created_at=datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3],
+    )
+    db.add_project(project)
+
+    _add_packages(db, artifacts.packages, project_name, logger)
+    _add_classes(db, artifacts.classes, artifacts.class_to_package_map, project_name, concurrent, workers, logger)
+    add_springboot_objects(
+        db,
+        artifacts.beans,
+        artifacts.dependencies,
+        artifacts.endpoints,
+        artifacts.mybatis_mappers,
+        artifacts.jpa_entities,
+        artifacts.jpa_repositories,
+        artifacts.jpa_queries,
+        artifacts.config_files,
+        artifacts.test_classes,
+        artifacts.sql_statements,
+        project_name,
+        logger,
+    )
+
+    java_end_time = datetime.now()
+    java_stats.start_time = java_start_time
+    java_stats.end_time = java_end_time
+    logger.info("Java object analysis completed in %s", format_duration((java_end_time - java_start_time).total_seconds()))
+
+    return java_stats
+
+
+__all__ = [
+    "add_single_class_objects",
+    "add_springboot_objects",
+    "clean_db_objects",
+    "clean_java_objects",
+    "connect_to_neo4j_db",
+    "save_java_objects_to_neo4j",
+]
+
