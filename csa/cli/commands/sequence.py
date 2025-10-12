@@ -4,8 +4,8 @@ import traceback
 import click
 
 from csa.cli.core.lifecycle import with_command_lifecycle
-from csa.services.neo4j_connection_pool import get_connection_pool
-from csa.services.sequence_diagram_generator import SequenceDiagramGenerator
+from csa.dbwork.connection_pool import get_connection_pool
+from csa.diagrams.sequence.generator import SequenceDiagramGenerator
 
 
 @click.command(name="sequence")
@@ -72,79 +72,78 @@ def sequence_command(
         pool.initialize(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, pool_size)
 
     generated_files: list[str] = []
-    conn = pool.acquire()
     try:
-        generator = SequenceDiagramGenerator(conn.driver, format=format)
+        with pool.connection() as conn:
+            generator = SequenceDiagramGenerator(conn.driver, format=format)
 
-        click.echo(f"Generating {format} sequence diagram for class: {class_name}")
-        if method_name:
-            click.echo(f"Focusing on method: {method_name}")
-        if project_name:
-            click.echo(f"Using project: {project_name}")
-        else:
-            click.echo("Auto-detecting project name...")
+            click.echo(f"Generating {format} sequence diagram for class: {class_name}")
+            if method_name:
+                click.echo(f"Focusing on method: {method_name}")
+            if project_name:
+                click.echo(f"Using project: {project_name}")
+            else:
+                click.echo("Auto-detecting project name...")
 
-        diagram = generator.generate_sequence_diagram(
-            class_name=class_name,
-            method_name=method_name,
-            max_depth=max_depth,
-            include_external_calls=include_external,
-            project_name=project_name,
-            output_dir=output_dir,
-            image_format=image_format,
-            image_width=image_width,
-            image_height=image_height,
-        )
+            diagram = generator.generate_sequence_diagram(
+                class_name=class_name,
+                method_name=method_name,
+                max_depth=max_depth,
+                include_external_calls=include_external,
+                project_name=project_name,
+                output_dir=output_dir,
+                image_format=image_format,
+                image_width=image_width,
+                image_height=image_height,
+            )
 
-        if isinstance(diagram, str) and diagram.startswith("Error:"):
-            click.echo(f"Error: {diagram}")
-            return result
+            if isinstance(diagram, str) and diagram.startswith("Error:"):
+                click.echo(f"Error: {diagram}")
+                result["error"] = diagram
+                return result
 
-        if isinstance(diagram, dict):
-            if diagram.get("type") == "class":
-                click.echo(f"Generated {len(diagram['files'])} sequence diagram files for class '{class_name}':\n")
-                for file_info in diagram["files"]:
-                    click.echo(f"- Diagram: {os.path.basename(file_info['diagram_path'])}")
-                    if file_info["image_path"]:
-                        click.echo(f"  Image: {os.path.basename(file_info['image_path'])}")
+            if isinstance(diagram, dict):
+                if diagram.get("type") == "class":
+                    click.echo(f"Generated {len(diagram['files'])} sequence diagram files for class '{class_name}':\n")
+                    for file_info in diagram["files"]:
+                        click.echo(f"- Diagram: {os.path.basename(file_info['diagram_path'])}")
+                        if file_info["image_path"]:
+                            click.echo(f"  Image: {os.path.basename(file_info['image_path'])}")
 
-                click.echo(f"\nFiles saved in: {diagram['output_dir']}/ directory")
+                    click.echo(f"\nFiles saved in: {diagram['output_dir']}/ directory")
 
-                for file_info in diagram["files"]:
-                    generated_files.append(file_info["diagram_path"])
-                    if file_info["image_path"]:
-                        generated_files.append(file_info["image_path"])
+                    for file_info in diagram["files"]:
+                        generated_files.append(file_info["diagram_path"])
+                        if file_info["image_path"]:
+                            generated_files.append(file_info["image_path"])
 
-            elif diagram.get("type") == "method":
-                click.echo(f"Generated sequence diagram for method '{method_name}':")
-                click.echo(f"- Diagram: {os.path.basename(diagram['diagram_path'])}")
-                if diagram["image_path"]:
-                    click.echo(f"- Image: {os.path.basename(diagram['image_path'])}")
+                elif diagram.get("type") == "method":
+                    click.echo(f"Generated sequence diagram for method '{method_name}':")
+                    click.echo(f"- Diagram: {os.path.basename(diagram['diagram_path'])}")
+                    if diagram["image_path"]:
+                        click.echo(f"- Image: {os.path.basename(diagram['image_path'])}")
 
-                generated_files.append(diagram["diagram_path"])
-                if diagram["image_path"]:
-                    generated_files.append(diagram["image_path"])
-        else:
-            click.echo(f"Diagram generated (length: {len(diagram)})")
-            click.echo(diagram)
+                    generated_files.append(diagram["diagram_path"])
+                    if diagram["image_path"]:
+                        generated_files.append(diagram["image_path"])
+            else:
+                click.echo(f"Diagram generated (length: {len(diagram)})")
+                click.echo(diagram)
 
-        result["success"] = True
-        result["message"] = "Sequence diagram generated successfully"
-        result["files"] = generated_files
-        result["stats"] = {
-            "class_name": class_name,
-            "method_name": method_name,
-            "max_depth": max_depth,
-            "include_external": include_external,
-            "format": format,
-            "files_generated": len(generated_files),
-        }
+            result["success"] = True
+            result["message"] = "Sequence diagram generated successfully"
+            result["files"] = generated_files
+            result["stats"] = {
+                "class_name": class_name,
+                "method_name": method_name,
+                "max_depth": max_depth,
+                "include_external": include_external,
+                "format": format,
+                "files_generated": len(generated_files),
+            }
     except Exception as exc:  # pylint: disable=broad-except
         result["error"] = str(exc)
         click.echo(f"Error generating sequence diagram: {exc}")
         click.echo(f"Traceback: {traceback.format_exc()}")
-    finally:
-        pool.release(conn)
 
     return result
 

@@ -22,10 +22,10 @@ class SequenceDiagramGenerator:
         
         # Format에 따라 적절한 generator 선택
         if self.format == 'plantuml':
-            from csa.services.plantuml_diagram_generator import PlantUMLDiagramGenerator
+            from csa.diagrams.sequence.plantuml import PlantUMLDiagramGenerator
             self._generator = PlantUMLDiagramGenerator(driver)
         else:
-            from csa.services.mermaid_diagram_generator import MermaidDiagramGenerator
+            from csa.diagrams.sequence.mermaid import MermaidDiagramGenerator
             self._generator = MermaidDiagramGenerator(driver)
 
     def generate_sequence_diagram(

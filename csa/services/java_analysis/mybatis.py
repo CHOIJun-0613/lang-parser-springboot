@@ -4,6 +4,7 @@ MyBatis-specific extraction and analysis helpers.
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 from csa.models.graph_entities import (
@@ -56,10 +57,11 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
             )
             
             if sql_analysis:
-                sql_statement.sql_analysis = sql_analysis
-                sql_statement.tables = sql_analysis.get('tables', [])
-                sql_statement.columns = sql_analysis.get('columns', [])
-                sql_statement.complexity_score = sql_analysis.get('complexity_score', 0)
+                sql_analysis_dict = asdict(sql_analysis)
+                sql_statement.sql_analysis = sql_analysis_dict
+                sql_statement.tables = sql_analysis_dict.get('tables', [])
+                sql_statement.columns = sql_analysis_dict.get('columns', [])
+                sql_statement.complexity_score = sql_analysis_dict.get('complexity_score', 0)
             
             sql_statements.append(sql_statement)
     
@@ -211,12 +213,16 @@ def analyze_sql_method_relationships(sql_statements: list[SqlStatement], classes
         
         if hasattr(sql_stmt, 'sql_analysis') and sql_stmt.sql_analysis:
             parameters = sql_stmt.sql_analysis.get('parameters', [])
-            for param in parameters:
-                param_name = param['name']
+            for index, param in enumerate(parameters, start=1):
+                # 파라미터 유형에 따라 제공되는 키가 달라 안전하게 접근한다.
+                param_name = param.get('name') or f"{param.get('type', 'param')}_{index}"
                 relationship_info['parameter_mapping'][param_name] = {
-                    'type': param['type'],
-                    'pattern': param['pattern']
+                    'type': param.get('type', 'unknown')
                 }
+                if 'pattern' in param:
+                    relationship_info['parameter_mapping'][param_name]['pattern'] = param['pattern']
+                if 'count' in param:
+                    relationship_info['parameter_mapping'][param_name]['count'] = param['count']
         
         if hasattr(sql_stmt, 'complexity_score'):
             relationship_info['complexity_analysis'] = {

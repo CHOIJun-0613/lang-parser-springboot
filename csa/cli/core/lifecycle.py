@@ -3,7 +3,7 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
-from csa.services.neo4j_connection_pool import get_connection_pool
+from csa.dbwork.connection_pool import get_connection_pool
 from csa.utils.logger import get_logger
 
 

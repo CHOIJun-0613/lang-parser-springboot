@@ -5,6 +5,19 @@ import json # Added import for json
 from csa.services.graph_db import GraphDB
 from csa.models.graph_entities import Class, Field, Method, MethodCall # Import Method and Field
 
+
+def _find_call_kwargs(call_args_list, **expected_kwargs):
+    """mock_tx.run 호출 기록 중 원하는 파라미터 조합을 찾아 반환합니다.
+    모든 키-값 조건을 만족하는 호출이 없으면 테스트를 실패시킵니다.
+    """
+    for call in call_args_list:
+        kwargs = call[1]  # call.args 는 0, kwargs 는 1
+        if all(kwargs.get(key) == value for key, value in expected_kwargs.items()):
+            return kwargs
+    expected_str = ", ".join(f"{key}={value!r}" for key, value in expected_kwargs.items())
+    pytest.fail(f"mock_tx.run 호출에서 {expected_str} 조건을 만족하는 항목을 찾지 못했습니다.")
+
+
 @pytest.fixture
 def mock_db():
     with patch('neo4j.GraphDatabase.driver') as mock_driver_constructor:
@@ -45,43 +58,27 @@ def test_add_class(mock_db):
 
     # Then
     assert mock_session.write_transaction.called
-    
-    # Collect all executed queries
-    executed_queries = [call[0][0] for call in mock_tx.run.call_args_list]
-    executed_params = [call[1] for call in mock_tx.run.call_args_list]
 
-    # Check the MERGE query for the class itself
-    class_query_found = False
-    for i, query in enumerate(executed_queries):
-        if "MERGE (c:Class {name: $name, package: $package})" in query:
-            assert executed_params[i]['name'] == "TestClass"
-            assert executed_params[i]['package'] == "com.test"
-            class_query_found = True
-            break
-    assert class_query_found
+    run_calls = mock_tx.run.call_args_list
+    assert run_calls, "mock_tx.run 이 호출되지 않았습니다."
 
-    # Check the MERGE query for the property
-    prop_query_found = False
-    for i, query in enumerate(executed_queries):
-        if "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name})" in query:
-            assert executed_params[i]['prop_name'] == "testProp"
-            prop_query_found = True
-            break
-    assert prop_query_found
+    class_kwargs = _find_call_kwargs(run_calls, name="TestClass")
+    assert class_kwargs["package_name"] == "com.test"
 
-    # Check the MERGE query for the call relationship
-    call_query_found = False
-    for i, query in enumerate(executed_queries):
-        if "MERGE (sm)-[r:CALLS]->(tm)" in query: # Changed to match the actual query in graph_db.py
-            assert executed_params[i]['source_package'] == "com.test"
-            assert executed_params[i]['source_class'] == "TestClass"
-            assert executed_params[i]['source_method'] == "myCallingMethod"
-            assert executed_params[i]['target_package'] == "com.another"
-            assert executed_params[i]['target_class'] == "AnotherClass"
-            assert executed_params[i]['target_method'] == "someCalledMethod"
-            call_query_found = True
-            break
-    assert call_query_found
+    prop_kwargs = _find_call_kwargs(run_calls, prop_name="testProp")
+    assert prop_kwargs["class_name"] == "TestClass"
+    assert prop_kwargs["prop_type"] == "int"
+    assert json.loads(prop_kwargs["prop_modifiers_json"]) == []
+
+    call_kwargs = _find_call_kwargs(
+        run_calls,
+        source_method="myCallingMethod",
+        target_method="someCalledMethod",
+    )
+    assert call_kwargs["source_class"] == "TestClass"
+    assert call_kwargs["source_package"] == "com.test"
+    assert call_kwargs["target_class"] == "AnotherClass"
+    assert call_kwargs["target_package"] == "com.another"
 
 
 def test_add_class_with_fields(mock_db):
@@ -110,29 +107,16 @@ def test_add_class_with_fields(mock_db):
     db_service.add_class(test_class)
 
     # Then
-    # Check the MERGE query for the class itself
-    class_merge_call = mock_tx.run.call_args_list[0]
-    assert "MERGE (c:Class {name: $name, package: $package})" in class_merge_call[0][0]
-    assert class_merge_call[1]['name'] == "Greeter"
+    run_calls = mock_tx.run.call_args_list
+    assert run_calls, "mock_tx.run 이 호출되지 않았습니다."
 
-    # Check the MERGE query for the first property (greeting)
-    prop1_merge_call = mock_tx.run.call_args_list[1]
-    assert (
-        "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name}) "
-        "SET p.modifiers = $prop_modifiers "
-        "MERGE (c)-[:HAS_FIELD]->(p)"
-    ) in prop1_merge_call[0][0]
-    assert prop1_merge_call[1]['prop_name'] == "greeting"
-    assert prop1_merge_call[1]['prop_type'] == "String"
-    assert prop1_merge_call[1]['prop_modifiers'] == ["private"]
+    class_kwargs = _find_call_kwargs(run_calls, name="Greeter")
+    assert class_kwargs["package_name"] == "com.example"
 
-    # Check the MERGE query for the second property (MAX_VALUE)
-    prop2_merge_call = mock_tx.run.call_args_list[2]
-    assert (
-        "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name}) "
-        "SET p.modifiers = $prop_modifiers "
-        "MERGE (c)-[:HAS_FIELD]->(p)"
-    ) in prop2_merge_call[0][0]
-    assert prop2_merge_call[1]['prop_name'] == "MAX_VALUE"
-    assert prop2_merge_call[1]['prop_type'] == "int"
-    assert prop2_merge_call[1]['prop_modifiers'] == ["public", "static", "final"]
+    greeting_kwargs = _find_call_kwargs(run_calls, prop_name="greeting")
+    assert greeting_kwargs["prop_type"] == "String"
+    assert json.loads(greeting_kwargs["prop_modifiers_json"]) == ["private"]
+
+    max_value_kwargs = _find_call_kwargs(run_calls, prop_name="MAX_VALUE")
+    assert max_value_kwargs["prop_type"] == "int"
+    assert json.loads(max_value_kwargs["prop_modifiers_json"]) == ["public", "static", "final"]

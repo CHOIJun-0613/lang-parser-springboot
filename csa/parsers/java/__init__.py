@@ -1,7 +1,3 @@
-"""Backward-compatible exports for logical name extraction (Rule001)."""
-
-from __future__ import annotations
-
 from csa.parsers.java.logical_name import (
     JavaLogicalNameExtractor,
     LogicalNameExtractor,

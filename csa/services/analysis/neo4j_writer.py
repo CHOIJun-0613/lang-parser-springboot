@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, Sequence
 
@@ -22,7 +23,7 @@ from csa.services.java_parser import (
     extract_sql_statements_from_mappers,
     extract_test_classes_from_classes,
 )
-from csa.services.neo4j_connection_pool import get_connection_pool
+from csa.dbwork.connection_pool import get_connection_pool
 
 
 def connect_to_neo4j_db(
@@ -46,64 +47,50 @@ def connect_to_neo4j_db(
     return GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
 
+@contextmanager
+def _session_scope(db: GraphDB):
+    """Yield a Neo4j session, preferring the shared connection pool when available."""
+    pool = get_connection_pool()
+    if pool.is_initialized():
+        with pool.session() as session:
+            yield session
+    else:
+        with db._driver.session() as session:  # pylint: disable=protected-access
+            yield session
+
+
 def clean_java_objects(db: GraphDB, logger) -> None:
     """Remove previously stored Java-related nodes."""
     logger.info("Cleaning Java objects...")
-    conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
-    try:
-        if conn:
-            with conn.session() as session:
-                session.run("MATCH (n:Package) DETACH DELETE n")
-                session.run("MATCH (n:Class) DETACH DELETE n")
-                session.run("MATCH (n:Method) DETACH DELETE n")
-                session.run("MATCH (n:Field) DETACH DELETE n")
-                session.run("MATCH (n:Bean) DETACH DELETE n")
-                session.run("MATCH (n:Endpoint) DETACH DELETE n")
-                session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
-                session.run("MATCH (n:JpaEntity) DETACH DELETE n")
-                session.run("MATCH (n:ConfigFile) DETACH DELETE n")
-                session.run("MATCH (n:TestClass) DETACH DELETE n")
-                session.run("MATCH (n:SqlStatement) DETACH DELETE n")
-        else:
-            with db._driver.session() as session:  # pylint: disable=protected-access
-                session.run("MATCH (n:Package) DETACH DELETE n")
-                session.run("MATCH (n:Class) DETACH DELETE n")
-                session.run("MATCH (n:Method) DETACH DELETE n")
-                session.run("MATCH (n:Field) DETACH DELETE n")
-                session.run("MATCH (n:Bean) DETACH DELETE n")
-                session.run("MATCH (n:Endpoint) DETACH DELETE n")
-                session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
-                session.run("MATCH (n:JpaEntity) DETACH DELETE n")
-                session.run("MATCH (n:ConfigFile) DETACH DELETE n")
-                session.run("MATCH (n:TestClass) DETACH DELETE n")
-                session.run("MATCH (n:SqlStatement) DETACH DELETE n")
-    finally:
-        if conn and hasattr(db, "_pool"):
-            db._pool.release(conn)  # pylint: disable=protected-access
+    def _execute(session):
+        session.run("MATCH (n:Package) DETACH DELETE n")
+        session.run("MATCH (n:Class) DETACH DELETE n")
+        session.run("MATCH (n:Method) DETACH DELETE n")
+        session.run("MATCH (n:Field) DETACH DELETE n")
+        session.run("MATCH (n:Bean) DETACH DELETE n")
+        session.run("MATCH (n:Endpoint) DETACH DELETE n")
+        session.run("MATCH (n:MyBatisMapper) DETACH DELETE n")
+        session.run("MATCH (n:JpaEntity) DETACH DELETE n")
+        session.run("MATCH (n:ConfigFile) DETACH DELETE n")
+        session.run("MATCH (n:TestClass) DETACH DELETE n")
+        session.run("MATCH (n:SqlStatement) DETACH DELETE n")
+
+    with _session_scope(db) as session:
+        _execute(session)
 
 
 def clean_db_objects(db: GraphDB, logger) -> None:
     """Remove previously stored database-related nodes."""
     logger.info("Cleaning database objects...")
-    conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
-    try:
-        if conn:
-            with conn.session() as session:
-                session.run("MATCH (n:Database) DETACH DELETE n")
-                session.run("MATCH (n:Table) DETACH DELETE n")
-                session.run("MATCH (n:Column) DETACH DELETE n")
-                session.run("MATCH (n:Index) DETACH DELETE n")
-                session.run("MATCH (n:Constraint) DETACH DELETE n")
-        else:
-            with db._driver.session() as session:  # pylint: disable=protected-access
-                session.run("MATCH (n:Database) DETACH DELETE n")
-                session.run("MATCH (n:Table) DETACH DELETE n")
-                session.run("MATCH (n:Column) DETACH DELETE n")
-                session.run("MATCH (n:Index) DETACH DELETE n")
-                session.run("MATCH (n:Constraint) DETACH DELETE n")
-    finally:
-        if conn and hasattr(db, "_pool"):
-            db._pool.release(conn)  # pylint: disable=protected-access
+    def _execute(session):
+        session.run("MATCH (n:Database) DETACH DELETE n")
+        session.run("MATCH (n:Table) DETACH DELETE n")
+        session.run("MATCH (n:Column) DETACH DELETE n")
+        session.run("MATCH (n:Index) DETACH DELETE n")
+        session.run("MATCH (n:Constraint) DETACH DELETE n")
+
+    with _session_scope(db) as session:
+        _execute(session)
 
 
 def _log_progress(prefix: str, current: int, total: int, last_percent: int, logger) -> int:
@@ -210,27 +197,13 @@ def add_springboot_objects(
         last_percent = 0
         for idx, sql_statement in enumerate(sql_statements, 1):
             db.add_sql_statement(sql_statement, project_name)
-            conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
-            try:
-                if conn:
-                    with conn.session() as session:
-                        session.execute_write(
-                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                            sql_statement.mapper_name,
-                            sql_statement.id,
-                            project_name,
-                        )
-                else:
-                    with db._driver.session() as session:  # pylint: disable=protected-access
-                        session.execute_write(
-                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                            sql_statement.mapper_name,
-                            sql_statement.id,
-                            project_name,
-                        )
-            finally:
-                if conn and hasattr(db, "_pool"):
-                    db._pool.release(conn)  # pylint: disable=protected-access
+            with _session_scope(db) as session:
+                session.execute_write(
+                    db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                    sql_statement.mapper_name,
+                    sql_statement.id,
+                    project_name,
+                )
 
             last_percent = _log_progress("sql_statements 저장", idx, len(sql_statements), last_percent, logger)
         _log_duration("Added SQL statements", len(sql_statements), start_time, logger)
@@ -288,27 +261,13 @@ def add_single_class_objects(
         for sql_statement in sql_statements:
             db.add_sql_statement(sql_statement, project_name)
 
-            conn = db._pool.acquire() if hasattr(db, "_pool") else None  # pylint: disable=protected-access
-            try:
-                if conn:
-                    with conn.session() as session:
-                        session.execute_write(
-                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                            sql_statement.mapper_name,
-                            sql_statement.id,
-                            project_name,
-                        )
-                else:
-                    with db._driver.session() as session:  # pylint: disable=protected-access
-                        session.execute_write(
-                            db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                            sql_statement.mapper_name,
-                            sql_statement.id,
-                            project_name,
-                        )
-            finally:
-                if conn and hasattr(db, "_pool"):
-                    db._pool.release(conn)  # pylint: disable=protected-access
+            with _session_scope(db) as session:
+                session.execute_write(
+                    db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                    sql_statement.mapper_name,
+                    sql_statement.id,
+                    project_name,
+                )
 
 
 def _add_packages(db: GraphDB, packages: Sequence[object], project_name: str, logger) -> None:
@@ -430,4 +389,3 @@ __all__ = [
     "connect_to_neo4j_db",
     "save_java_objects_to_neo4j",
 ]
-

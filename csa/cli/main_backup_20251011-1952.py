@@ -9,8 +9,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from csa.services.java_parser import parse_java_project, extract_beans_from_classes, analyze_bean_dependencies, extract_endpoints_from_classes, extract_mybatis_mappers_from_classes, extract_jpa_entities_from_classes, extract_test_classes_from_classes, extract_sql_statements_from_mappers, extract_project_name
 from csa.services.graph_db import GraphDB
-from csa.services.neo4j_connection_pool import get_connection_pool, initialize_pool_from_env
-from csa.services.sequence_diagram_generator import SequenceDiagramGenerator
+from csa.dbwork.connection_pool import get_connection_pool, initialize_pool_from_env
+from csa.diagrams.sequence.generator import SequenceDiagramGenerator
 from csa.services.db_parser import DBParser
 from csa.services.db_call_analysis import DBCallAnalysisService
 from csa.utils.logger import get_logger

@@ -12,7 +12,7 @@ from csa.cli.commands.crud import register as register_crud_commands
 from csa.cli.commands.db_calls import register as register_db_commands
 from csa.cli.commands.graph_queries import register as register_graph_queries
 from csa.cli.commands.sequence import register as register_sequence
-from csa.services.neo4j_connection_pool import get_connection_pool
+from csa.dbwork.connection_pool import get_connection_pool
 
 load_dotenv()
 

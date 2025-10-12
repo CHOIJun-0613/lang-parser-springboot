@@ -4,8 +4,8 @@ import click
 from neo4j import GraphDatabase
 
 from csa.cli.core.lifecycle import with_command_lifecycle
-from csa.services.neo4j_connection_pool import get_connection_pool
-from csa.services.sequence_diagram_generator import SequenceDiagramGenerator
+from csa.dbwork.connection_pool import get_connection_pool
+from csa.diagrams.sequence.generator import SequenceDiagramGenerator
 
 
 @click.command(name="query")
@@ -100,38 +100,34 @@ def query_command(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, 
             pool_size = int(os.getenv("NEO4J_POOL_SIZE", "10"))
             pool.initialize(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, pool_size)
 
-        conn = pool.acquire()
-        try:
-            with conn.session() as session:
-                click.echo(f"Executing: {description}")
-                click.echo("=" * 50)
+        with pool.session() as session:
+            click.echo(f"Executing: {description}")
+            click.echo("=" * 50)
 
-                records = list(session.run(cypher_query))
+            records = list(session.run(cypher_query))
 
-                if not records:
-                    click.echo("No results found.")
-                    return
+            if not records:
+                click.echo("No results found.")
+                return
 
-                headers = list(records[0].keys())
-                click.echo(" | ".join(f"{header:20}" for header in headers))
-                click.echo("-" * (len(headers) * 23))
+            headers = list(records[0].keys())
+            click.echo(" | ".join(f"{header:20}" for header in headers))
+            click.echo("-" * (len(headers) * 23))
 
-                for record in records:
-                    row = []
-                    for header in headers:
-                        value = record[header]
-                        if value is None:
-                            row.append("None")
-                        elif isinstance(value, (list, dict)):
-                            text_value = str(value)
-                            row.append(text_value[:50] + "..." if len(text_value) > 50 else text_value)
-                        else:
-                            row.append(str(value)[:20])
-                    click.echo(" | ".join(f"{cell:20}" for cell in row))
+            for record in records:
+                row = []
+                for header in headers:
+                    value = record[header]
+                    if value is None:
+                        row.append("None")
+                    elif isinstance(value, (list, dict)):
+                        text_value = str(value)
+                        row.append(text_value[:50] + "..." if len(text_value) > 50 else text_value)
+                    else:
+                        row.append(str(value)[:20])
+                click.echo(" | ".join(f"{cell:20}" for cell in row))
 
-                click.echo(f"\nTotal: {len(records)} results found.")
-        finally:
-            pool.release(conn)
+            click.echo(f"\nTotal: {len(records)} results found.")
     except Exception as exc:  # pylint: disable=broad-except
         click.echo(f"Error executing query: {exc}")
 

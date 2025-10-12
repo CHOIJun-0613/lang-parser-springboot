@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Literal, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -447,6 +447,9 @@ class Index(BaseModel):
     type: str = "B-tree"  # "B-tree", "UNIQUE", "GIN", "GIST" 등
     columns: list[str] = []
     table_name: str = ""  # Add table_name for relationship
+    columns: list[str] = []
+    reference_table: str = ""
+    reference_columns: list[str] = []
     description: str = ""
     ai_description: str = ""
     updated_at: str = ""
@@ -459,6 +462,9 @@ class Constraint(BaseModel):
     type: str  # "CHECK", "FOREIGN KEY", "UNIQUE", "PRIMARY KEY" 등
     definition: str = ""
     table_name: str = ""  # Add table_name for relationship
+    columns: list[str] = []
+    reference_table: str = ""
+    reference_columns: list[str] = []
     description: str = ""
     ai_description: str = ""
     updated_at: str = ""
@@ -483,4 +489,13 @@ class Class(BaseModel):
     package_name: str = ""
     description: str = ""  # Brief description of the class
     ai_description: str = ""  # AI-generated description of the class
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_package_name(cls, values):
+        if isinstance(values, dict):
+            package = values.pop("package", None)
+            if package and not values.get("package_name"):
+                values["package_name"] = package
+        return values
 
