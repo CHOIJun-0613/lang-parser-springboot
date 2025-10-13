@@ -7,7 +7,7 @@ import os
 import re
 from typing import Dict, List, Optional, Tuple
 
-import javalang
+from csa.vendor import javalang
 
 from csa.models.graph_entities import (
     Bean,
@@ -355,9 +355,6 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                     with open(file_path, 'r', encoding='utf-8') as f:
                         file_content = f.read()
                     
-                    if '<html' in file_content.lower() or '<body' in file_content.lower() or '<div' in file_content.lower():
-                        continue
-                    
                     tree = javalang.parse.parse(file_content)
                     for type_decl in tree.types:
                         if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
@@ -376,10 +373,6 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                 
                 with open(file_path, 'r', encoding='utf-8') as f:
                     file_content = f.read()
-                
-                if '<html' in file_content.lower() or '<body' in file_content.lower() or '<div' in file_content.lower():
-                    logger.warning(f"Skipping file with HTML content: {file_path}")
-                    continue
                 
                 try:
                     tree = javalang.parse.parse(file_content)

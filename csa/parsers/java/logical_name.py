@@ -8,7 +8,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-import javalang
+from csa.vendor import javalang
 
 from csa.models.graph_entities import Class, Method
 from csa.services.graph_db import GraphDB

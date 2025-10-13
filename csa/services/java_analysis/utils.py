@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import List
 
-import javalang
+from csa.vendor import javalang
 
 from csa.models.graph_entities import Annotation, Class, Field, Method, MethodCall
 
