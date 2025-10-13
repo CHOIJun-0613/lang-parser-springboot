@@ -101,6 +101,7 @@ class ProjectMixin:
         logger = get_logger(__name__)
         logger.debug(f"Creating class node: {class_node.name}")
         current_timestamp = GraphDBBase._get_current_timestamp()
+        existing_method_names = {method.name for method in getattr(class_node, "methods", [])}
 
         def _normalise_annotation_params(raw: Any) -> dict[str, Any]:
             """어노테이션 파라미터를 안전한 dict 형태로 정규화한다."""
@@ -279,6 +280,7 @@ class ProjectMixin:
                 "SET m.return_type = $return_type, m.parameters = $parameters_json, "
                 "m.annotations = $annotations_json, m.visibility = $visibility, "
                 "m.description = $description, m.ai_description = $ai_description, "
+                "m.logical_name = $logical_name, "
                 "m.package_name = $package_name, m.project_name = $project_name, "
                 "m.updated_at = $updated_at "
                 "MERGE (c)-[:HAS_METHOD]->(m)"
@@ -294,6 +296,7 @@ class ProjectMixin:
                     visibility=visibility,
                     description=getattr(method, "description", "") or "",
                     ai_description=getattr(method, "ai_description", "") or "",
+                    logical_name=getattr(method, "logical_name", "") or "",
                     package_name=package_name,
                     project_name=project_name,
                     updated_at=current_timestamp,
@@ -441,6 +444,27 @@ class ProjectMixin:
                 updated_at=current_timestamp,
             )
         for method_call in class_node.calls:
+            if not getattr(method_call, "target_class", "") or not getattr(method_call, "target_method", ""):
+                logger.debug(
+                    "Skipping method call with incomplete target: %s.%s -> %s.%s",
+                    class_node.name,
+                    getattr(method_call, "source_method", ""),
+                    getattr(method_call, "target_class", ""),
+                    getattr(method_call, "target_method", ""),
+                )
+                continue
+
+            if (
+                method_call.target_class == class_node.name
+                and method_call.target_method not in existing_method_names
+            ):
+                logger.debug(
+                    "Skipping unresolved self-call %s.%s (method not declared)",
+                    class_node.name,
+                    method_call.target_method,
+                )
+                continue
+
             target_class_query = (
                 "MERGE (tc:Class {name: $target_class})"
             )
