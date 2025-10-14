@@ -26,20 +26,19 @@ DEFAULT_RULE_TEMPLATES: Dict[str, str] = {
 
 
 class LogicalNameExtractor:
-    """프로젝트별 논리명 추출기 - 기본 클래스"""
+    """프로젝트별 논리명 추출기 - 개선된 버전 (전역 규칙 매니저 사용)"""
     
     _instances = {}  # 프로젝트별 인스턴스 캐시
-    _rules_cache = {}  # 규칙 파일 캐시
     
-    def __new__(cls, project_name: str, rules_directory: str = "csa/rules"):
+    def __new__(cls, project_name: str, rules_directory: str = "rules"):
         # 프로젝트별로 인스턴스를 캐시하여 재사용
         cache_key = f"{project_name}_{rules_directory}"
         if cache_key not in cls._instances:
             instance = super().__new__(cls)
             cls._instances[cache_key] = instance
         return cls._instances[cache_key]
-    
-    def __init__(self, project_name: str, rules_directory: str = "csa/rules"):
+
+    def __init__(self, project_name: str, rules_directory: str = "rules"):
         # 이미 초기화된 인스턴스는 재초기화하지 않음
         if hasattr(self, '_initialized'):
             return
@@ -47,39 +46,14 @@ class LogicalNameExtractor:
         self.project_name = project_name
         self.rules_directory = rules_directory
         self.logger = get_logger(__name__)
-        self.rules = self._load_project_rules()
+        
+        # 전역 규칙 매니저에서 규칙 가져오기
+        from csa.utils.rules_manager import rules_manager
+        self.rules = rules_manager.get_logical_name_rules(project_name)
+        
         self._compiled_patterns: Dict[str, re.Pattern] = {}
         self._initialized = True
     
-    def _load_project_rules(self) -> Dict[str, Any]:
-        """프로젝트별 규칙 파일 로드 (캐싱 적용)"""
-        # 프로젝트별 규칙 파일 경로 결정
-        project_rule_file = f"{self.rules_directory}/{self.project_name}_logical_name_rules.md"
-        default_rule_file = f"{self.rules_directory}/rule001_extraction_logical_name.md"
-        
-        rule_file_path = project_rule_file if os.path.exists(project_rule_file) else default_rule_file
-        
-        # 규칙 파일 캐시 확인
-        if rule_file_path in self._rules_cache:
-            self.logger.debug(f"프로젝트 {self.project_name} 규칙 파일 캐시 사용: {rule_file_path}")
-            return self._rules_cache[rule_file_path]
-        
-        try:
-            with open(rule_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # 규칙 해석 로직
-            rules = self._parse_rules_content(content)
-            
-            # 규칙 파일 캐시에 저장
-            self._rules_cache[rule_file_path] = rules
-            
-            self.logger.info(f"프로젝트 {self.project_name} 규칙 파일 로드: {rule_file_path}")
-            return rules
-            
-        except Exception as e:
-            self.logger.error(f"규칙 파일 로드 실패: {e}")
-            return {}
     
 
     def _parse_rules_content(self, content: str) -> Dict[str, Any]:
@@ -262,8 +236,8 @@ class LogicalNameExtractor:
 
 class JavaLogicalNameExtractor(LogicalNameExtractor):
     """Java 파일 전용 논리명 추출기"""
-    
-    def __init__(self, project_name: str, rules_directory: str = "csa/rules"):
+
+    def __init__(self, project_name: str, rules_directory: str = "rules"):
         super().__init__(project_name, rules_directory)
 
     def _collect_comment_block(self, lines: List[str], start_index: int, max_scan: int = 30) -> str:
@@ -513,8 +487,8 @@ class JavaLogicalNameExtractor(LogicalNameExtractor):
 
 class MyBatisXmlLogicalNameExtractor(LogicalNameExtractor):
     """MyBatis XML 파일 전용 논리명 추출기"""
-    
-    def __init__(self, project_name: str, rules_directory: str = "csa/rules"):
+
+    def __init__(self, project_name: str, rules_directory: str = "rules"):
         super().__init__(project_name, rules_directory)
     
     def extract_mapper_logical_name(self, xml_source: str, mapper_name: str) -> Optional[str]:
@@ -591,9 +565,9 @@ class MyBatisXmlLogicalNameExtractor(LogicalNameExtractor):
 
 class LogicalNameExtractorFactory:
     """논리명 추출기 팩토리"""
-    
+
     @staticmethod
-    def create_extractor(project_name: str, file_type: str, rules_directory: str = "csa/rules"):
+    def create_extractor(project_name: str, file_type: str, rules_directory: str = "rules"):
         """프로젝트와 파일 타입에 따라 적절한 추출기 생성"""
         
         if file_type == 'java':
@@ -750,17 +724,9 @@ def extract_sql_logical_name_from_xml_content(xml_content: str, sql_id: str) -> 
 
 
 def extract_java_class_logical_name(java_content: str, class_name: str, project_name: str) -> Optional[str]:
-    """Java 소스코드에서 클래스 논리명 추출 (None 반환 가능)
-    
-    Args:
-        java_content: Java 소스 코드
-        class_name: 클래스 이름
-        project_name: 프로젝트 이름
-        
-    Returns:
-        논리명 또는 None (추출 실패 시)
-    """
+    """Java 소스코드에서 클래스 논리명 추출 (개선된 버전 - 캐시된 인스턴스 재사용)"""
     try:
+        # 캐시된 인스턴스 재사용
         extractor = JavaLogicalNameExtractor(project_name)
         return extractor.extract_class_logical_name(java_content, class_name)
     except Exception:
@@ -768,17 +734,9 @@ def extract_java_class_logical_name(java_content: str, class_name: str, project_
 
 
 def extract_java_method_logical_name(java_content: str, method_name: str, project_name: str) -> Optional[str]:
-    """Java 소스코드에서 메서드 논리명 추출 (None 반환 가능)
-    
-    Args:
-        java_content: Java 소스 코드
-        method_name: 메서드 이름
-        project_name: 프로젝트 이름
-        
-    Returns:
-        논리명 또는 None (추출 실패 시)
-    """
+    """Java 소스코드에서 메서드 논리명 추출 (개선된 버전 - 캐시된 인스턴스 재사용)"""
     try:
+        # 캐시된 인스턴스 재사용
         extractor = JavaLogicalNameExtractor(project_name)
         return extractor.extract_method_logical_name(java_content, method_name)
     except Exception:
@@ -786,17 +744,9 @@ def extract_java_method_logical_name(java_content: str, method_name: str, projec
 
 
 def extract_java_field_logical_name(java_content: str, field_name: str, project_name: str) -> Optional[str]:
-    """Java 소스코드에서 필드 논리명 추출 (None 반환 가능)
-    
-    Args:
-        java_content: Java 소스 코드
-        field_name: 필드 이름
-        project_name: 프로젝트 이름
-        
-    Returns:
-        논리명 또는 None (추출 실패 시)
-    """
+    """Java 소스코드에서 필드 논리명 추출 (개선된 버전 - 캐시된 인스턴스 재사용)"""
     try:
+        # 캐시된 인스턴스 재사용
         extractor = JavaLogicalNameExtractor(project_name)
         return extractor.extract_field_logical_name(java_content, field_name)
     except Exception:

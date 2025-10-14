@@ -74,8 +74,8 @@ def example_usage():
     # 6. 규칙 파일 확인
     print("\n6. 규칙 파일 확인")
     rule_files = [
-        "csa/rules/rule001_extraction_logical_name.md",
-        f"csa/rules/{project_name}_logical_name_rules.md"
+        "rules/rule001_extraction_logical_name.md",
+        f"rules/{project_name}_logical_name_rules.md"
     ]
     
     for rule_file in rule_files:

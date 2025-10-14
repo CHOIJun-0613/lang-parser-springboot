@@ -95,7 +95,11 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
         # 논리명 추출 시도
         from csa.services.java_parser_addon_r001 import extract_java_class_logical_name
         class_logical_name = extract_java_class_logical_name(file_content, class_name, project_name)
-        
+
+        # description 추출 시도 (Rule002)
+        from csa.parsers.java.description import extract_java_class_description
+        class_description = extract_java_class_description(class_annotations, project_name)
+
         class_node = Class(
             name=class_name,
             logical_name=class_logical_name if class_logical_name else "",
@@ -106,7 +110,7 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             annotations=class_annotations,
             package_name=package_name,
             project_name=project_name,
-            description="",
+            description=class_description if class_description else "",
             ai_description=""
         )
         
@@ -220,7 +224,11 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             # 논리명 추출 시도
             from csa.services.java_parser_addon_r001 import extract_java_method_logical_name
             method_logical_name = extract_java_method_logical_name(file_content, declaration.name, project_name)
-            
+
+            # description 추출 시도 (Rule002)
+            from csa.parsers.java.description import extract_java_method_description
+            method_description = extract_java_method_description(method_annotations, project_name)
+
             method = Method(
                 name=declaration.name,
                 logical_name=method_logical_name if method_logical_name else "",
@@ -230,7 +238,7 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
                 source=method_source,
                 package_name=package_name,
                 annotations=method_annotations,
-                description="",
+                description=method_description if method_description else "",
                 calls=[]  # 명시적으로 calls 속성 초기화
             )
             
@@ -415,7 +423,11 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                             # 논리명 추출 시도
                             from csa.services.java_parser_addon_r001 import extract_java_class_logical_name
                             class_logical_name = extract_java_class_logical_name(file_content, class_name, project_name)
-                            
+
+                            # description 추출 시도 (Rule002)
+                            from csa.parsers.java.description import extract_java_class_description
+                            class_description = extract_java_class_description(class_annotations, project_name)
+
                             classes[class_key] = Class(
                                 name=class_name,
                                 logical_name=class_logical_name if class_logical_name else "",
@@ -426,7 +438,7 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                                 annotations=class_annotations,
                                 package_name=package_name,
                                 project_name=project_name,
-                                description="",
+                                description=class_description if class_description else "",
                                 ai_description=""
                             )
                             class_to_package_map[class_key] = package_name
@@ -551,6 +563,10 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                             from csa.services.java_parser_addon_r001 import extract_java_method_logical_name
                             method_logical_name = extract_java_method_logical_name(file_content, declaration.name, project_name)
 
+                            # description 추출 시도 (Rule002)
+                            from csa.parsers.java.description import extract_java_method_description
+                            method_description = extract_java_method_description(method_annotations, project_name)
+
                             method = Method(
                                 name=declaration.name,
                                 logical_name=method_logical_name if method_logical_name else "",
@@ -560,7 +576,7 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                                 source=method_source,
                                 package_name=package_name,
                                 annotations=method_annotations,
-                                description="",
+                                description=method_description if method_description else "",
                                 ai_description=""
                             )
                             classes[class_key].methods.append(method)

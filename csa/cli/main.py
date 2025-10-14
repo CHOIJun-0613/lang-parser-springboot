@@ -13,8 +13,18 @@ from csa.cli.commands.db_calls import register as register_db_commands
 from csa.cli.commands.graph_queries import register as register_graph_queries
 from csa.cli.commands.sequence import register as register_sequence
 from csa.dbwork.connection_pool import get_connection_pool
+from csa.utils.logger import get_logger
 
 load_dotenv()
+
+# 애플리케이션 시작 시 규칙 매니저 초기화
+try:
+    from csa.utils.rules_manager import rules_manager
+    logger = get_logger(__name__)
+    logger.info("규칙 매니저 초기화 완료")
+except Exception as e:
+    logger = get_logger(__name__)
+    logger.warning(f"규칙 매니저 초기화 실패: {e}")
 
 
 @click.group()
