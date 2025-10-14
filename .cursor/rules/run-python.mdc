@@ -1,5 +1,5 @@
 ---
-description: python 실행시키기 위한 규칙
+description: lang-java-springboot 프로젝트 규칙칙
 globs:
 alwaysApply: true
 ---
