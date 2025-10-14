@@ -1,0 +1,329 @@
+# Car Center Management System - Application Configuration
+# Spring Boot 3.4.1 기반 설정
+
+server:
+  port: 8080
+  servlet:
+    context-path: /
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+  error:
+    include-stacktrace: never
+    include-message: always
+  # Forward headers 처리 (프록시 환경 지원)
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: car-center
+  
+  # 프로필 설정
+  profiles:
+    active: dev
+    
+  # 데이터베이스 설정 (PostgreSQL 운영, H2 테스트)
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/car_center
+    username: ${DB_USERNAME:carcare_user}
+    password: ${DB_PASSWORD:SKax2025!}
+    hikari:
+      connection-timeout: 20000
+      minimum-idle: 10
+      maximum-pool-size: 50
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      auto-commit: false
+      
+  # JPA 설정 (MyBatis와 함께 사용하지 않으므로 비활성화)
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    
+  # 트랜잭션 설정
+  transaction:
+    default-timeout: 30
+    rollback-on-commit-failure: true
+    
+  # Redis 설정 (세션 및 캐시용)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 10
+          min-idle: 1
+          max-wait: -1ms
+  
+  # Flyway 설정은 각 환경별 프로필에서 정의
+        
+  # Security 설정
+  security:
+    user:
+      name: admin
+      password: admin123
+      roles: ADMIN
+
+      
+  # DevTools 설정 (개발 환경)
+  devtools:
+    restart:
+      enabled: true
+    livereload:
+      enabled: true
+      
+  # JSON 설정
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+    deserialization:
+      fail-on-unknown-properties: false
+      accept-single-value-as-array: true
+    time-zone: Asia/Seoul
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+    default-property-inclusion: NON_NULL
+
+# MyBatis 설정은 MyBatisConfig 클래스에서 처리
+
+
+
+# Swagger/OpenAPI 3.0 설정 (Spring Boot 3.4.1 호환)
+springdoc:
+  api-docs:
+    path: /api-docs
+    groups:
+      enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    groups-order: DESC
+    operations-sorter: method
+    disable-swagger-default-url: true
+    display-request-duration: true
+    display-operation-id: false
+    default-models-expand-depth: 1
+    default-model-expand-depth: 1
+    doc-expansion: none
+    try-it-out-enabled: true
+    filter: false
+    syntax-highlight:
+      activated: true
+      theme: agate
+    # 현재 브라우저 URL을 자동으로 사용하도록 설정
+    use-root-path: true
+  show-actuator: true
+  group-configs:
+    - group: car-center-api
+      display-name: Car Center Public API
+      paths-to-match:
+        - /api/v1/**
+    - group: admin-api  
+      display-name: Admin Management API
+      paths-to-match:
+        - /api/v1/admin/**
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+
+# JWT 설정
+jwt:
+  secret: ${JWT_SECRET:Y2FyY2VudGVyc2VjcmV0a2V5Zm9yand0dG9rZW5nZW5lcmF0aW9uMjAyNA==}
+  expiration: ${JWT_EXPIRATION:86400000} # 24시간 (밀리초)
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000} # 7일 (밀리초)
+  issuer: car-center-api
+  header: Authorization
+  prefix: "Bearer "
+
+# 로깅 설정
+logging:
+  level:
+    root: INFO
+    com.carcare: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    org.mybatis: DEBUG
+    org.apache.ibatis: DEBUG
+    jdbc.sqlonly: DEBUG
+    jdbc.sqltiming: INFO
+    jdbc.audit: OFF
+    jdbc.resultset: OFF
+    jdbc.resultsettable: OFF
+    jdbc.connection: OFF
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/car-center.log
+    max-size: 100MB
+    max-history: 30
+
+# Actuator 설정 (모니터링 및 헬스체크)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,beans,mappings
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      sla:
+        http.server.requests: 50ms,100ms,200ms,300ms,500ms,1s
+
+# 애플리케이션 설정
+app:
+  name: Car Center Management System
+  version: 1.0.0
+  description: 차량 정비소 관리 시스템
+  contact:
+    name: Car Center API Team
+    email: api@carcare.com
+    url: https://carcare.com
+  # JWT 설정
+  jwt:
+    secret: Y2FyY2FyZS1qd3Qtc2VjcmV0LWtleS1mb3ItaGFzaC1zaWduaW5nLWFuZC12ZXJpZmljYXRpb24tMjAyNAr
+    access-token-expiration: 3600000  # 1시간 (밀리초)
+    refresh-token-expiration: 604800000  # 7일 (밀리초)
+    issuer: carcare-api
+    audience: carcare-client
+  cors:
+    allowed-origins:
+      - http://localhost:3000
+      - http://localhost:8080
+      - http://backend.carcare.com
+      - https://backend.carcare.com
+      - https://carcare.com
+    allowed-methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - OPTIONS
+    allowed-headers:
+      - "*"
+    allow-credentials: true
+    max-age: 3600
+
+# 파일 업로드 설정
+servlet:
+  multipart:
+    enabled: true
+    max-file-size: 10MB
+    max-request-size: 10MB
+    file-size-threshold: 2KB
+
+---
+# 개발 환경 설정
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:postgresql://localhost:5432/car_center_dev
+    username: ${DB_USERNAME:carcare_dev}
+    password: ${DB_PASSWORD:carcare_dev}
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+logging:
+  level:
+    com.carcare: DEBUG
+    org.springframework.web: DEBUG
+
+---
+# 테스트 환경 설정
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: 
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+
+logging:
+  level:
+    com.carcare: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+---
+# 운영 환경 설정
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:car_center}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+
+server:
+  error:
+    include-stacktrace: never
+    include-message: never
+
+logging:
+  level:
+    root: WARN
+    com.carcare: INFO
+  file:
+    name: /var/log/car-center/car-center.log
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: never 

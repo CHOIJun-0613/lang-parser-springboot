@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.vehicle.repository.VehicleModelRepository">
+
+    <!-- 결과 매핑 -->
+    <resultMap id="VehicleModelResultMap" type="com.carcare.domain.vehicle.entity.VehicleModel">
+        <id property="id" column="id"/>
+        <result property="brandId" column="brand_id"/>
+        <result property="name" column="name"/>
+        <result property="nameEn" column="name_en"/>
+        <result property="code" column="code"/>
+        <result property="category" column="category"/>
+        <result property="startYear" column="start_year"/>
+        <result property="endYear" column="end_year"/>
+        <result property="description" column="description"/>
+        <result property="imageUrl" column="image_url"/>
+        <result property="isActive" column="is_active"/>
+        <result property="sortOrder" column="sort_order"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 제조사 정보 포함 결과 매핑 -->
+    <resultMap id="VehicleModelWithBrandResultMap" type="com.carcare.domain.vehicle.entity.VehicleModel" extends="VehicleModelResultMap">
+        <association property="brand" javaType="com.carcare.domain.vehicle.entity.VehicleBrand">
+            <id property="id" column="brand_id"/>
+            <result property="name" column="brand_name"/>
+            <result property="nameEn" column="brand_name_en"/>
+            <result property="code" column="brand_code"/>
+            <result property="country" column="brand_country"/>
+            <result property="logoUrl" column="brand_logo_url"/>
+        </association>
+    </resultMap>
+
+    <!-- SQL 조각 -->
+    <sql id="modelColumns">
+        m.id, m.brand_id, m.name, m.name_en, m.code, m.category, m.start_year, m.end_year,
+        m.description, m.image_url, m.is_active, m.sort_order, m.created_at, m.updated_at
+    </sql>
+
+    <sql id="modelWithBrandColumns">
+        <include refid="modelColumns"/>,
+        b.name as brand_name, b.name_en as brand_name_en, b.code as brand_code, 
+        b.country as brand_country, b.logo_url as brand_logo_url
+    </sql>
+
+    <!-- 모델 등록 -->
+    <insert id="insertModel" parameterType="com.carcare.domain.vehicle.entity.VehicleModel" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO vehicle_models (brand_id, name, name_en, code, category, start_year, end_year, description, image_url, is_active, sort_order, created_at, updated_at)
+        VALUES (#{brandId}, #{name}, #{nameEn}, #{code}, #{category}, #{startYear}, #{endYear}, #{description}, #{imageUrl}, 
+                COALESCE(#{isActive}, true), COALESCE(#{sortOrder}, 0), 
+                COALESCE(#{createdAt}, CURRENT_TIMESTAMP), COALESCE(#{updatedAt}, CURRENT_TIMESTAMP))
+    </insert>
+
+    <!-- 모델 정보 수정 -->
+    <update id="updateModel" parameterType="com.carcare.domain.vehicle.entity.VehicleModel">
+        UPDATE vehicle_models
+        <set>
+            <if test="brandId != null">brand_id = #{brandId},</if>
+            <if test="name != null">name = #{name},</if>
+            <if test="nameEn != null">name_en = #{nameEn},</if>
+            <if test="code != null">code = #{code},</if>
+            <if test="category != null">category = #{category},</if>
+            <if test="startYear != null">start_year = #{startYear},</if>
+            <if test="endYear != null">end_year = #{endYear},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="imageUrl != null">image_url = #{imageUrl},</if>
+            <if test="isActive != null">is_active = #{isActive},</if>
+            <if test="sortOrder != null">sort_order = #{sortOrder},</if>
+            updated_at = CURRENT_TIMESTAMP
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 모델 삭제 (소프트 삭제) -->
+    <update id="deleteModel">
+        UPDATE vehicle_models
+        SET is_active = false, updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- ID로 모델 조회 -->
+    <select id="findById" resultMap="VehicleModelResultMap">
+        SELECT <include refid="modelColumns"/>
+        FROM vehicle_models m
+        WHERE m.id = #{id}
+    </select>
+
+    <!-- 모델 코드로 조회 -->
+    <select id="findByCode" resultMap="VehicleModelResultMap">
+        SELECT <include refid="modelColumns"/>
+        FROM vehicle_models m
+        WHERE m.code = #{code}
+    </select>
+
+    <!-- 제조사별 모든 모델 목록 조회 -->
+    <select id="findByBrandId" resultMap="VehicleModelResultMap">
+        SELECT <include refid="modelColumns"/>
+        FROM vehicle_models m
+        WHERE m.brand_id = #{brandId}
+        ORDER BY m.sort_order ASC, m.name ASC
+    </select>
+
+    <!-- 제조사별 활성 모델 목록 조회 -->
+    <select id="findActiveByBrandId" resultMap="VehicleModelResultMap">
+        SELECT <include refid="modelColumns"/>
+        FROM vehicle_models m
+        WHERE m.brand_id = #{brandId} AND m.is_active = true
+        ORDER BY m.sort_order ASC, m.name ASC
+    </select>
+
+    <!-- 제조사별 차종 필터링된 모델 목록 조회 -->
+    <select id="findByBrandIdAndCategory" resultMap="VehicleModelResultMap">
+        SELECT <include refid="modelColumns"/>
+        FROM vehicle_models m
+        WHERE m.brand_id = #{brandId} AND m.category = #{category} AND m.is_active = true
+        ORDER BY m.sort_order ASC, m.name ASC
+    </select>
+
+    <!-- 제조사와 모델명으로 조회 -->
+    <select id="findByBrandIdAndName" resultMap="VehicleModelResultMap">
+        SELECT <include refid="modelColumns"/>
+        FROM vehicle_models m
+        WHERE m.brand_id = #{brandId} AND m.name = #{name}
+    </select>
+
+    <!-- 모든 활성 모델 목록 조회 (제조사 정보 포함) -->
+    <select id="findAllActiveWithBrand" resultMap="VehicleModelWithBrandResultMap">
+        SELECT <include refid="modelWithBrandColumns"/>
+        FROM vehicle_models m
+        INNER JOIN vehicle_brands b ON m.brand_id = b.id
+        WHERE m.is_active = true AND b.is_active = true
+        ORDER BY b.sort_order ASC, m.sort_order ASC, b.name ASC, m.name ASC
+    </select>
+
+    <!-- 모든 모델 목록 조회 (관리자용, 제조사 정보 포함) -->
+    <select id="findAllWithBrand" resultMap="VehicleModelWithBrandResultMap">
+        SELECT <include refid="modelWithBrandColumns"/>
+        FROM vehicle_models m
+        INNER JOIN vehicle_brands b ON m.brand_id = b.id
+        ORDER BY b.sort_order ASC, m.sort_order ASC, b.name ASC, m.name ASC
+    </select>
+
+    <!-- 차종별 모델 목록 조회 -->
+    <select id="findByCategory" resultMap="VehicleModelWithBrandResultMap">
+        SELECT <include refid="modelWithBrandColumns"/>
+        FROM vehicle_models m
+        INNER JOIN vehicle_brands b ON m.brand_id = b.id
+        WHERE m.category = #{category} AND m.is_active = true AND b.is_active = true
+        ORDER BY b.sort_order ASC, m.sort_order ASC, b.name ASC, m.name ASC
+    </select>
+
+    <!-- 연식 범위로 모델 검색 -->
+    <select id="findByYearRange" resultMap="VehicleModelWithBrandResultMap">
+        SELECT <include refid="modelWithBrandColumns"/>
+        FROM vehicle_models m
+        INNER JOIN vehicle_brands b ON m.brand_id = b.id
+        WHERE m.is_active = true AND b.is_active = true
+        <if test="startYear != null">
+            <![CDATA[ AND (m.start_year IS NULL OR m.start_year <= #{startYear}) ]]>
+        </if>
+        <if test="endYear != null">
+            <![CDATA[ AND (m.end_year IS NULL OR m.end_year >= #{endYear}) ]]>
+        </if>
+        ORDER BY b.sort_order ASC, m.sort_order ASC, b.name ASC, m.name ASC
+    </select>
+
+    <!-- 모델명 검색 (부분 매칭) -->
+    <select id="searchByName" resultMap="VehicleModelWithBrandResultMap">
+        SELECT <include refid="modelWithBrandColumns"/>
+        FROM vehicle_models m
+        INNER JOIN vehicle_brands b ON m.brand_id = b.id
+        WHERE (m.name LIKE CONCAT('%', #{keyword}, '%') OR m.name_en LIKE CONCAT('%', #{keyword}, '%'))
+          AND m.is_active = true AND b.is_active = true
+        ORDER BY b.sort_order ASC, m.sort_order ASC, b.name ASC, m.name ASC
+    </select>
+
+    <!-- 제조사별 모델 개수 -->
+    <select id="countByBrandId" resultType="int">
+        SELECT COUNT(*)
+        FROM vehicle_models
+        WHERE brand_id = #{brandId} AND is_active = true
+    </select>
+
+    <!-- 차종별 모델 개수 -->
+    <select id="countByCategory" resultType="int">
+        SELECT COUNT(*)
+        FROM vehicle_models
+        WHERE category = #{category} AND is_active = true
+    </select>
+
+    <!-- 모델 코드 중복 검사 -->
+    <select id="existsByCode" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM vehicle_models
+        WHERE code = #{code}
+    </select>
+
+    <!-- 제조사별 모델명 중복 검사 -->
+    <select id="existsByBrandIdAndName" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM vehicle_models
+        WHERE brand_id = #{brandId} AND name = #{name}
+    </select>
+
+    <!-- 모든 차종 목록 조회 -->
+    <select id="findAllCategories" resultType="string">
+        SELECT DISTINCT category
+        FROM vehicle_models
+        WHERE category IS NOT NULL AND is_active = true
+        ORDER BY category ASC
+    </select>
+
+    <!-- 제조사의 생산 연도 범위 조회 -->
+    <select id="findProductionYearsByBrandId" resultType="integer">
+        SELECT DISTINCT start_year
+        FROM vehicle_models
+        WHERE brand_id = #{brandId} AND start_year IS NOT NULL AND is_active = true
+        ORDER BY start_year ASC
+    </select>
+
+</mapper> 

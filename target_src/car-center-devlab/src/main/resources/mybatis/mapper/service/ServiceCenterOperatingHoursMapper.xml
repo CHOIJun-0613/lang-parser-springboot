@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.service.repository.ServiceCenterOperatingHoursRepository">
+
+    <!-- ResultMap 정의 -->
+    <resultMap id="ServiceCenterOperatingHoursResultMap" type="com.carcare.domain.service.entity.ServiceCenterOperatingHours">
+        <id property="id" column="id"/>
+        <result property="serviceCenterId" column="service_center_id"/>
+        <result property="operatingHoursJson" column="weekly_schedule"/>
+        <result property="currentStatus" column="current_status" javaType="com.carcare.domain.service.entity.ServiceCenterOperatingHours$OperatingStatus"/>
+        <result property="nextStatusChangeAt" column="next_status_change_at" javaType="java.time.LocalDateTime"/>
+        <result property="statusUpdatedAt" column="last_status_update_at" javaType="java.time.LocalDateTime"/>
+        <result property="timezone" column="timezone" jdbcType="VARCHAR"/>
+        <result property="autoStatusUpdate" column="auto_status_update" jdbcType="BOOLEAN"/>
+        <result property="createdAt" column="created_at" javaType="java.time.LocalDateTime"/>
+        <result property="updatedAt" column="updated_at" javaType="java.time.LocalDateTime"/>
+        <result property="createdBy" column="created_by"/>
+        <result property="updatedBy" column="updated_by"/>
+    </resultMap>
+
+    <!-- 운영시간 저장 -->
+    <insert id="save" parameterType="com.carcare.domain.service.entity.ServiceCenterOperatingHours" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO service_center_operating_hours (
+            service_center_id,
+            weekly_schedule,
+            special_dates,
+            temporary_closures,
+            default_settings,
+            current_status,
+            next_status_change_at,
+            last_status_update_at,
+            created_at,
+            updated_at,
+            created_by,
+            updated_by
+        ) VALUES (
+            #{serviceCenterId},
+            '{}'::jsonb,
+            '{}'::jsonb,
+            '{}'::jsonb,
+            #{operatingHoursJson}::jsonb,
+            #{currentStatus,javaType=com.carcare.domain.service.entity.ServiceCenterOperatingHours$OperatingStatus},
+            #{nextStatusChangeAt},
+            #{statusUpdatedAt},
+            #{createdAt},
+            #{updatedAt},
+            #{createdBy},
+            #{updatedBy}
+        )
+    </insert>
+
+    <!-- H2용 저장 (개발환경) -->
+    <insert id="saveH2" parameterType="com.carcare.domain.service.entity.ServiceCenterOperatingHours" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO service_center_operating_hours (
+            service_center_id,
+            weekly_schedule,
+            special_dates,
+            temporary_closures,
+            default_settings,
+            current_status,
+            next_status_change_at,
+            last_status_update_at,
+            created_at,
+            updated_at,
+            created_by,
+            updated_by
+        ) VALUES (
+            #{serviceCenterId},
+            '{}',
+            '{}',
+            '{}',
+            #{operatingHoursJson},
+            #{currentStatus,javaType=com.carcare.domain.service.entity.ServiceCenterOperatingHours$OperatingStatus},
+            #{nextStatusChangeAt},
+            #{statusUpdatedAt},
+            #{createdAt},
+            #{updatedAt},
+            #{createdBy},
+            #{updatedBy}
+        )
+    </insert>
+
+    <!-- 서비스 센터 ID로 운영시간 조회 -->
+    <select id="findByServiceCenterId" parameterType="long" resultMap="ServiceCenterOperatingHoursResultMap">
+        SELECT 
+            id,
+            service_center_id,
+            default_settings as weekly_schedule,
+            current_status,
+            CAST(next_status_change_at as TIMESTAMP) as next_status_change_at,
+            CAST(last_status_update_at as TIMESTAMP) as last_status_update_at,
+            'Asia/Seoul' as timezone,
+            true as auto_status_update,
+            CAST(created_at as TIMESTAMP) as created_at,
+            CAST(updated_at as TIMESTAMP) as updated_at,
+            created_by,
+            updated_by
+        FROM service_center_operating_hours
+        WHERE service_center_id = #{serviceCenterId}
+    </select>
+
+    <!-- ID로 운영시간 조회 -->
+    <select id="findById" parameterType="long" resultMap="ServiceCenterOperatingHoursResultMap">
+        SELECT 
+            id,
+            service_center_id,
+            default_settings as weekly_schedule,
+            current_status,
+            CAST(next_status_change_at as TIMESTAMP) as next_status_change_at,
+            CAST(last_status_update_at as TIMESTAMP) as last_status_update_at,
+            'Asia/Seoul' as timezone,
+            true as auto_status_update,
+            CAST(created_at as TIMESTAMP) as created_at,
+            CAST(updated_at as TIMESTAMP) as updated_at,
+            created_by,
+            updated_by
+        FROM service_center_operating_hours
+        WHERE id = #{id}
+    </select>
+
+    <!-- 운영시간 업데이트 -->
+    <update id="update" parameterType="com.carcare.domain.service.entity.ServiceCenterOperatingHours">
+        UPDATE service_center_operating_hours
+        SET 
+            default_settings = 
+            <choose>
+                <when test="@org.springframework.util.StringUtils@hasText(@org.springframework.beans.factory.config.ConfigurableBeanFactory@SCOPE_SINGLETON)">
+                    #{operatingHoursJson}::jsonb
+                </when>
+                <otherwise>
+                    #{operatingHoursJson}
+                </otherwise>
+            </choose>,
+            current_status = #{currentStatus,javaType=com.carcare.domain.service.entity.ServiceCenterOperatingHours$OperatingStatus},
+            next_status_change_at = #{nextStatusChangeAt},
+            last_status_update_at = #{statusUpdatedAt},
+            updated_at = #{updatedAt},
+            updated_by = #{updatedBy}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 운영 상태만 업데이트 -->
+    <update id="updateStatus" parameterType="map">
+        UPDATE service_center_operating_hours
+        SET 
+            current_status = #{status,javaType=com.carcare.domain.service.entity.ServiceCenterOperatingHours$OperatingStatus,typeHandler=org.apache.ibatis.type.EnumTypeHandler},
+            next_status_change_at = #{nextStatusChangeAt},
+            last_status_update_at = #{statusUpdatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 서비스 센터 ID로 존재 여부 확인 -->
+    <select id="existsByServiceCenterId" parameterType="long" resultType="boolean">
+        SELECT COUNT(1) > 0
+        FROM service_center_operating_hours
+        WHERE service_center_id = #{serviceCenterId}
+    </select>
+
+    <!-- 모든 운영시간 조회 (스케줄러용) -->
+    <select id="findAll" resultMap="ServiceCenterOperatingHoursResultMap">
+        SELECT 
+            id,
+            service_center_id,
+            default_settings as weekly_schedule,
+            current_status,
+            CAST(next_status_change_at as TIMESTAMP) as next_status_change_at,
+            CAST(last_status_update_at as TIMESTAMP) as last_status_update_at,
+            'Asia/Seoul' as timezone,
+            true as auto_status_update,
+            CAST(created_at as TIMESTAMP) as created_at,
+            CAST(updated_at as TIMESTAMP) as updated_at,
+            created_by,
+            updated_by
+        FROM service_center_operating_hours
+        ORDER BY service_center_id
+    </select>
+
+    <!-- 상태 업데이트가 필요한 운영시간 조회 -->
+    <select id="findNeedingStatusUpdate" resultMap="ServiceCenterOperatingHoursResultMap">
+        SELECT 
+            id,
+            service_center_id,
+            default_settings as weekly_schedule,
+            current_status,
+            CAST(next_status_change_at as TIMESTAMP) as next_status_change_at,
+            CAST(last_status_update_at as TIMESTAMP) as last_status_update_at,
+            'Asia/Seoul' as timezone,
+            true as auto_status_update,
+            CAST(created_at as TIMESTAMP) as created_at,
+            CAST(updated_at as TIMESTAMP) as updated_at,
+            created_by,
+            updated_by
+        FROM service_center_operating_hours
+        WHERE next_status_change_at IS NOT NULL 
+          AND next_status_change_at &lt;= NOW()
+        ORDER BY next_status_change_at
+    </select>
+
+    <!-- 운영시간 삭제 -->
+    <delete id="deleteByServiceCenterId" parameterType="long">
+        DELETE FROM service_center_operating_hours
+        WHERE service_center_id = #{serviceCenterId}
+    </delete>
+
+</mapper> 

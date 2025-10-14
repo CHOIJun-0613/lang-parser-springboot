@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.review.repository.ReviewReplyRepository">
+
+    <!-- ResultMap 정의 -->
+    <resultMap id="reviewReplyResultMap" type="com.carcare.domain.review.entity.ReviewReply">
+        <id property="id" column="id"/>
+        <result property="reviewId" column="review_id"/>
+        <result property="authorId" column="author_id"/>
+        <result property="content" column="content"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="authorName" column="author_name"/>
+        <result property="authorType" column="author_type"/>
+    </resultMap>
+
+    <!-- 리뷰 답글 생성 -->
+    <insert id="insert" parameterType="com.carcare.domain.review.entity.ReviewReply" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO review_replies (
+            review_id, author_id, content
+        ) VALUES (
+            #{reviewId}, #{authorId}, #{content}
+        )
+    </insert>
+
+    <!-- 리뷰 답글 조회 (ID) -->
+    <select id="findById" parameterType="Long" resultMap="reviewReplyResultMap">
+        SELECT rr.*, 
+               u.name as author_name,
+               CASE 
+                   WHEN sc.id IS NOT NULL THEN 'SERVICE_CENTER'
+                   ELSE 'USER'
+               END as author_type
+        FROM review_replies rr
+        LEFT JOIN users u ON rr.author_id = u.id
+        LEFT JOIN service_centers sc ON rr.author_id = sc.created_by
+        WHERE rr.id = #{id}
+    </select>
+
+    <!-- 리뷰 ID로 답글 목록 조회 -->
+    <select id="findByReviewId" parameterType="Long" resultMap="reviewReplyResultMap">
+        SELECT rr.*, 
+               u.name as author_name,
+               CASE 
+                   WHEN sc.id IS NOT NULL THEN 'SERVICE_CENTER'
+                   ELSE 'USER'
+               END as author_type
+        FROM review_replies rr
+        LEFT JOIN users u ON rr.author_id = u.id
+        LEFT JOIN service_centers sc ON rr.author_id = sc.created_by
+        WHERE rr.review_id = #{reviewId}
+        ORDER BY rr.created_at ASC
+    </select>
+
+    <!-- 리뷰 답글 수정 -->
+    <update id="update" parameterType="com.carcare.domain.review.entity.ReviewReply">
+        UPDATE review_replies 
+        SET content = #{content},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 리뷰 답글 삭제 -->
+    <delete id="delete" parameterType="Long">
+        DELETE FROM review_replies WHERE id = #{id}
+    </delete>
+
+    <!-- 리뷰별 답글 개수 조회 -->
+    <select id="countByReviewId" parameterType="Long" resultType="long">
+        SELECT COUNT(*) FROM review_replies WHERE review_id = #{reviewId}
+    </select>
+
+    <!-- 작성자별 답글 목록 조회 -->
+    <select id="findByAuthorId" resultMap="reviewReplyResultMap">
+        SELECT rr.*, 
+               u.name as author_name,
+               CASE 
+                   WHEN sc.id IS NOT NULL THEN 'SERVICE_CENTER'
+                   ELSE 'USER'
+               END as author_type
+        FROM review_replies rr
+        LEFT JOIN users u ON rr.author_id = u.id
+        LEFT JOIN service_centers sc ON rr.author_id = sc.created_by
+        WHERE rr.author_id = #{authorId}
+        ORDER BY rr.created_at DESC
+        <if test="offset != null and size != null">
+            LIMIT #{size} OFFSET #{offset}
+        </if>
+    </select>
+
+    <!-- 작성자별 답글 개수 조회 -->
+    <select id="countByAuthorId" parameterType="Long" resultType="long">
+        SELECT COUNT(*) FROM review_replies WHERE author_id = #{authorId}
+    </select>
+
+</mapper> 

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.notification.repository.NotificationSettingsRepository">
+
+    <resultMap id="NotificationSettingsResultMap" type="com.carcare.domain.notification.entity.NotificationSettings">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="smsEnabled" column="sms_enabled"/>
+        <result property="pushEnabled" column="push_enabled"/>
+        <result property="emailEnabled" column="email_enabled"/>
+        <result property="inAppEnabled" column="in_app_enabled"/>
+        <result property="nightModeEnabled" column="night_mode_enabled"/>
+        <result property="quietStartHour" column="quiet_start_hour"/>
+        <result property="quietEndHour" column="quiet_end_hour"/>
+        <result property="promotionEnabled" column="promotion_enabled"/>
+        <result property="timezone" column="timezone"/>
+        <result property="language" column="language"/>
+        <result property="typeSettings" column="type_settings" typeHandler="com.carcare.common.config.JsonTypeHandler"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 알림 설정 생성 -->
+    <insert id="insert" parameterType="com.carcare.domain.notification.entity.NotificationSettings" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO notification_settings (
+            user_id, sms_enabled, push_enabled, email_enabled, in_app_enabled,
+            night_mode_enabled, quiet_start_hour, quiet_end_hour, promotion_enabled,
+            timezone, language, type_settings, created_at, updated_at
+        ) VALUES (
+            #{userId}, #{smsEnabled}, #{pushEnabled}, #{emailEnabled}, #{inAppEnabled},
+            #{nightModeEnabled}, #{quietStartHour}, #{quietEndHour}, #{promotionEnabled},
+            #{timezone}, #{language}, #{typeSettings, typeHandler=com.carcare.common.config.JsonTypeHandler}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <!-- 사용자별 알림 설정 조회 -->
+    <select id="findByUserId" parameterType="long" resultMap="NotificationSettingsResultMap">
+        SELECT * FROM notification_settings WHERE user_id = #{userId}
+    </select>
+
+    <!-- 알림 설정 업데이트 -->
+    <update id="update" parameterType="com.carcare.domain.notification.entity.NotificationSettings">
+        UPDATE notification_settings SET
+            sms_enabled = #{smsEnabled},
+            push_enabled = #{pushEnabled},
+            email_enabled = #{emailEnabled},
+            in_app_enabled = #{inAppEnabled},
+            night_mode_enabled = #{nightModeEnabled},
+            quiet_start_hour = #{quietStartHour},
+            quiet_end_hour = #{quietEndHour},
+            promotion_enabled = #{promotionEnabled},
+            timezone = #{timezone},
+            language = #{language},
+            type_settings = #{typeSettings, typeHandler=com.carcare.common.config.JsonTypeHandler},
+            updated_at = #{updatedAt}
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 알림 설정 삭제 -->
+    <delete id="deleteByUserId" parameterType="long">
+        DELETE FROM notification_settings WHERE user_id = #{userId}
+    </delete>
+
+    <!-- 사용자별 알림 설정 존재 여부 확인 -->
+    <select id="existsByUserId" parameterType="long" resultType="boolean">
+        SELECT COUNT(*) > 0 FROM notification_settings WHERE user_id = #{userId}
+    </select>
+
+</mapper> 

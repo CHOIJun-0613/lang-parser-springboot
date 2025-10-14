@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.review.repository.ReviewRepository">
+
+    <!-- ResultMap 정의 -->
+    <resultMap id="reviewResultMap" type="com.carcare.domain.review.entity.Review">
+        <id property="id" column="id"/>
+        <result property="reviewUuid" column="review_uuid"/>
+        <result property="reservationId" column="reservation_id"/>
+        <result property="rating" column="rating"/>
+        <result property="comment" column="comment"/>
+        <result property="isVisible" column="is_visible"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="reviewImages" column="review_images"/>
+        <result property="userName" column="user_name"/>
+        <result property="serviceCenterName" column="service_center_name"/>
+    </resultMap>
+
+    <resultMap id="statisticsResultMap" type="com.carcare.domain.review.dto.ReviewDto$Statistics">
+        <result property="serviceCenterId" column="service_center_id"/>
+        <result property="averageRating" column="average_rating"/>
+        <result property="totalReviews" column="total_reviews"/>
+        <result property="rating5Count" column="rating_5_count"/>
+        <result property="rating4Count" column="rating_4_count"/>
+        <result property="rating3Count" column="rating_3_count"/>
+        <result property="rating2Count" column="rating_2_count"/>
+        <result property="rating1Count" column="rating_1_count"/>
+    </resultMap>
+
+    <!-- 리뷰 생성 -->
+    <insert id="insert" parameterType="com.carcare.domain.review.entity.Review" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO reviews (
+            review_uuid, reservation_id, rating, comment, is_visible, review_images
+        ) VALUES (
+            #{reviewUuid}, #{reservationId}, #{rating}, #{comment}, #{isVisible}, #{reviewImages}
+        )
+    </insert>
+
+    <!-- 리뷰 조회 (ID) -->
+    <select id="findById" parameterType="Long" resultMap="reviewResultMap">
+        SELECT r.*, 
+               u.name as user_name,
+               sc.name as service_center_name
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        INNER JOIN users u ON res.user_id = u.id
+        INNER JOIN service_centers sc ON res.service_center_id = sc.id
+        WHERE r.id = #{id}
+    </select>
+
+    <!-- 리뷰 조회 (UUID) -->
+    <select id="findByUuid" parameterType="String" resultMap="reviewResultMap">
+        SELECT r.*, 
+               u.name as user_name,
+               sc.name as service_center_name
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        INNER JOIN users u ON res.user_id = u.id
+        INNER JOIN service_centers sc ON res.service_center_id = sc.id
+        WHERE r.review_uuid = #{reviewUuid}
+    </select>
+
+    <!-- 예약 ID로 리뷰 조회 -->
+    <select id="findByReservationId" parameterType="Long" resultMap="reviewResultMap">
+        SELECT r.*, 
+               u.name as user_name,
+               sc.name as service_center_name
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        INNER JOIN users u ON res.user_id = u.id
+        INNER JOIN service_centers sc ON res.service_center_id = sc.id
+        WHERE r.reservation_id = #{reservationId}
+    </select>
+
+    <!-- 리뷰 수정 -->
+    <update id="update" parameterType="com.carcare.domain.review.entity.Review">
+        UPDATE reviews 
+        SET rating = #{rating},
+            comment = #{comment},
+            review_images = #{reviewImages},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 리뷰 삭제 -->
+    <delete id="delete" parameterType="Long">
+        DELETE FROM reviews WHERE id = #{id}
+    </delete>
+
+    <!-- 리뷰 목록 조회 (검색 조건) -->
+    <select id="findBySearchCondition" resultMap="reviewResultMap">
+        SELECT r.*, 
+               u.name as user_name,
+               sc.name as service_center_name
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        INNER JOIN users u ON res.user_id = u.id
+        INNER JOIN service_centers sc ON res.service_center_id = sc.id
+        <where>
+            <if test="condition.serviceCenterId != null">
+                AND res.service_center_id = #{condition.serviceCenterId}
+            </if>
+            <if test="condition.minRating != null">
+                AND r.rating &gt;= #{condition.minRating}
+            </if>
+            <if test="condition.maxRating != null">
+                AND r.rating &lt;= #{condition.maxRating}
+            </if>
+            <if test="condition.visibleOnly != null and condition.visibleOnly">
+                AND r.is_visible = true
+            </if>
+        </where>
+        <choose>
+            <when test="condition.sortBy == 'rating'">
+                ORDER BY r.rating 
+                <if test="condition.sortOrder == 'desc'">DESC</if>
+                <if test="condition.sortOrder != 'desc'">ASC</if>
+            </when>
+            <otherwise>
+                ORDER BY r.created_at 
+                <if test="condition.sortOrder == 'desc'">DESC</if>
+                <if test="condition.sortOrder != 'desc'">ASC</if>
+            </otherwise>
+        </choose>
+        <if test="condition.page != null and condition.size != null">
+            LIMIT #{condition.size} OFFSET #{condition.offset}
+        </if>
+    </select>
+
+    <!-- 리뷰 총 개수 조회 (검색 조건) -->
+    <select id="countBySearchCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        <where>
+            <if test="condition.serviceCenterId != null">
+                AND res.service_center_id = #{condition.serviceCenterId}
+            </if>
+            <if test="condition.minRating != null">
+                AND r.rating &gt;= #{condition.minRating}
+            </if>
+            <if test="condition.maxRating != null">
+                AND r.rating &lt;= #{condition.maxRating}
+            </if>
+            <if test="condition.visibleOnly != null and condition.visibleOnly">
+                AND r.is_visible = true
+            </if>
+        </where>
+    </select>
+
+    <!-- 정비소별 리뷰 목록 조회 -->
+    <select id="findByServiceCenterId" resultMap="reviewResultMap">
+        SELECT r.*, 
+               u.name as user_name,
+               sc.name as service_center_name
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        INNER JOIN users u ON res.user_id = u.id
+        INNER JOIN service_centers sc ON res.service_center_id = sc.id
+        WHERE res.service_center_id = #{serviceCenterId}
+        <if test="visibleOnly != null and visibleOnly">
+            AND r.is_visible = true
+        </if>
+        ORDER BY r.created_at DESC
+        <if test="offset != null and size != null">
+            LIMIT #{size} OFFSET #{offset}
+        </if>
+    </select>
+
+    <!-- 정비소별 리뷰 개수 조회 -->
+    <select id="countByServiceCenterId" resultType="long">
+        SELECT COUNT(*)
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        WHERE res.service_center_id = #{serviceCenterId}
+        <if test="visibleOnly != null and visibleOnly">
+            AND r.is_visible = true
+        </if>
+    </select>
+
+    <!-- 정비소별 리뷰 통계 조회 -->
+    <select id="getStatisticsByServiceCenterId" resultMap="statisticsResultMap">
+        SELECT 
+            #{serviceCenterId} as service_center_id,
+            COALESCE(AVG(r.rating::numeric), 0) as average_rating,
+            COUNT(*) as total_reviews,
+            SUM(CASE WHEN r.rating = 5 THEN 1 ELSE 0 END) as rating_5_count,
+            SUM(CASE WHEN r.rating = 4 THEN 1 ELSE 0 END) as rating_4_count,
+            SUM(CASE WHEN r.rating = 3 THEN 1 ELSE 0 END) as rating_3_count,
+            SUM(CASE WHEN r.rating = 2 THEN 1 ELSE 0 END) as rating_2_count,
+            SUM(CASE WHEN r.rating = 1 THEN 1 ELSE 0 END) as rating_1_count
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        WHERE res.service_center_id = #{serviceCenterId}
+        AND r.is_visible = true
+    </select>
+
+    <!-- 사용자별 리뷰 목록 조회 -->
+    <select id="findByUserId" resultMap="reviewResultMap">
+        SELECT r.*, 
+               u.name as user_name,
+               sc.name as service_center_name
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        INNER JOIN users u ON res.user_id = u.id
+        INNER JOIN service_centers sc ON res.service_center_id = sc.id
+        WHERE res.user_id = #{userId}
+        ORDER BY r.created_at DESC
+        <if test="offset != null and size != null">
+            LIMIT #{size} OFFSET #{offset}
+        </if>
+    </select>
+
+    <!-- 사용자별 리뷰 개수 조회 -->
+    <select id="countByUserId" resultType="long">
+        SELECT COUNT(*)
+        FROM reviews r
+        INNER JOIN reservations res ON r.reservation_id = res.id
+        WHERE res.user_id = #{userId}
+    </select>
+
+    <!-- 리뷰 가시성 변경 -->
+    <update id="updateVisibility">
+        UPDATE reviews 
+        SET is_visible = #{isVisible}, 
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+</mapper> 

@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.reservation.repository.ReservationRepository">
+
+    <!-- 결과 매핑 -->
+    <resultMap id="ReservationResultMap" type="com.carcare.domain.reservation.entity.Reservation">
+        <id property="id" column="id"/>
+        <result property="reservationUuid" column="reservation_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="vehicleId" column="vehicle_id"/>
+        <result property="serviceCenterId" column="service_center_id"/>
+        <result property="serviceTypeId" column="service_type_id"/>
+        <result property="status" column="status" javaType="com.carcare.domain.reservation.entity.Reservation$ReservationStatus"/>
+        <result property="scheduledDate" column="scheduled_date"/>
+        <result property="estimatedDuration" column="estimated_duration"/>
+        <result property="customerNotes" column="customer_notes"/>
+        <result property="mechanicNotes" column="mechanic_notes"/>
+        <result property="confirmedAt" column="confirmed_at"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="completedAt" column="completed_at"/>
+        <result property="cancelledAt" column="cancelled_at"/>
+        <result property="cancellationReason" column="cancellation_reason"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 조인된 예약 정보 결과 매핑 -->
+    <resultMap id="ReservationDetailResultMap" type="com.carcare.domain.reservation.dto.ReservationDto$Response">
+        <id property="id" column="id"/>
+        <result property="reservationUuid" column="reservation_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="userName" column="user_name"/>
+        <result property="vehicleId" column="vehicle_id"/>
+        <result property="vehicleInfo" column="vehicle_info"/>
+        <result property="serviceCenterId" column="service_center_id"/>
+        <result property="serviceCenterName" column="service_center_name"/>
+        <result property="serviceTypeId" column="service_type_id"/>
+        <result property="serviceTypeName" column="service_type_name"/>
+        <result property="status" column="status" javaType="com.carcare.domain.reservation.entity.Reservation$ReservationStatus"/>
+        <result property="statusDescription" column="status_description"/>
+        <result property="scheduledDate" column="scheduled_date"/>
+        <result property="estimatedDuration" column="estimated_duration"/>
+        <result property="customerNotes" column="customer_notes"/>
+        <result property="mechanicNotes" column="mechanic_notes"/>
+        <result property="confirmedAt" column="confirmed_at"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="completedAt" column="completed_at"/>
+        <result property="cancelledAt" column="cancelled_at"/>
+        <result property="cancellationReason" column="cancellation_reason"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 공통 컬럼 정의 -->
+    <sql id="reservationColumns">
+        r.id, r.reservation_uuid, r.user_id, r.vehicle_id, r.service_center_id, r.service_type_id,
+        r.status, r.scheduled_date, r.estimated_duration, r.customer_notes, r.mechanic_notes,
+        r.confirmed_at, r.started_at, r.completed_at, r.cancelled_at, r.cancellation_reason,
+        r.created_at, r.updated_at
+    </sql>
+
+    <!-- 조인 컬럼 정의 -->
+    <sql id="reservationDetailColumns">
+        <include refid="reservationColumns"/>,
+        u.name as user_name,
+        CONCAT(vb.name, ' ', vm.name, ' (', v.license_plate, ')') as vehicle_info,
+        sc.name as service_center_name,
+        st.name as service_type_name,
+        CASE 
+            WHEN r.status = 'PENDING' THEN '대기중'
+            WHEN r.status = 'CONFIRMED' THEN '확정'
+            WHEN r.status = 'IN_PROGRESS' THEN '진행중'
+            WHEN r.status = 'COMPLETED' THEN '완료'
+            WHEN r.status = 'CANCELLED' THEN '취소'
+            ELSE r.status::text
+        END as status_description
+    </sql>
+
+    <!-- 예약 등록 -->
+    <insert id="insertReservation" parameterType="com.carcare.domain.reservation.entity.Reservation" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO reservations (
+            reservation_uuid, user_id, vehicle_id, service_center_id, service_type_id,
+            status, scheduled_date, estimated_duration, customer_notes,
+            created_at, updated_at
+        )
+        VALUES (
+            #{reservationUuid}, #{userId}, #{vehicleId}, #{serviceCenterId}, #{serviceTypeId},
+            #{status}, #{scheduledDate}, #{estimatedDuration}, #{customerNotes},
+            #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <!-- 예약 정보 수정 -->
+    <update id="updateReservation" parameterType="com.carcare.domain.reservation.entity.Reservation">
+        UPDATE reservations
+        <set>
+            <if test="scheduledDate != null">scheduled_date = #{scheduledDate},</if>
+            <if test="estimatedDuration != null">estimated_duration = #{estimatedDuration},</if>
+            <if test="customerNotes != null">customer_notes = #{customerNotes},</if>
+            <if test="mechanicNotes != null">mechanic_notes = #{mechanicNotes},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="confirmedAt != null">confirmed_at = #{confirmedAt},</if>
+            <if test="startedAt != null">started_at = #{startedAt},</if>
+            <if test="completedAt != null">completed_at = #{completedAt},</if>
+            <if test="cancelledAt != null">cancelled_at = #{cancelledAt},</if>
+            <if test="cancellationReason != null">cancellation_reason = #{cancellationReason},</if>
+            updated_at = CURRENT_TIMESTAMP
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 예약 삭제 (소프트 삭제) -->
+    <update id="deleteReservation">
+        UPDATE reservations 
+        SET status = 'CANCELLED', 
+            cancelled_at = CURRENT_TIMESTAMP,
+            cancellation_reason = COALESCE(#{reason}, '시스템에 의한 삭제'),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 예약 조회 (ID) -->
+    <select id="findById" parameterType="long" resultMap="ReservationResultMap">
+        SELECT <include refid="reservationColumns"/>
+        FROM reservations r
+        WHERE r.id = #{id}
+    </select>
+
+    <!-- 예약 상세 조회 (조인) -->
+    <select id="findDetailById" parameterType="long" resultMap="ReservationDetailResultMap">
+        SELECT <include refid="reservationDetailColumns"/>
+        FROM reservations r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN vehicles v ON r.vehicle_id = v.id
+        LEFT JOIN vehicle_brands vb ON v.brand_id = vb.id
+        LEFT JOIN vehicle_models vm ON v.model_id = vm.id
+        LEFT JOIN service_centers sc ON r.service_center_id = sc.id
+        LEFT JOIN service_types st ON r.service_type_id = st.id
+        WHERE r.id = #{id}
+    </select>
+
+    <!-- UUID로 예약 조회 -->
+    <select id="findByUuid" parameterType="string" resultMap="ReservationResultMap">
+        SELECT <include refid="reservationColumns"/>
+        FROM reservations r
+        WHERE r.reservation_uuid = #{uuid}
+    </select>
+
+    <!-- 예약 검색 -->
+    <select id="searchReservations" parameterType="com.carcare.domain.reservation.repository.ReservationRepository$SearchCriteria" resultMap="ReservationDetailResultMap">
+        SELECT <include refid="reservationDetailColumns"/>
+        FROM reservations r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN vehicles v ON r.vehicle_id = v.id
+        LEFT JOIN vehicle_brands vb ON v.brand_id = vb.id
+        LEFT JOIN vehicle_models vm ON v.model_id = vm.id
+        LEFT JOIN service_centers sc ON r.service_center_id = sc.id
+        LEFT JOIN service_types st ON r.service_type_id = st.id
+        <where>
+            <if test="userId != null">AND r.user_id = #{userId}</if>
+            <if test="serviceCenterId != null">AND r.service_center_id = #{serviceCenterId}</if>
+            <if test="vehicleId != null">AND r.vehicle_id = #{vehicleId}</if>
+            <if test="status != null">AND r.status = #{status}</if>
+            <if test="startDate != null">AND r.scheduled_date <![CDATA[ >= ]]> #{startDate}</if>
+            <if test="endDate != null">AND r.scheduled_date <![CDATA[ <= ]]> #{endDate}</if>
+        </where>
+        ORDER BY 
+        <choose>
+            <when test="sortBy == 'createdAt' and sortDirection == 'ASC'">r.created_at ASC</when>
+            <when test="sortBy == 'createdAt'">r.created_at DESC</when>
+            <when test="sortBy == 'status' and sortDirection == 'DESC'">r.status DESC</when>
+            <when test="sortBy == 'status'">r.status ASC</when>
+            <when test="sortBy == 'scheduledDate' and sortDirection == 'DESC'">r.scheduled_date DESC</when>
+            <otherwise>r.scheduled_date ASC</otherwise>
+        </choose>
+        <if test="size > 0">
+            LIMIT #{size} OFFSET #{offset}
+        </if>
+    </select>
+
+    <!-- 예약 검색 결과 총 개수 -->
+    <select id="countSearchReservations" parameterType="com.carcare.domain.reservation.repository.ReservationRepository$SearchCriteria" resultType="long">
+        SELECT COUNT(*)
+        FROM reservations r
+        <where>
+            <if test="userId != null">AND r.user_id = #{userId}</if>
+            <if test="serviceCenterId != null">AND r.service_center_id = #{serviceCenterId}</if>
+            <if test="vehicleId != null">AND r.vehicle_id = #{vehicleId}</if>
+            <if test="status != null">AND r.status = #{status}</if>
+            <if test="startDate != null">AND r.scheduled_date <![CDATA[ >= ]]> #{startDate}</if>
+            <if test="endDate != null">AND r.scheduled_date <![CDATA[ <= ]]> #{endDate}</if>
+        </where>
+    </select>
+
+    <!-- 사용자별 예약 목록 -->
+    <select id="findByUserId" parameterType="long" resultMap="ReservationDetailResultMap">
+        SELECT <include refid="reservationDetailColumns"/>
+        FROM reservations r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN vehicles v ON r.vehicle_id = v.id
+        LEFT JOIN vehicle_brands vb ON v.brand_id = vb.id
+        LEFT JOIN vehicle_models vm ON v.model_id = vm.id
+        LEFT JOIN service_centers sc ON r.service_center_id = sc.id
+        LEFT JOIN service_types st ON r.service_type_id = st.id
+        WHERE r.user_id = #{userId}
+        ORDER BY r.scheduled_date DESC
+    </select>
+
+    <!-- 정비소별 예약 목록 -->
+    <select id="findByServiceCenterId" parameterType="long" resultMap="ReservationDetailResultMap">
+        SELECT <include refid="reservationDetailColumns"/>
+        FROM reservations r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN vehicles v ON r.vehicle_id = v.id
+        LEFT JOIN vehicle_brands vb ON v.brand_id = vb.id
+        LEFT JOIN vehicle_models vm ON v.model_id = vm.id
+        LEFT JOIN service_centers sc ON r.service_center_id = sc.id
+        LEFT JOIN service_types st ON r.service_type_id = st.id
+        WHERE r.service_center_id = #{serviceCenterId}
+        ORDER BY r.scheduled_date ASC
+    </select>
+
+    <!-- 상태별 예약 목록 -->
+    <select id="findByStatus" parameterType="string" resultMap="ReservationDetailResultMap">
+        SELECT <include refid="reservationDetailColumns"/>
+        FROM reservations r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN vehicles v ON r.vehicle_id = v.id
+        LEFT JOIN vehicle_brands vb ON v.brand_id = vb.id
+        LEFT JOIN vehicle_models vm ON v.model_id = vm.id
+        LEFT JOIN service_centers sc ON r.service_center_id = sc.id
+        LEFT JOIN service_types st ON r.service_type_id = st.id
+        WHERE r.status = #{status}
+        ORDER BY r.scheduled_date ASC
+    </select>
+
+    <!-- 오늘 예약 목록 -->
+    <select id="findTodayReservations" resultMap="ReservationDetailResultMap">
+        SELECT <include refid="reservationDetailColumns"/>
+        FROM reservations r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN vehicles v ON r.vehicle_id = v.id
+        LEFT JOIN vehicle_brands vb ON v.brand_id = vb.id
+        LEFT JOIN vehicle_models vm ON v.model_id = vm.id
+        LEFT JOIN service_centers sc ON r.service_center_id = sc.id
+        LEFT JOIN service_types st ON r.service_type_id = st.id
+        WHERE DATE(r.scheduled_date) = CURRENT_DATE
+        ORDER BY r.scheduled_date ASC
+    </select>
+
+    <!-- 예약 통계 조회 -->
+    <select id="getReservationStatistics" resultType="com.carcare.domain.reservation.dto.ReservationDto$Statistics">
+        SELECT 
+            COUNT(*) as totalReservations,
+            COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pendingReservations,
+            COUNT(CASE WHEN status = 'CONFIRMED' THEN 1 END) as confirmedReservations,
+            COUNT(CASE WHEN status = 'IN_PROGRESS' THEN 1 END) as inProgressReservations,
+            COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completedReservations,
+            COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelledReservations,
+            COUNT(CASE WHEN DATE(scheduled_date) = CURRENT_DATE THEN 1 END) as todayReservations,
+            COUNT(CASE WHEN scheduled_date <![CDATA[ >= ]]> DATE_TRUNC('week', CURRENT_DATE) 
+                       AND scheduled_date <![CDATA[ < ]]> DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 week' THEN 1 END) as thisWeekReservations,
+            COUNT(CASE WHEN DATE_TRUNC('month', scheduled_date) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 END) as thisMonthReservations
+        FROM reservations
+        <if test="serviceCenterId != null">
+            WHERE service_center_id = #{serviceCenterId}
+        </if>
+    </select>
+
+    <!-- 정비소별 예약 통계 -->
+    <select id="getServiceCenterStatistics" parameterType="long" resultType="com.carcare.domain.reservation.dto.ReservationDto$Statistics">
+        SELECT 
+            COUNT(*) as totalReservations,
+            COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pendingReservations,
+            COUNT(CASE WHEN status = 'CONFIRMED' THEN 1 END) as confirmedReservations,
+            COUNT(CASE WHEN status = 'IN_PROGRESS' THEN 1 END) as inProgressReservations,
+            COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completedReservations,
+            COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelledReservations,
+            COUNT(CASE WHEN DATE(scheduled_date) = CURRENT_DATE THEN 1 END) as todayReservations,
+            COUNT(CASE WHEN scheduled_date <![CDATA[ >= ]]> DATE_TRUNC('week', CURRENT_DATE) 
+                       AND scheduled_date <![CDATA[ < ]]> DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 week' THEN 1 END) as thisWeekReservations,
+            COUNT(CASE WHEN DATE_TRUNC('month', scheduled_date) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 END) as thisMonthReservations
+        FROM reservations
+        WHERE service_center_id = #{serviceCenterId}
+    </select>
+
+    <!-- 중복 예약 체크 -->
+    <select id="checkDuplicateReservation" resultType="boolean">
+        SELECT EXISTS(
+            SELECT 1 FROM reservations 
+            WHERE service_center_id = #{serviceCenterId}
+            AND scheduled_date = #{scheduledDate}
+            AND status IN ('PENDING', 'CONFIRMED', 'IN_PROGRESS')
+            <if test="excludeId != null">
+                AND id != #{excludeId}
+            </if>
+        )
+    </select>
+
+    <!-- 예약 시간 충돌 체크 -->
+    <select id="checkTimeConflict" resultType="boolean">
+        SELECT EXISTS(
+            SELECT 1 FROM reservations 
+            WHERE service_center_id = #{serviceCenterId}
+            AND status IN ('PENDING', 'CONFIRMED', 'IN_PROGRESS')
+            AND (
+                (scheduled_date <![CDATA[ <= ]]> #{startTime} AND #{startTime} <![CDATA[ < ]]> scheduled_date + INTERVAL '1 minute' * estimated_duration)
+                OR (scheduled_date <![CDATA[ < ]]> #{endTime} AND #{endTime} <![CDATA[ <= ]]> scheduled_date + INTERVAL '1 minute' * estimated_duration)
+                OR (#{startTime} <![CDATA[ <= ]]> scheduled_date AND scheduled_date <![CDATA[ < ]]> #{endTime})
+            )
+            <if test="excludeId != null">
+                AND id != #{excludeId}
+            </if>
+        )
+    </select>
+
+</mapper> 

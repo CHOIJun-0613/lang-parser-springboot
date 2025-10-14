@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE configuration
+        PUBLIC "-//mybatis.org//DTD Config 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-config.dtd">
+
+<configuration>
+    <!-- 설정 -->
+    <settings>
+        <!-- 언더스코어를 카멜케이스로 자동 매핑 -->
+        <setting name="mapUnderscoreToCamelCase" value="true"/>
+        
+        <!-- 지연 로딩 사용 -->
+        <setting name="lazyLoadingEnabled" value="true"/>
+        
+        <!-- 적극적 지연 로딩 비활성화 -->
+        <setting name="aggressiveLazyLoading" value="false"/>
+        
+        <!-- 멀티 결과셋 허용 -->
+        <setting name="multipleResultSetsEnabled" value="true"/>
+        
+        <!-- 컬럼 라벨 사용 -->
+        <setting name="useColumnLabel" value="true"/>
+        
+        <!-- 생성된 키 사용 -->
+        <setting name="useGeneratedKeys" value="true"/>
+        
+        <!-- 자동 매핑 동작 설정 -->
+        <setting name="autoMappingBehavior" value="PARTIAL"/>
+        
+        <!-- 알 수 없는 컬럼 자동 매핑 시 동작 -->
+        <setting name="autoMappingUnknownColumnBehavior" value="WARNING"/>
+        
+        <!-- 기본 실행자 타입 -->
+        <setting name="defaultExecutorType" value="SIMPLE"/>
+        
+        <!-- 타임아웃 설정 (초) -->
+        <setting name="defaultStatementTimeout" value="25"/>
+        
+        <!-- 안전한 행 범위 체크 -->
+        <setting name="safeRowBoundsEnabled" value="false"/>
+        
+        <!-- 로컬 캐시 범위 -->
+        <setting name="localCacheScope" value="SESSION"/>
+        
+        <!-- NULL 값에 대한 JDBC 타입 -->
+        <setting name="jdbcTypeForNull" value="OTHER"/>
+        
+        <!-- 지연 로딩 트리거 메서드들 -->
+        <setting name="lazyLoadTriggerMethods" value="equals,clone,hashCode,toString"/>
+        
+        <!-- NULL 값에 대해 setter 호출 -->
+        <setting name="callSettersOnNulls" value="false"/>
+        
+        <!-- 빈 행에 대해 인스턴스 반환 -->
+        <setting name="returnInstanceForEmptyRow" value="false"/>
+        
+        <!-- 로그 구현체 -->
+        <setting name="logImpl" value="SLF4J"/>
+        
+        <!-- 설정 팩토리 활성화 -->
+        <setting name="configurationFactory" value=""/>
+        
+        <!-- 캐시 활성화 -->
+        <setting name="cacheEnabled" value="true"/>
+    </settings>
+
+    <!-- 타입 별칭 -->
+    <typeAliases>
+        <!-- 도메인 엔티티 패키지 자동 스캔 -->
+        <package name="com.carcare.domain.user.entity"/>
+        <package name="com.carcare.domain.vehicle.entity"/>
+        <package name="com.carcare.domain.service.entity"/>
+        <package name="com.carcare.domain.reservation.entity"/>
+        <package name="com.carcare.domain.quote.entity"/>
+        <package name="com.carcare.domain.payment.entity"/>
+        <package name="com.carcare.domain.review.entity"/>
+        <package name="com.carcare.domain.notification.entity"/>
+    </typeAliases>
+
+    <!-- 타입 핸들러 -->
+    <!-- <typeHandlers>
+        커스텀 타입 핸들러가 필요한 경우 여기에 추가
+    </typeHandlers> -->
+
+    <!-- 플러그인 -->
+    <!-- <plugins>
+        페이징 플러그인이나 기타 플러그인이 필요한 경우 여기에 추가
+    </plugins> -->
+
+    <!-- 환경 설정 및 매퍼는 Spring Boot에서 자동 관리됨 -->
+    <!-- <environments default="development">
+        <environment id="development">
+            <transactionManager type="MANAGED"/>
+            <dataSource type="POOLED">
+                <property name="driver" value="org.postgresql.Driver"/>
+                <property name="url" value="jdbc:postgresql://localhost:5432/car_center"/>
+                <property name="username" value="carcare_user"/>
+                <property name="password" value="carcare_password"/>
+            </dataSource>
+        </environment>
+    </environments> -->
+
+    <!-- <mappers>
+        mapper-locations 설정으로 자동 스캔됨
+    </mappers> -->
+
+</configuration> 

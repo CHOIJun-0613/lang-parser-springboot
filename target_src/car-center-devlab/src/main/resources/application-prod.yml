@@ -1,0 +1,171 @@
+# Production Environment Configuration
+# PostgreSQL 데이터베이스 + Flyway 비활성화 (DBeaver로 수동 DB 생성)
+
+spring:
+  # PostgreSQL 데이터소스 설정 (현재 dev와 동일, 향후 변경 예정)
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://10.224.0.6:5432/carcare_dev
+    username: dba01
+    password: "SKax2025!"
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 10
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+      leak-detection-threshold: 60000
+
+  # JPA 설정 (비활성화, MyBatis 사용)
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+  # Flyway 마이그레이션 설정 (비활성화 - 수동 DB 생성)
+  flyway:
+    enabled: false
+
+  # Redis 설정 (비활성화)
+  data:
+    redis:
+      enabled: ${REDIS_ENABLED:false}
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
+
+  # JSON 설정 (Prod 환경)
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+    deserialization:
+      fail-on-unknown-properties: false
+      accept-single-value-as-array: true
+    time-zone: Asia/Seoul
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+    default-property-inclusion: NON_NULL
+
+  # 이메일 설정 (비활성화)
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:disabled}
+    password: ${MAIL_PASSWORD:disabled}
+    from: ${MAIL_FROM:noreply@carcare.com}
+    enabled: ${MAIL_ENABLED:false}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          ssl:
+            trust: smtp.gmail.com
+
+# Swagger/OpenAPI 설정 (Prod 환경)
+springdoc:
+  swagger-ui:
+    use-root-path: true
+    disable-swagger-default-url: true
+
+# MyBatis 설정 (Prod 환경)
+mybatis:
+  mapper-locations: classpath:mybatis/mapper/**/*.xml
+  type-aliases-package: com.carcare.domain.*.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: true
+    lazy-loading-enabled: true
+    use-generated-keys: true
+    default-executor-type: simple
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# 로깅 설정 (Production 환경)
+logging:
+  level:
+    root: INFO
+    com.carcare: INFO
+    org.springframework.security: WARN
+    org.mybatis: WARN
+    com.zaxxer.hikari: WARN
+    org.flywaydb: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/car-center-prod.log
+    max-size: 200MB
+    max-history: 60
+
+# 운영 서버용 설정 (최소한의 엔드포인트만 노출)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info"
+  endpoint:
+    health:
+      show-details: never
+  info:
+    env:
+      enabled: false
+
+# 애플리케이션 정보
+app:
+  environment: prod
+  debug: false
+  cors:
+    allowed-origins:
+      - "https://carcare.com"
+      - "https://www.carcare.com"
+      - "https://api.carcare.com"
+      - "http://backend.carcare.com"
+      - "https://backend.carcare.com"
+  # JWT 설정 (Prod 환경)
+  jwt:
+    secret: ${JWT_SECRET:Y2FyY2FyZS1wcm9kLWp3dC1zZWNyZXQta2V5LWZvci1oYXNoLXNpZ25pbmctYW5kLXZlcmlmaWNhdGlvbi0yMDI0Cg==}
+    access-token-expiration: 1800000  # 30분 (운영용)
+    refresh-token-expiration: 604800000  # 7일
+    issuer: carcare-prod-api
+    audience: carcare-prod-client
+
+# 토스페이먼츠 설정 (비활성화)
+toss:
+  payments:
+    enabled: ${TOSS_ENABLED:false}
+    secret-key: ${TOSS_SECRET_KEY:disabled}
+    client-key: ${TOSS_CLIENT_KEY:disabled}
+    base-url: https://api.tosspayments.com
+    success-url: ${TOSS_SUCCESS_URL:https://api.carcare.com/api/v1/payments/success}
+    fail-url: ${TOSS_FAIL_URL:https://api.carcare.com/api/v1/payments/fail}
+    webhook-secret: ${TOSS_WEBHOOK_SECRET:disabled}
+    timeout: 30
+    retry-count: 3
+    test-mode: ${TOSS_TEST_MODE:true}
+
+# 네이버 클라우드 플랫폼 SMS 설정 (비활성화)
+ncp:
+  sms:
+    enabled: ${NCP_SMS_ENABLED:false}
+    access-key: ${NCP_ACCESS_KEY:disabled}
+    secret-key: ${NCP_SECRET_KEY:disabled}
+    service-id: ${NCP_SMS_SERVICE_ID:disabled}
+    from-number: ${NCP_SMS_FROM_NUMBER:disabled}
+    api-url: https://sens.apigw.ntruss.com
+
+# 보안 강화 설정
+server:
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false 

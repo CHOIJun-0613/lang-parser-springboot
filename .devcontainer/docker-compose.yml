@@ -21,7 +21,7 @@ services:
       neo4j:
         condition: service_healthy
 
-    # 루트의 .env를 읽어 환경변수 주입 (CSAUSER_PASSWORD 포함)
+    # 루트의 .env를 읽어 환경변수 주입 (NEO4J_PASSWORD 포함)
     env_file:
       - ../.env
 
@@ -29,7 +29,7 @@ services:
       # Python 앱에서 사용할 Neo4j 접속 정보
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USERNAME: csauser
-      NEO4J_PASSWORD: ${CSAUSER_PASSWORD}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       PYTHONUNBUFFERED: "1"
       # (선택) PlantUML/Mermaid CLI 경로 사용 시
       # PLANTUML_JAR_PATH: /workspace/lang-java-springboot/libs/plantuml.jar
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "7474:7474"  # HTTP(Browser)
+      - "7478:7478"  # HTTP(Browser)
       - "7687:7687"  # Bolt
 
     environment:

@@ -1,0 +1,124 @@
+# Local Development Environment Configuration
+# H2 인메모리 데이터베이스 + Flyway 마이그레이션
+
+# 서버 설정 (Local 환경)
+server:
+  forward-headers-strategy: framework
+
+spring:
+  # H2 데이터소스 설정 (파일 기반, PostgreSQL 호환 모드)
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:file:./carcare_local;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;CASE_INSENSITIVE_IDENTIFIERS=TRUE;NON_KEYWORDS=VALUE,YEAR
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+  
+  # SQL 스크립트 초기화 설정 (migration/h2 폴더의 H2 호환 파일 사용)
+  sql:
+    init:
+      mode: always
+      schema-locations: 
+        - classpath:db/migration/h2/db_schema_setup_H2.sql
+      data-locations: 
+        - classpath:db/migration/h2/initial_data_H2.sql
+      separator: ";"
+      continue-on-error: false
+      encoding: UTF-8
+
+  # H2 Console 활성화 (개발용)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: true
+
+  # JPA 설정 (비활성화, MyBatis 사용)
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+  # Flyway 마이그레이션 설정 (SQL init 사용으로 비활성화)
+  flyway:
+    enabled: false
+    # locations: classpath:db/migration/h2
+    # baseline-on-migrate: true
+    # validate-on-migrate: false
+    # clean-disabled: false
+
+  # Redis 설정 비활성화 (Local 환경에서는 Redis 미사용)
+  # data:
+  #   redis:
+  #     host: localhost
+  #     port: 6379
+  #     password: 
+  #     timeout: 2000ms
+  #     lettuce:
+  #       pool:
+  #         max-active: 8
+  #         max-idle: 8
+  #         min-idle: 1
+  #         max-wait: -1ms
+
+# Swagger/OpenAPI 설정 (Local 환경)
+springdoc:
+  swagger-ui:
+    use-root-path: true
+    disable-swagger-default-url: true
+
+# MyBatis 설정 (Local 환경)
+mybatis:
+  mapper-locations: classpath:mybatis/mapper/**/*.xml
+  type-aliases-package: com.carcare.domain.*.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: true
+    lazy-loading-enabled: true
+    use-generated-keys: true
+    default-executor-type: simple
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# 로깅 설정 (Local 환경)
+logging:
+  level:
+    com.carcare: DEBUG
+    org.springframework.security: DEBUG
+    org.mybatis: DEBUG
+    com.zaxxer.hikari: DEBUG
+    org.springframework.jdbc.datasource.init: DEBUG
+    org.springframework.boot.sql.init: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# 개발용 설정
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+  info:
+    env:
+      enabled: true
+
+# 애플리케이션 정보
+app:
+  environment: local
+  debug: true
+  cors:
+    allowed-origins:
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+      - "http://127.0.0.1:3000"
+      - "http://127.0.0.1:8080"
+      - "*"  # 로컬 개발용 

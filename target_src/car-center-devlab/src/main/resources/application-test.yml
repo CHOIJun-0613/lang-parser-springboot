@@ -1,0 +1,99 @@
+# Test Environment Configuration
+# H2 인메모리 데이터베이스 (테스트용)
+
+# 서버 설정 (Test 환경)
+server:
+  forward-headers-strategy: framework
+
+spring:
+  # H2 테스트 데이터소스 설정
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:carcare_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+
+  # H2 Console 비활성화 (테스트용)
+  h2:
+    console:
+      enabled: false
+
+  # JPA 설정 (비활성화, MyBatis 사용)
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+  # Flyway 마이그레이션 설정 (테스트용 활성화)
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: false
+    clean-disabled: false
+    repair: false
+
+  # Redis 설정 (테스트용 - 임베디드)
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: 
+      timeout: 1000ms
+
+# Swagger/OpenAPI 설정 (Test 환경)
+springdoc:
+  swagger-ui:
+    use-root-path: true
+    disable-swagger-default-url: true
+
+# MyBatis 설정 (Test 환경)
+mybatis:
+  mapper-locations: classpath:mybatis/mapper/**/*.xml
+  type-aliases-package: com.carcare.domain.*.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false
+    lazy-loading-enabled: false
+    use-generated-keys: true
+    default-executor-type: simple
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# 로깅 설정 (Test 환경)
+logging:
+  level:
+    com.carcare: DEBUG
+    org.springframework.security: WARN
+    org.mybatis: WARN
+    com.zaxxer.hikari: WARN
+    org.flywaydb: WARN
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# 테스트용 설정
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health"
+  endpoint:
+    health:
+      show-details: never
+
+# 애플리케이션 정보
+app:
+  environment: test
+  debug: false
+  cors:
+    allowed-origins:
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+      - "http://127.0.0.1:3000"
+      - "http://127.0.0.1:8080"
+      - "*"  # 테스트용 

@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.service.repository.ServiceCenterRepository">
+
+    <!-- 결과 매핑 -->
+    <resultMap id="ServiceCenterResultMap" type="com.carcare.domain.service.entity.ServiceCenter">
+        <id property="id" column="id"/>
+        <result property="name" column="name"/>
+        <result property="description" column="description"/>
+        <result property="address" column="address"/>
+        <result property="addressDetail" column="address_detail"/>
+        <result property="phoneNumber" column="phone_number"/>
+        <result property="email" column="email"/>
+        <result property="website" column="website"/>
+        <result property="businessNumber" column="business_number"/>
+        <result property="ownerName" column="owner_name"/>
+        <result property="latitude" column="latitude"/>
+        <result property="longitude" column="longitude"/>
+        <result property="averageRating" column="average_rating"/>
+        <result property="reviewCount" column="review_count"/>
+        <result property="verificationStatus" column="verification_status" javaType="com.carcare.domain.service.entity.ServiceCenter$VerificationStatus" jdbcType="VARCHAR"/>
+        <result property="verificationDate" column="verification_date"/>
+        <result property="isActive" column="is_active"/>
+        <result property="isOperating" column="is_operating"/>
+        <result property="specializedServices" column="specialized_services"/>
+        <result property="facilities" column="facilities"/>
+        <result property="specialNotes" column="special_notes"/>
+        <result property="imageUrl" column="image_url"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="createdBy" column="created_by"/>
+        <result property="updatedBy" column="updated_by"/>
+    </resultMap>
+
+    <!-- SQL 조각 -->
+    <sql id="serviceCenterColumns">
+        sc.id, sc.name, sc.description, sc.address, sc.address_detail, sc.phone_number, sc.email, sc.website,
+        sc.business_number, sc.owner_name, sc.latitude, sc.longitude,
+        sc.average_rating, sc.review_count, sc.verification_status, sc.verification_date,
+        sc.is_active, sc.is_operating, sc.specialized_services, sc.facilities, sc.special_notes, sc.image_url,
+        sc.created_at, sc.updated_at, sc.created_by, sc.updated_by
+    </sql>
+
+    <!-- 정비소 등록 -->
+    <insert id="insertServiceCenter" parameterType="com.carcare.domain.service.entity.ServiceCenter" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO service_centers (
+            name, description, address, address_detail, phone_number, email, website,
+            business_number, owner_name, latitude, longitude,
+            average_rating, review_count, verification_status, verification_date,
+            is_active, is_operating, specialized_services, facilities, special_notes, image_url,
+            created_at, updated_at, created_by, updated_by
+        )
+        VALUES (
+            #{name}, #{description}, #{address}, #{addressDetail}, #{phoneNumber}, #{email}, #{website},
+            #{businessNumber}, #{ownerName}, #{latitude}, #{longitude},
+            COALESCE(#{averageRating}, 0.0), COALESCE(#{reviewCount}, 0), 
+            COALESCE(#{verificationStatus}, 'PENDING'), #{verificationDate},
+            COALESCE(#{isActive}, true), COALESCE(#{isOperating}, false), #{specializedServices}, #{facilities}, #{specialNotes}, #{imageUrl},
+            COALESCE(#{createdAt}, CURRENT_TIMESTAMP), COALESCE(#{updatedAt}, CURRENT_TIMESTAMP), 
+            #{createdBy}, #{updatedBy}
+        )
+    </insert>
+
+    <!-- 정비소 정보 수정 -->
+    <update id="updateServiceCenter" parameterType="com.carcare.domain.service.entity.ServiceCenter">
+        UPDATE service_centers
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="address != null">address = #{address},</if>
+            <if test="addressDetail != null">address_detail = #{addressDetail},</if>
+            <if test="phoneNumber != null">phone_number = #{phoneNumber},</if>
+            <if test="email != null">email = #{email},</if>
+            <if test="website != null">website = #{website},</if>
+            <if test="businessNumber != null">business_number = #{businessNumber},</if>
+            <if test="ownerName != null">owner_name = #{ownerName},</if>
+            <if test="latitude != null">latitude = #{latitude},</if>
+            <if test="longitude != null">longitude = #{longitude},</if>
+            <if test="averageRating != null">average_rating = #{averageRating},</if>
+            <if test="reviewCount != null">review_count = #{reviewCount},</if>
+            <if test="verificationStatus != null">verification_status = #{verificationStatus},</if>
+            <if test="verificationDate != null">verification_date = #{verificationDate},</if>
+            <if test="isActive != null">is_active = #{isActive},</if>
+            <if test="isOperating != null">is_operating = #{isOperating},</if>
+            <if test="specializedServices != null">specialized_services = #{specializedServices},</if>
+            <if test="facilities != null">facilities = #{facilities},</if>
+            <if test="specialNotes != null">special_notes = #{specialNotes},</if>
+            <if test="imageUrl != null">image_url = #{imageUrl},</if>
+            <if test="updatedBy != null">updated_by = #{updatedBy},</if>
+            updated_at = CURRENT_TIMESTAMP
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 정비소 삭제 (소프트 삭제) -->
+    <update id="deleteServiceCenter">
+        UPDATE service_centers
+        SET is_active = false, updated_at = CURRENT_TIMESTAMP, updated_by = #{updatedBy}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 정비소 완전 삭제 (하드 삭제) -->
+    <delete id="deleteServiceCenterCompletely">
+        DELETE FROM service_centers WHERE id = #{id}
+    </delete>
+
+    <!-- ID로 정비소 조회 -->
+    <select id="findById" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.id = #{id}
+    </select>
+
+    <!-- 사업자 등록번호로 정비소 조회 -->
+    <select id="findByBusinessNumber" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.business_number = #{businessNumber}
+    </select>
+
+    <!-- 정비소명으로 검색 -->
+    <select id="findByNameContaining" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.name LIKE CONCAT('%', #{keyword}, '%') AND sc.is_active = true
+        ORDER BY sc.average_rating DESC
+    </select>
+
+    <!-- 모든 활성 정비소 목록 조회 -->
+    <select id="findAllActive" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.is_active = true
+        ORDER BY sc.average_rating DESC, sc.created_at DESC
+    </select>
+
+    <!-- 모든 정비소 목록 조회 (관리자용) -->
+    <select id="findAll" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        ORDER BY sc.created_at DESC
+    </select>
+
+    <!-- 지역별 정비소 검색 -->
+    <select id="findByAddress" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE (sc.address LIKE CONCAT('%', #{keyword}, '%') OR sc.address_detail LIKE CONCAT('%', #{keyword}, '%'))
+          AND sc.is_active = true
+        ORDER BY sc.average_rating DESC
+    </select>
+
+    <!-- 위치 기반 정비소 검색 (반경 내) -->
+    <select id="findByLocation" resultMap="ServiceCenterResultMap">
+        SELECT * FROM (
+            SELECT <include refid="serviceCenterColumns"/>,
+                   (6371 * acos(cos(radians(#{latitude})) * cos(radians(sc.latitude)) 
+                    * cos(radians(sc.longitude) - radians(#{longitude})) 
+                    + sin(radians(#{latitude})) * sin(radians(sc.latitude)))) AS distance
+            FROM service_centers sc
+            WHERE sc.is_active = true
+        ) sc_with_distance
+        WHERE distance <![CDATA[ <= ]]> #{radiusKm}
+        ORDER BY distance ASC, average_rating DESC
+    </select>
+
+    <!-- 평점 범위별 정비소 검색 -->
+    <select id="findByRatingRange" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.average_rating BETWEEN #{minRating} AND #{maxRating}
+          AND sc.is_active = true
+        ORDER BY sc.average_rating DESC
+    </select>
+
+    <!-- 복합 조건 정비소 검색 (페이징 포함) -->
+    <select id="searchServiceCenters" resultMap="ServiceCenterResultMap">
+        <choose>
+            <when test="criteria.latitude != null and criteria.longitude != null and criteria.radiusKm != null">
+                SELECT * FROM (
+                    SELECT <include refid="serviceCenterColumns"/>
+                    , (6371 * acos(cos(radians(#{criteria.latitude})) * cos(radians(sc.latitude)) 
+                       * cos(radians(sc.longitude) - radians(#{criteria.longitude})) 
+                       + sin(radians(#{criteria.latitude})) * sin(radians(sc.latitude)))) AS distance
+                    FROM service_centers sc
+                    <where>
+                        <if test="criteria.keyword != null and criteria.keyword != ''">
+                            AND (sc.name LIKE CONCAT('%', #{criteria.keyword}, '%')
+                                 OR sc.address LIKE CONCAT('%', #{criteria.keyword}, '%')
+                                 OR sc.description LIKE CONCAT('%', #{criteria.keyword}, '%'))
+                        </if>
+                        <if test="criteria.address != null and criteria.address != ''">
+                            AND (sc.address LIKE CONCAT('%', #{criteria.address}, '%')
+                                 OR sc.address_detail LIKE CONCAT('%', #{criteria.address}, '%'))
+                        </if>
+                        <if test="criteria.minRating != null">
+                            <![CDATA[ AND sc.average_rating >= #{criteria.minRating} ]]>
+                        </if>
+                        <if test="criteria.maxRating != null">
+                            <![CDATA[ AND sc.average_rating <= #{criteria.maxRating} ]]>
+                        </if>
+                        <if test="criteria.verificationStatus != null">
+                            AND sc.verification_status = #{criteria.verificationStatus}
+                        </if>
+                        <if test="criteria.isActive != null">
+                            AND sc.is_active = #{criteria.isActive}
+                        </if>
+                        <if test="criteria.isOperating != null">
+                            AND sc.is_operating = #{criteria.isOperating}
+                        </if>
+                    </where>
+                ) sc_with_distance
+                WHERE distance <![CDATA[ <= ]]> #{criteria.radiusKm}
+            </when>
+            <otherwise>
+                SELECT <include refid="serviceCenterColumns"/>
+                FROM service_centers sc
+                <where>
+                    <if test="criteria.keyword != null and criteria.keyword != ''">
+                        AND (sc.name LIKE CONCAT('%', #{criteria.keyword}, '%')
+                             OR sc.address LIKE CONCAT('%', #{criteria.keyword}, '%')
+                             OR sc.description LIKE CONCAT('%', #{criteria.keyword}, '%'))
+                    </if>
+                    <if test="criteria.address != null and criteria.address != ''">
+                        AND (sc.address LIKE CONCAT('%', #{criteria.address}, '%')
+                             OR sc.address_detail LIKE CONCAT('%', #{criteria.address}, '%'))
+                    </if>
+                    <if test="criteria.minRating != null">
+                        <![CDATA[ AND sc.average_rating >= #{criteria.minRating} ]]>
+                    </if>
+                    <if test="criteria.maxRating != null">
+                        <![CDATA[ AND sc.average_rating <= #{criteria.maxRating} ]]>
+                    </if>
+                    <if test="criteria.verificationStatus != null">
+                        AND sc.verification_status = #{criteria.verificationStatus}
+                    </if>
+                    <if test="criteria.isActive != null">
+                        AND sc.is_active = #{criteria.isActive}
+                    </if>
+                    <if test="criteria.isOperating != null">
+                        AND sc.is_operating = #{criteria.isOperating}
+                    </if>
+                </where>
+            </otherwise>
+        </choose>
+        ORDER BY 
+        <choose>
+            <when test="criteria.sortBy == 'rating' and criteria.sortDirection == 'ASC'">average_rating ASC</when>
+            <when test="criteria.sortBy == 'rating'">average_rating DESC</when>
+            <when test="criteria.sortBy == 'distance' and criteria.latitude != null and criteria.longitude != null and criteria.sortDirection == 'DESC'">distance DESC</when>
+            <when test="criteria.sortBy == 'distance' and criteria.latitude != null and criteria.longitude != null">distance ASC</when>
+            <when test="criteria.sortBy == 'name' and criteria.sortDirection == 'DESC'">name DESC</when>
+            <when test="criteria.sortBy == 'name'">name ASC</when>
+            <when test="criteria.sortBy == 'createdAt' and criteria.sortDirection == 'ASC'">created_at ASC</when>
+            <otherwise>average_rating DESC, created_at DESC</otherwise>
+        </choose>
+        <if test="criteria.size > 0">
+            LIMIT #{criteria.size} OFFSET #{criteria.offset}
+        </if>
+    </select>
+
+    <!-- 검색 결과 총 개수 -->
+    <select id="countSearchResults" resultType="int">
+        SELECT COUNT(*)
+        FROM service_centers sc
+        <where>
+            <if test="criteria.keyword != null and criteria.keyword != ''">
+                AND (sc.name LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR sc.address LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR sc.description LIKE CONCAT('%', #{criteria.keyword}, '%'))
+            </if>
+            <if test="criteria.address != null and criteria.address != ''">
+                AND (sc.address LIKE CONCAT('%', #{criteria.address}, '%')
+                     OR sc.address_detail LIKE CONCAT('%', #{criteria.address}, '%'))
+            </if>
+            <if test="criteria.minRating != null">
+                <![CDATA[ AND sc.average_rating >= #{criteria.minRating} ]]>
+            </if>
+            <if test="criteria.maxRating != null">
+                <![CDATA[ AND sc.average_rating <= #{criteria.maxRating} ]]>
+            </if>
+            <if test="criteria.verificationStatus != null">
+                AND sc.verification_status = #{criteria.verificationStatus}
+            </if>
+            <if test="criteria.isActive != null">
+                AND sc.is_active = #{criteria.isActive}
+            </if>
+            <if test="criteria.isOperating != null">
+                AND sc.is_operating = #{criteria.isOperating}
+            </if>
+        </where>
+    </select>
+
+    <!-- 인증 상태별 정비소 조회 -->
+    <select id="findByVerificationStatus" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.verification_status = #{status}
+        ORDER BY sc.created_at DESC
+    </select>
+
+    <!-- 현재 운영 중인 정비소 조회 -->
+    <select id="findCurrentlyOperating" resultMap="ServiceCenterResultMap">
+        SELECT <include refid="serviceCenterColumns"/>
+        FROM service_centers sc
+        WHERE sc.is_operating = true AND sc.is_active = true
+        ORDER BY sc.average_rating DESC
+    </select>
+
+    <!-- 정비소 평점 업데이트 -->
+    <update id="updateRating">
+        UPDATE service_centers
+        SET average_rating = #{averageRating}, review_count = #{reviewCount}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 정비소 운영 상태 업데이트 -->
+    <update id="updateOperatingStatus">
+        UPDATE service_centers
+        SET is_operating = #{isOperating}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 정비소 인증 상태 업데이트 -->
+    <update id="updateVerificationStatus">
+        UPDATE service_centers
+        SET verification_status = #{status}, verification_date = #{verificationDate}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 사업자 등록번호 중복 검사 -->
+    <select id="existsByBusinessNumber" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM service_centers
+        WHERE business_number = #{businessNumber}
+    </select>
+
+    <!-- 사업자 등록번호 중복 검사 (본인 제외) -->
+    <select id="existsByBusinessNumberAndNotId" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM service_centers
+        WHERE business_number = #{businessNumber} AND id != #{id}
+    </select>
+
+    <!-- 전화번호 중복 검사 -->
+    <select id="existsByPhoneNumber" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM service_centers
+        WHERE phone_number = #{phoneNumber}
+    </select>
+
+    <!-- 총 정비소 수 조회 -->
+    <select id="countAll" resultType="int">
+        SELECT COUNT(*) FROM service_centers
+    </select>
+
+    <!-- 활성 정비소 수 조회 -->
+    <select id="countActive" resultType="int">
+        SELECT COUNT(*) FROM service_centers WHERE is_active = true
+    </select>
+
+</mapper> 

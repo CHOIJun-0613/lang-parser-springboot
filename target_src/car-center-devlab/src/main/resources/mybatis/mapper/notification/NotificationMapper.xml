@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.notification.repository.NotificationRepository">
+
+    <resultMap id="NotificationResultMap" type="com.carcare.domain.notification.entity.Notification">
+        <id property="id" column="id"/>
+        <result property="notificationUuid" column="notification_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="type" column="type" typeHandler="org.apache.ibatis.type.EnumTypeHandler"/>
+        <result property="title" column="title"/>
+        <result property="message" column="message"/>
+        <result property="isRead" column="is_read"/>
+        <result property="relatedEntityType" column="related_entity_type"/>
+        <result property="relatedEntityId" column="related_entity_id"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <!-- 알림 생성 -->
+    <insert id="insert" parameterType="com.carcare.domain.notification.entity.Notification" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO notifications (
+            notification_uuid, user_id, type, title, message, 
+            is_read, related_entity_type, related_entity_id, created_at
+        ) VALUES (
+            #{notificationUuid}, #{userId}, #{type}, #{title}, #{message},
+            #{isRead}, #{relatedEntityType}, #{relatedEntityId}, #{createdAt}
+        )
+    </insert>
+
+    <!-- ID로 알림 조회 -->
+    <select id="findById" parameterType="long" resultMap="NotificationResultMap">
+        SELECT * FROM notifications WHERE id = #{id}
+    </select>
+
+    <!-- UUID로 알림 조회 -->
+    <select id="findByNotificationUuid" parameterType="string" resultMap="NotificationResultMap">
+        SELECT * FROM notifications WHERE notification_uuid = #{notificationUuid}
+    </select>
+
+    <!-- 사용자별 알림 목록 조회 -->
+    <select id="findByUserId" resultMap="NotificationResultMap">
+        SELECT * FROM notifications 
+        WHERE user_id = #{userId}
+        ORDER BY created_at DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 사용자별 읽지 않은 알림 개수 조회 -->
+    <select id="countUnreadByUserId" parameterType="long" resultType="int">
+        SELECT COUNT(*) FROM notifications 
+        WHERE user_id = #{userId} AND is_read = false
+    </select>
+
+    <!-- 알림 읽음 처리 -->
+    <update id="markAsRead" parameterType="long">
+        UPDATE notifications SET is_read = true WHERE id = #{id}
+    </update>
+
+    <!-- 사용자의 모든 알림 읽음 처리 -->
+    <update id="markAllAsReadByUserId" parameterType="long">
+        UPDATE notifications SET is_read = true WHERE user_id = #{userId}
+    </update>
+
+    <!-- 알림 삭제 -->
+    <delete id="deleteById" parameterType="long">
+        DELETE FROM notifications WHERE id = #{id}
+    </delete>
+
+    <!-- 특정 기간 이전의 알림 삭제 -->
+    <delete id="deleteOldNotifications">
+        DELETE FROM notifications WHERE created_at &lt; #{beforeDate}
+    </delete>
+
+    <!-- 발송 대기 중인 알림 조회 (스케줄러용) -->
+    <select id="findPendingNotifications" resultMap="NotificationResultMap">
+        SELECT * FROM notifications 
+        WHERE created_at &lt;= NOW()
+        ORDER BY created_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 관련 엔티티별 알림 조회 -->
+    <select id="findByRelatedEntity" resultMap="NotificationResultMap">
+        SELECT * FROM notifications 
+        WHERE related_entity_type = #{entityType} 
+          AND related_entity_id = #{entityId}
+        ORDER BY created_at DESC
+    </select>
+
+</mapper> 

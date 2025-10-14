@@ -1,0 +1,157 @@
+# Development Environment Configuration
+# PostgreSQL 데이터베이스 + Flyway 비활성화 (DBeaver로 수동 DB 생성)
+
+# 서버 설정 (Dev 환경)
+server:
+  forward-headers-strategy: framework
+
+spring:
+  # PostgreSQL 데이터소스 설정
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://skax-dev-db1.postgres.database.azure.com:5432/carcare_dev
+    username: dba01
+    password: "SKax2025!"
+    hikari:
+      maximum-pool-size: 15
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+      leak-detection-threshold: 60000
+
+  # JPA 설정 (비활성화, MyBatis 사용)
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+  # Flyway 마이그레이션 설정 (비활성화 - 수동 DB 생성)
+  flyway:
+    enabled: false
+
+  # Redis 설정 (Dev 환경용)
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.56.40}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 10
+          min-idle: 1
+          max-wait: -1ms
+
+  # JSON 설정 (Dev 환경)
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+    deserialization:
+      fail-on-unknown-properties: false
+      accept-single-value-as-array: true
+    time-zone: Asia/Seoul
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+    default-property-inclusion: NON_NULL
+
+  # 이메일 설정 (Dev 환경)
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from: ${MAIL_FROM:noreply@carcare.com}
+    enabled: ${MAIL_ENABLED:false}  # 개발 환경에서는 기본적으로 비활성화
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          ssl:
+            trust: smtp.gmail.com
+
+# Swagger/OpenAPI 설정 (Dev 환경)
+springdoc:
+  swagger-ui:
+    use-root-path: true
+    disable-swagger-default-url: true
+
+# MyBatis 설정은 MyBatisConfig 클래스에서 처리
+
+# 로깅 설정 (Dev 환경)
+logging:
+  level:
+    com.carcare: DEBUG
+    org.springframework.security: INFO
+    org.mybatis: DEBUG
+    com.zaxxer.hikari: INFO
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/car-center-dev.log
+    max-size: 100MB
+    max-history: 30
+
+# 개발 서버용 설정
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,metrics,prometheus"
+  endpoint:
+    health:
+      show-details: when-authorized
+  info:
+    env:
+      enabled: true
+
+# 애플리케이션 정보
+app:
+  environment: dev
+  debug: true
+  cors:
+    allowed-origins:
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+      - "http://192.168.56.40:3000"
+      - "http://dev-frontend.carcare.com"
+      - "http://backend.carcare.com"
+      - "https://backend.carcare.com"
+      - "*"  # 개발용 와일드카드
+  # JWT 설정 (Dev 환경)
+  jwt:
+    secret: ${JWT_SECRET:Y2FyY2FyZS1kZXYtand0LXNlY3JldC1rZXktZm9yLWhhc2gtc2lnbmluZy1hbmQtdmVyaWZpY2F0aW9uLTIwMjQK}
+    access-token-expiration: 3600000  # 1시간 (개발용)
+    refresh-token-expiration: 604800000  # 7일
+    issuer: carcare-dev-api
+    audience: carcare-dev-client
+
+# 토스페이먼츠 설정 (Dev 환경)
+toss:
+  payments:
+    # 토스페이먼츠 공식 테스트 키 (개발 환경용)
+    secret-key: ${TOSS_SECRET_KEY:test_sk_zXLkKEypNArWmo50nX3lmeaxYG5R}
+    client-key: ${TOSS_CLIENT_KEY:test_ck_DnyRpQWGrN0xkzn1abj4GLoRZKM}
+    base-url: https://api.tosspayments.com
+    success-url: ${TOSS_SUCCESS_URL:http://localhost:8080/api/v1/payments/success}
+    fail-url: ${TOSS_FAIL_URL:http://localhost:8080/api/v1/payments/fail}
+    webhook-secret: ${TOSS_WEBHOOK_SECRET:test_webhook_secret_for_dev}
+    timeout: 30
+    retry-count: 3
+    test-mode: true
+
+# 네이버 클라우드 플랫폼 SMS 설정 (Dev 환경)
+ncp:
+  sms:
+    # 실제 운영시에는 환경변수로 관리
+    access-key: ${NCP_ACCESS_KEY:}
+    secret-key: ${NCP_SECRET_KEY:}
+    service-id: ${NCP_SMS_SERVICE_ID:}
+    from-number: ${NCP_SMS_FROM_NUMBER:}
+    api-url: https://sens.apigw.ntruss.com
+    enabled: ${NCP_SMS_ENABLED:false}  # 개발 환경에서는 기본적으로 비활성화 

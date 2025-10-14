@@ -1,0 +1,89 @@
+# Test Environment Configuration
+# H2 인메모리 데이터베이스 + Flyway 마이그레이션
+
+spring:
+  # H2 데이터소스 설정 (테스트용)
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:carcare_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+  
+  # 스키마 초기화 비활성화 (Flyway 사용)
+  sql:
+    init:
+      mode: never
+
+  # H2 Console 비활성화 (테스트 환경)
+  h2:
+    console:
+      enabled: false
+
+  # JPA 설정 (비활성화, MyBatis 사용)
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+  # Flyway 마이그레이션 설정 (H2용 활성화)
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/h2
+    baseline-on-migrate: true
+    validate-on-migrate: false
+    clean-disabled: false
+
+  # Redis 설정 비활성화 (테스트 환경)
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+# MyBatis 설정 (테스트 환경)
+mybatis:
+  mapper-locations: classpath:mybatis/mapper/**/*.xml
+  type-aliases-package: com.carcare.domain.*.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false
+    lazy-loading-enabled: false
+
+# 로깅 설정 (테스트 환경)
+logging:
+  level:
+    com.carcare: INFO
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    org.mybatis: DEBUG
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# JWT 설정 (테스트용)
+jwt:
+  secret: dGVzdC1zZWNyZXQta2V5LWZvci1jYXItY2VudGVyLWFwcGxpY2F0aW9uLXRlc3Q=
+  expiration: 86400000  # 24시간
+
+# SMS 설정 (테스트용 - 비활성화)
+sms:
+  api:
+    key: test-api-key
+    secret: test-api-secret
+    from: test-from-number
+  enabled: false
+
+# 결제 설정 (테스트용)
+payment:
+  toss:
+    client-key: test_client_key
+    secret-key: test_secret_key
+    success-url: http://localhost:8080/payment/success
+    fail-url: http://localhost:8080/payment/fail
+    webhook-secret: test_webhook_secret
+  enabled: false 

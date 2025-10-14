@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.vehicle.repository.VehicleRepository">
+
+    <!-- 결과 매핑 -->
+    <resultMap id="VehicleResultMap" type="com.carcare.domain.vehicle.entity.Vehicle">
+        <id property="id" column="id"/>
+        <result property="vehicleUuid" column="vehicle_uuid" javaType="java.util.UUID" jdbcType="VARCHAR"/>
+        <result property="userId" column="user_id"/>
+        <result property="make" column="make"/>
+        <result property="model" column="model"/>
+        <result property="year" column="year"/>
+        <result property="licensePlate" column="license_plate"/>
+        <result property="vin" column="vin"/>
+        <result property="engineType" column="engine_type"/>
+        <result property="fuelType" column="fuel_type" javaType="com.carcare.domain.vehicle.entity.Vehicle$FuelType" jdbcType="VARCHAR"/>
+        <result property="mileage" column="mileage"/>
+        <result property="color" column="color"/>
+        <result property="isActive" column="is_active"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- SQL 조각 -->
+    <sql id="vehicleColumns">
+        v.id, v.vehicle_uuid, v.user_id, v.make, v.model, v.year, 
+        v.license_plate, v.vin, v.engine_type, v.fuel_type, 
+        v.mileage, v.color, v.is_active, v.created_at, v.updated_at
+    </sql>
+
+    <!-- 차량 등록 -->
+    <insert id="insertVehicle" parameterType="com.carcare.domain.vehicle.entity.Vehicle" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO vehicles (vehicle_uuid, user_id, make, model, year, license_plate, vin, engine_type, fuel_type, mileage, color, is_active, created_at, updated_at)
+        VALUES (#{vehicleUuid}, #{userId}, #{make}, #{model}, #{year}, #{licensePlate}, #{vin}, #{engineType}, #{fuelType}, #{mileage}, #{color}, 
+                COALESCE(#{isActive}, true), COALESCE(#{createdAt}, CURRENT_TIMESTAMP), COALESCE(#{updatedAt}, CURRENT_TIMESTAMP))
+    </insert>
+
+    <!-- 차량 정보 수정 -->
+    <update id="updateVehicle" parameterType="com.carcare.domain.vehicle.entity.Vehicle">
+        UPDATE vehicles
+        <set>
+            <if test="make != null">make = #{make},</if>
+            <if test="model != null">model = #{model},</if>
+            <if test="year != null">year = #{year},</if>
+            <if test="licensePlate != null">license_plate = #{licensePlate},</if>
+            <if test="vin != null">vin = #{vin},</if>
+            <if test="engineType != null">engine_type = #{engineType},</if>
+            <if test="fuelType != null">fuel_type = #{fuelType},</if>
+            <if test="mileage != null">mileage = #{mileage},</if>
+            <if test="color != null">color = #{color},</if>
+            <if test="isActive != null">is_active = #{isActive},</if>
+            updated_at = CURRENT_TIMESTAMP
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 차량 삭제 (소프트 삭제) -->
+    <update id="deleteVehicle">
+        UPDATE vehicles
+        SET is_active = false, updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND user_id = #{userId}
+    </update>
+
+    <!-- 차량 완전 삭제 (하드 삭제) -->
+    <delete id="deleteVehicleCompletely">
+        DELETE FROM vehicles
+        WHERE id = #{id} AND user_id = #{userId}
+    </delete>
+
+    <!-- ID로 차량 조회 -->
+    <select id="findById" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        WHERE v.id = #{id}
+    </select>
+
+    <!-- UUID로 차량 조회 -->
+    <select id="findByUuid" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        WHERE v.vehicle_uuid = #{vehicleUuid}
+    </select>
+
+    <!-- 차량번호로 차량 조회 -->
+    <select id="findByLicensePlate" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        WHERE v.license_plate = #{licensePlate}
+    </select>
+
+    <!-- 사용자 ID로 차량 목록 조회 -->
+    <select id="findByUserId" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        WHERE v.user_id = #{userId}
+        ORDER BY v.created_at DESC
+    </select>
+
+    <!-- 사용자별 활성 차량 목록 조회 -->
+    <select id="findActiveVehiclesByUserId" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        WHERE v.user_id = #{userId} AND v.is_active = true
+        ORDER BY v.created_at DESC
+    </select>
+
+    <!-- 차량 검색 (페이징 포함) -->
+    <select id="searchVehicles" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        <where>
+            <if test="userId != null">
+                AND v.user_id = #{userId}
+            </if>
+            <if test="criteria.keyword != null and criteria.keyword != ''">
+                AND (v.license_plate LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.make LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.model LIKE CONCAT('%', #{criteria.keyword}, '%'))
+            </if>
+            <if test="criteria.make != null and criteria.make != ''">
+                AND v.make LIKE CONCAT('%', #{criteria.make}, '%')
+            </if>
+            <if test="criteria.model != null and criteria.model != ''">
+                AND v.model LIKE CONCAT('%', #{criteria.model}, '%')
+            </if>
+            <if test="criteria.yearFrom != null">
+                <![CDATA[ AND v.year >= #{criteria.yearFrom} ]]>
+            </if>
+            <if test="criteria.yearTo != null">
+                <![CDATA[ AND v.year <= #{criteria.yearTo} ]]>
+            </if>
+            <if test="criteria.fuelType != null">
+                AND v.fuel_type = #{criteria.fuelType}
+            </if>
+            <if test="criteria.color != null and criteria.color != ''">
+                AND v.color LIKE CONCAT('%', #{criteria.color}, '%')
+            </if>
+            <if test="criteria.isActive != null">
+                AND v.is_active = #{criteria.isActive}
+            </if>
+        </where>
+        ORDER BY 
+        <choose>
+            <when test="criteria.sortBy == 'year' and criteria.sortDirection == 'ASC'">v.year ASC</when>
+            <when test="criteria.sortBy == 'year'">v.year DESC</when>
+            <when test="criteria.sortBy == 'make' and criteria.sortDirection == 'DESC'">v.make DESC</when>
+            <when test="criteria.sortBy == 'make'">v.make ASC</when>
+            <when test="criteria.sortBy == 'model' and criteria.sortDirection == 'DESC'">v.model DESC</when>
+            <when test="criteria.sortBy == 'model'">v.model ASC</when>
+            <when test="criteria.sortBy == 'createdAt' and criteria.sortDirection == 'ASC'">v.created_at ASC</when>
+            <otherwise>v.created_at DESC</otherwise>
+        </choose>
+        <if test="criteria.size > 0">
+            LIMIT #{criteria.size} OFFSET #{criteria.offset}
+        </if>
+    </select>
+
+    <!-- 차량 검색 결과 총 개수 -->
+    <select id="countSearchResults" resultType="int">
+        SELECT COUNT(*)
+        FROM vehicles v
+        <where>
+            <if test="userId != null">
+                AND v.user_id = #{userId}
+            </if>
+            <if test="criteria.keyword != null and criteria.keyword != ''">
+                AND (v.license_plate LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.make LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.model LIKE CONCAT('%', #{criteria.keyword}, '%'))
+            </if>
+            <if test="criteria.make != null and criteria.make != ''">
+                AND v.make LIKE CONCAT('%', #{criteria.make}, '%')
+            </if>
+            <if test="criteria.model != null and criteria.model != ''">
+                AND v.model LIKE CONCAT('%', #{criteria.model}, '%')
+            </if>
+            <if test="criteria.yearFrom != null">
+                <![CDATA[ AND v.year >= #{criteria.yearFrom} ]]>
+            </if>
+            <if test="criteria.yearTo != null">
+                <![CDATA[ AND v.year <= #{criteria.yearTo} ]]>
+            </if>
+            <if test="criteria.fuelType != null">
+                AND v.fuel_type = #{criteria.fuelType}
+            </if>
+            <if test="criteria.color != null and criteria.color != ''">
+                AND v.color LIKE CONCAT('%', #{criteria.color}, '%')
+            </if>
+            <if test="criteria.isActive != null">
+                AND v.is_active = #{criteria.isActive}
+            </if>
+        </where>
+    </select>
+
+    <!-- 사용자별 차량 총 개수 -->
+    <select id="countByUserId" resultType="int">
+        SELECT COUNT(*)
+        FROM vehicles v
+        WHERE v.user_id = #{userId}
+    </select>
+
+    <!-- 차량번호 중복 검사 (본인 차량 제외) -->
+    <select id="existsByLicensePlateAndNotId" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM vehicles
+        WHERE license_plate = #{licensePlate} 
+        <if test="id != null">
+            AND id != #{id}
+        </if>
+    </select>
+
+    <!-- 차량번호 중복 검사 -->
+    <select id="existsByLicensePlate" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM vehicles
+        WHERE license_plate = #{licensePlate}
+    </select>
+
+    <!-- 사용자의 차량 소유권 확인 -->
+    <select id="isVehicleOwnedByUser" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN true ELSE false END
+        FROM vehicles
+        WHERE id = #{vehicleId} AND user_id = #{userId}
+    </select>
+
+    <!-- 모든 차량 목록 조회 (관리자용) -->
+    <select id="findAllVehicles" resultMap="VehicleResultMap">
+        SELECT <include refid="vehicleColumns"/>
+        FROM vehicles v
+        <where>
+            <if test="criteria.keyword != null and criteria.keyword != ''">
+                AND (v.license_plate LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.make LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.model LIKE CONCAT('%', #{criteria.keyword}, '%'))
+            </if>
+            <if test="criteria.make != null and criteria.make != ''">
+                AND v.make LIKE CONCAT('%', #{criteria.make}, '%')
+            </if>
+            <if test="criteria.model != null and criteria.model != ''">
+                AND v.model LIKE CONCAT('%', #{criteria.model}, '%')
+            </if>
+            <if test="criteria.yearFrom != null">
+                <![CDATA[ AND v.year >= #{criteria.yearFrom} ]]>
+            </if>
+            <if test="criteria.yearTo != null">
+                <![CDATA[ AND v.year <= #{criteria.yearTo} ]]>
+            </if>
+            <if test="criteria.fuelType != null">
+                AND v.fuel_type = #{criteria.fuelType}
+            </if>
+            <if test="criteria.color != null and criteria.color != ''">
+                AND v.color LIKE CONCAT('%', #{criteria.color}, '%')
+            </if>
+            <if test="criteria.isActive != null">
+                AND v.is_active = #{criteria.isActive}
+            </if>
+        </where>
+        ORDER BY 
+        <choose>
+            <when test="criteria.sortBy == 'year' and criteria.sortDirection == 'ASC'">v.year ASC</when>
+            <when test="criteria.sortBy == 'year'">v.year DESC</when>
+            <when test="criteria.sortBy == 'make' and criteria.sortDirection == 'DESC'">v.make DESC</when>
+            <when test="criteria.sortBy == 'make'">v.make ASC</when>
+            <when test="criteria.sortBy == 'model' and criteria.sortDirection == 'DESC'">v.model DESC</when>
+            <when test="criteria.sortBy == 'model'">v.model ASC</when>
+            <when test="criteria.sortBy == 'createdAt' and criteria.sortDirection == 'ASC'">v.created_at ASC</when>
+            <otherwise>v.created_at DESC</otherwise>
+        </choose>
+        <if test="criteria.size > 0">
+            LIMIT #{criteria.size} OFFSET #{criteria.offset}
+        </if>
+    </select>
+
+    <!-- 전체 차량 수 조회 (관리자용) -->
+    <select id="countAllVehicles" resultType="int">
+        SELECT COUNT(*)
+        FROM vehicles v
+        <where>
+            <if test="criteria.keyword != null and criteria.keyword != ''">
+                AND (v.license_plate LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.make LIKE CONCAT('%', #{criteria.keyword}, '%')
+                     OR v.model LIKE CONCAT('%', #{criteria.keyword}, '%'))
+            </if>
+            <if test="criteria.make != null and criteria.make != ''">
+                AND v.make LIKE CONCAT('%', #{criteria.make}, '%')
+            </if>
+            <if test="criteria.model != null and criteria.model != ''">
+                AND v.model LIKE CONCAT('%', #{criteria.model}, '%')
+            </if>
+            <if test="criteria.yearFrom != null">
+                <![CDATA[ AND v.year >= #{criteria.yearFrom} ]]>
+            </if>
+            <if test="criteria.yearTo != null">
+                <![CDATA[ AND v.year <= #{criteria.yearTo} ]]>
+            </if>
+            <if test="criteria.fuelType != null">
+                AND v.fuel_type = #{criteria.fuelType}
+            </if>
+            <if test="criteria.color != null and criteria.color != ''">
+                AND v.color LIKE CONCAT('%', #{criteria.color}, '%')
+            </if>
+            <if test="criteria.isActive != null">
+                AND v.is_active = #{criteria.isActive}
+            </if>
+        </where>
+    </select>
+
+</mapper> 

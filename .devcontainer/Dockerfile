@@ -4,7 +4,7 @@ FROM mcr.microsoft.com/devcontainers/python:3.12
 # Node.js + Java (PlantUML, Mermaid CLI용)
 RUN apt-get update && apt-get install -y \
     curl \
-    openjdk-17-jre-headless \
+    openjdk-21-jre-headless \
     npm \
  && rm -rf /var/lib/apt/lists/*
 

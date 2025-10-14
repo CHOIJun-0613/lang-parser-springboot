@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.carcare.domain.payment.repository.PaymentRepository">
+
+    <!-- Result Map -->
+    <resultMap id="PaymentResultMap" type="com.carcare.domain.payment.entity.Payment">
+        <id property="id" column="id"/>
+        <result property="paymentUuid" column="payment_uuid"/>
+        <result property="reservationId" column="reservation_id"/>
+        <result property="quoteId" column="quote_id"/>
+        <result property="amount" column="amount"/>
+        <result property="paymentMethod" column="payment_method" javaType="com.carcare.domain.payment.entity.Payment$PaymentMethod" jdbcType="VARCHAR"/>
+        <result property="status" column="status" javaType="com.carcare.domain.payment.entity.Payment$PaymentStatus" jdbcType="VARCHAR"/>
+        <result property="transactionId" column="transaction_id"/>
+        <result property="paymentGateway" column="payment_gateway" javaType="com.carcare.domain.payment.entity.Payment$PaymentGateway" jdbcType="VARCHAR"/>
+        <result property="paidAt" column="paid_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="receiptUrl" column="receipt_url"/>
+    </resultMap>
+
+    <!-- Insert -->
+    <insert id="save" parameterType="com.carcare.domain.payment.entity.Payment" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO payments (
+            payment_uuid,
+            reservation_id,
+            quote_id,
+            amount,
+            payment_method,
+            status,
+            transaction_id,
+            payment_gateway,
+            paid_at,
+            created_at,
+            updated_at,
+            receipt_url
+        ) VALUES (
+            #{paymentUuid},
+            #{reservationId},
+            #{quoteId},
+            #{amount},
+            #{paymentMethod},
+            #{status},
+            #{transactionId},
+            #{paymentGateway},
+            #{paidAt},
+            #{createdAt},
+            #{updatedAt},
+            #{receiptUrl}
+        )
+    </insert>
+
+    <!-- Update -->
+    <update id="update" parameterType="com.carcare.domain.payment.entity.Payment">
+        UPDATE payments SET
+            status = #{status},
+            transaction_id = #{transactionId},
+            payment_gateway = #{paymentGateway},
+            paid_at = #{paidAt},
+            updated_at = #{updatedAt},
+            receipt_url = #{receiptUrl}
+        WHERE id = #{id}
+    </update>
+
+    <!-- Select by ID -->
+    <select id="findById" parameterType="long" resultMap="PaymentResultMap">
+        SELECT * FROM payments WHERE id = #{id}
+    </select>
+
+    <!-- Select by UUID -->
+    <select id="findByPaymentUuid" parameterType="string" resultMap="PaymentResultMap">
+        SELECT * FROM payments WHERE payment_uuid = #{paymentUuid}
+    </select>
+
+    <!-- Select by Transaction ID -->
+    <select id="findByTransactionId" parameterType="string" resultMap="PaymentResultMap">
+        SELECT * FROM payments WHERE transaction_id = #{transactionId}
+    </select>
+
+    <!-- Select by Reservation ID -->
+    <select id="findByReservationId" parameterType="long" resultMap="PaymentResultMap">
+        SELECT * FROM payments WHERE reservation_id = #{reservationId}
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- Select by Quote ID -->
+    <select id="findByQuoteId" parameterType="long" resultMap="PaymentResultMap">
+        SELECT * FROM payments WHERE quote_id = #{quoteId}
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- Select by User ID (Join with reservations) -->
+    <select id="findByUserId" parameterType="long" resultMap="PaymentResultMap">
+        SELECT p.* FROM payments p
+        JOIN reservations r ON p.reservation_id = r.id
+        WHERE r.user_id = #{userId}
+        ORDER BY p.created_at DESC
+    </select>
+
+    <!-- Select by Status -->
+    <select id="findByStatus" parameterType="string" resultMap="PaymentResultMap">
+        SELECT * FROM payments WHERE status = #{status}
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- Delete by ID -->
+    <delete id="deleteById" parameterType="long">
+        DELETE FROM payments WHERE id = #{id}
+    </delete>
+
+    <!-- Count -->
+    <select id="count" resultType="int">
+        SELECT COUNT(*) FROM payments
+    </select>
+
+    <!-- Search with criteria -->
+    <select id="findBySearchCriteria" parameterType="com.carcare.domain.payment.repository.PaymentRepository$SearchCriteria" resultMap="PaymentResultMap">
+        SELECT p.* FROM payments p
+        <if test="userId != null">
+            JOIN reservations r ON p.reservation_id = r.id
+        </if>
+        <where>
+            <if test="userId != null">
+                AND r.user_id = #{userId}
+            </if>
+            <if test="status != null">
+                AND p.status = #{status}
+            </if>
+            <if test="paymentMethod != null">
+                AND p.payment_method = #{paymentMethod}
+            </if>
+            <if test="startDate != null">
+                AND p.created_at >= #{startDate}
+            </if>
+            <if test="endDate != null">
+                AND p.created_at &lt;= #{endDate}
+            </if>
+        </where>
+        ORDER BY p.created_at DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- Count with criteria -->
+    <select id="countBySearchCriteria" parameterType="com.carcare.domain.payment.repository.PaymentRepository$SearchCriteria" resultType="int">
+        SELECT COUNT(*) FROM payments p
+        <if test="userId != null">
+            JOIN reservations r ON p.reservation_id = r.id
+        </if>
+        <where>
+            <if test="userId != null">
+                AND r.user_id = #{userId}
+            </if>
+            <if test="status != null">
+                AND p.status = #{status}
+            </if>
+            <if test="paymentMethod != null">
+                AND p.payment_method = #{paymentMethod}
+            </if>
+            <if test="startDate != null">
+                AND p.created_at >= #{startDate}
+            </if>
+            <if test="endDate != null">
+                AND p.created_at &lt;= #{endDate}
+            </if>
+        </where>
+    </select>
+
+</mapper> 

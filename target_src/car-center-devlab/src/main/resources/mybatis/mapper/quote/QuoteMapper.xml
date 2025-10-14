@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.carcare.domain.quote.repository.QuoteRepository">
+
+    <!-- 결과 매핑 -->
+    <resultMap id="QuoteResultMap" type="com.carcare.domain.quote.entity.Quote">
+        <id property="id" column="id"/>
+        <result property="quoteUuid" column="quote_uuid" javaType="java.util.UUID" jdbcType="VARCHAR"/>
+        <result property="reservationId" column="reservation_id"/>
+        <result property="laborCost" column="labor_cost"/>
+        <result property="partsCost" column="parts_cost"/>
+        <result property="taxAmount" column="tax_amount"/>
+        <result property="discountAmount" column="discount_amount"/>
+        <result property="totalAmount" column="total_amount"/>
+        <result property="status" column="status" javaType="com.carcare.domain.quote.entity.Quote$QuoteStatus" jdbcType="VARCHAR"/>
+        <result property="validUntil" column="valid_until"/>
+        <result property="notes" column="notes"/>
+        <result property="approvedAt" column="approved_at"/>
+        <result property="rejectedAt" column="rejected_at"/>
+        <result property="rejectionReason" column="rejection_reason"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 견적 항목을 포함한 견적 결과 매핑 -->
+    <resultMap id="QuoteWithItemsResultMap" type="com.carcare.domain.quote.entity.Quote" extends="QuoteResultMap">
+        <collection property="quoteItems" ofType="com.carcare.domain.quote.entity.QuoteItem">
+            <id property="id" column="item_id"/>
+            <result property="quoteId" column="quote_id"/>
+            <result property="itemType" column="item_type" javaType="com.carcare.domain.quote.entity.QuoteItem$QuoteItemType" jdbcType="VARCHAR"/>
+            <result property="description" column="item_description"/>
+            <result property="quantity" column="quantity"/>
+            <result property="unitPrice" column="unit_price"/>
+            <result property="totalPrice" column="total_price"/>
+            <result property="warrantyPeriod" column="warranty_period"/>
+            <result property="notes" column="item_notes"/>
+            <result property="createdAt" column="item_created_at"/>
+        </collection>
+    </resultMap>
+
+    <!-- SQL 조각 -->
+    <sql id="quoteColumns">
+        q.id, q.quote_uuid, q.reservation_id, q.labor_cost, q.parts_cost, 
+        q.tax_amount, q.discount_amount, q.total_amount, q.status, 
+        q.valid_until, q.notes, q.approved_at, q.rejected_at, 
+        q.rejection_reason, q.created_at, q.updated_at
+    </sql>
+
+    <sql id="quoteWithItemsColumns">
+        <include refid="quoteColumns"/>,
+        qi.id as item_id, qi.quote_id, qi.item_type, qi.description as item_description,
+        qi.quantity, qi.unit_price, qi.total_price, qi.warranty_period, 
+        qi.notes as item_notes, qi.created_at as item_created_at
+    </sql>
+
+    <!-- 견적서 생성 -->
+    <insert id="insertQuote" parameterType="com.carcare.domain.quote.entity.Quote" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO quotes (
+            quote_uuid, reservation_id, labor_cost, parts_cost, 
+            tax_amount, discount_amount, total_amount, status, 
+            valid_until, notes, created_at, updated_at
+        ) VALUES (
+            #{quoteUuid}::uuid, #{reservationId}, #{laborCost}, #{partsCost},
+            #{taxAmount}, #{discountAmount}, #{totalAmount}, #{status},
+            #{validUntil}, #{notes}, 
+            COALESCE(#{createdAt}, CURRENT_TIMESTAMP), 
+            COALESCE(#{updatedAt}, CURRENT_TIMESTAMP)
+        )
+    </insert>
+
+    <!-- 견적서 수정 -->
+    <update id="updateQuote" parameterType="com.carcare.domain.quote.entity.Quote">
+        UPDATE quotes 
+        SET labor_cost = #{laborCost},
+            parts_cost = #{partsCost},
+            tax_amount = #{taxAmount},
+            discount_amount = #{discountAmount},
+            total_amount = #{totalAmount},
+            status = #{status},
+            valid_until = #{validUntil},
+            notes = #{notes},
+            approved_at = #{approvedAt},
+            rejected_at = #{rejectedAt},
+            rejection_reason = #{rejectionReason},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 견적서 삭제 -->
+    <delete id="deleteQuote" parameterType="long">
+        DELETE FROM quotes WHERE id = #{id}
+    </delete>
+
+    <!-- ID로 견적서 조회 -->
+    <select id="findById" parameterType="long" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        WHERE q.id = #{id}
+    </select>
+
+    <!-- UUID로 견적서 조회 -->
+    <select id="findByUuid" parameterType="java.util.UUID" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        WHERE q.quote_uuid = #{uuid}::uuid
+    </select>
+
+    <!-- 예약 ID로 견적서 조회 -->
+    <select id="findByReservationId" parameterType="long" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        WHERE q.reservation_id = #{reservationId}
+    </select>
+
+    <!-- 견적 항목을 포함한 견적서 조회 -->
+    <select id="findByIdWithItems" parameterType="long" resultMap="QuoteWithItemsResultMap">
+        SELECT <include refid="quoteWithItemsColumns"/>
+        FROM quotes q
+        LEFT JOIN quote_items qi ON q.id = qi.quote_id
+        WHERE q.id = #{id}
+        ORDER BY qi.id
+    </select>
+
+    <!-- 상태별 견적서 조회 -->
+    <select id="findByStatus" parameterType="string" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        WHERE q.status::text = #{status}
+        ORDER BY q.created_at DESC
+    </select>
+
+    <!-- 만료된 견적서 조회 -->
+    <select id="findExpiredQuotes" parameterType="java.time.LocalDateTime" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        WHERE q.valid_until <![CDATA[ < ]]> #{currentTime}
+        AND q.status::text IN ('DRAFT', 'SENT')
+        ORDER BY q.valid_until ASC
+    </select>
+
+    <!-- 페이징된 견적서 조회 -->
+    <select id="findQuotesWithPaging" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        ORDER BY q.created_at DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 총 견적서 개수 -->
+    <select id="countQuotes" resultType="long">
+        SELECT COUNT(*) FROM quotes
+    </select>
+
+    <!-- 사용자별 견적서 조회 -->
+    <select id="findByUserId" parameterType="long" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        JOIN reservations r ON q.reservation_id = r.id
+        WHERE r.user_id = #{userId}
+        ORDER BY q.created_at DESC
+    </select>
+
+    <!-- 정비소별 견적서 조회 -->
+    <select id="findByServiceCenterId" parameterType="long" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        JOIN reservations r ON q.reservation_id = r.id
+        WHERE r.service_center_id = #{serviceCenterId}
+        ORDER BY q.created_at DESC
+    </select>
+
+    <!-- 날짜 범위별 견적서 조회 -->
+    <select id="findByDateRange" resultMap="QuoteResultMap">
+        SELECT <include refid="quoteColumns"/>
+        FROM quotes q
+        WHERE q.created_at <![CDATA[ >= ]]> #{startDate}
+        AND q.created_at <![CDATA[ <= ]]> #{endDate}
+        ORDER BY q.created_at DESC
+    </select>
+
+    <!-- 견적서 통계 조회 -->
+    <select id="getQuoteStatistics" resultMap="QuoteStatisticsResultMap">
+        SELECT 
+            COUNT(*) as total_count,
+            COUNT(CASE WHEN status = 'DRAFT' THEN 1 END) as draft_count,
+            COUNT(CASE WHEN status = 'SENT' THEN 1 END) as sent_count,
+            COUNT(CASE WHEN status = 'APPROVED' THEN 1 END) as approved_count,
+            COUNT(CASE WHEN status = 'REJECTED' THEN 1 END) as rejected_count,
+            COUNT(CASE WHEN status = 'EXPIRED' THEN 1 END) as expired_count,
+            COALESCE(SUM(CASE WHEN status = 'APPROVED' THEN total_amount ELSE 0 END), 0) as total_approved_amount,
+            COALESCE(AVG(CASE WHEN status = 'APPROVED' THEN total_amount END), 0) as average_approved_amount
+        FROM quotes
+        <where>
+            <if test="startDate != null">
+                AND created_at <![CDATA[ >= ]]> #{startDate}
+            </if>
+            <if test="endDate != null">
+                AND created_at <![CDATA[ <= ]]> #{endDate}
+            </if>
+        </where>
+    </select>
+
+    <!-- 통계 결과 매핑 -->
+    <resultMap id="QuoteStatisticsResultMap" type="com.carcare.domain.quote.repository.QuoteRepository$QuoteStatistics">
+        <result property="totalCount" column="total_count"/>
+        <result property="draftCount" column="draft_count"/>
+        <result property="sentCount" column="sent_count"/>
+        <result property="approvedCount" column="approved_count"/>
+        <result property="rejectedCount" column="rejected_count"/>
+        <result property="expiredCount" column="expired_count"/>
+        <result property="totalApprovedAmount" column="total_approved_amount"/>
+        <result property="averageApprovedAmount" column="average_approved_amount"/>
+    </resultMap>
+
+</mapper> 
