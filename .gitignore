@@ -224,3 +224,5 @@ csa/models/__pycache__/
 
 logs/
 *.log
+
+target_dir/

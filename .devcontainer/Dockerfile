@@ -1,5 +1,23 @@
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+# .devcontainer/Dockerfile
+FROM mcr.microsoft.com/devcontainers/python:3.12
 
-# use this Dockerfile to install additional tools you might need, e.g.
-# RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-#     && apt-get -y install --no-install-recommends <your-package-list-here>
+# Node.js + Java (PlantUML, Mermaid CLI용)
+RUN apt-get update && apt-get install -y \
+    curl \
+    openjdk-17-jre-headless \
+    npm \
+ && rm -rf /var/lib/apt/lists/*
+
+# Mermaid CLI 설치
+RUN npm install -g @mermaid-js/mermaid-cli
+
+# PlantUML JAR 다운로드 (lang-java-springboot/libs 폴더에 저장)
+RUN mkdir -p /workspace/lang-java-springboot/libs \
+ && curl -L https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar \
+    -o /workspace/lang-java-springboot/libs/plantuml.jar
+
+# 환경 변수 설정
+ENV PLANTUML_JAR_PATH=/workspace/lang-java-springboot/libs/plantuml.jar
+ENV MMDC_PATH=/usr/local/bin/mmdc
+
+WORKDIR /workspace
