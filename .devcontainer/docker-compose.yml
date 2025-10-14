@@ -1,101 +1,98 @@
 version: "3.9"
 
 services:
-  # VS Code Dev Container가 attach 할 대상 컨테이너
+  # === VS Code Dev Container (Python + Neo4j 연동 + Ona Agent 지원) ===
   app:
-    # 별도 Dockerfile을 쓰는 경우
-    # (예: PlantUML / Mermaid CLI 설치가 필요하면 아래 build 섹션 사용)
+    # Dev Container 빌드용 Dockerfile (PlantUML, Mermaid CLI 포함 가능)
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-    # 만약 Dockerfile 없이 기본 이미지만 쓸 거면 위 build 블록 대신 아래 image 한 줄 사용
-    # image: mcr.microsoft.com/devcontainers/python:3.12
 
+    # Ona Agent 연결 문제 방지를 위한 host 네트워크 사용
+    network_mode: host
+
+    # 컨테이너 내 작업 경로
     working_dir: /workspace
+
+    # 프로젝트 루트 마운트
     volumes:
-      # 호스트의 프로젝트 루트를 컨테이너 /workspace 로 마운트
       - ..:/workspace:cached
 
-    # Neo4j가 먼저 healthy 상태가 되어야 app 컨테이너가 뜨도록
-    depends_on:
-      neo4j:
-        condition: service_healthy
-
-    # 루트의 .env를 읽어 환경변수 주입 (NEO4J_PASSWORD 포함)
+    # Neo4j와 환경 변수 공유 (.env에서 비밀번호 로드)
     env_file:
       - ../.env
 
     environment:
-      # Python 앱에서 사용할 Neo4j 접속 정보
-      NEO4J_URI: bolt://neo4j:7687
+      # Neo4j 연결 정보
+      NEO4J_URI: bolt://localhost:7687
       NEO4J_USERNAME: csauser
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      PYTHONUNBUFFERED: "1"
-      # (선택) PlantUML/Mermaid CLI 경로 사용 시
-      # PLANTUML_JAR_PATH: /workspace/lang-java-springboot/libs/plantuml.jar
-      # MMDC_PATH: /usr/local/bin/mmdc
 
-    # Dev Container가 attach만 하도록 기본은 sleep
-    # (앱 실행은 VS Code 터미널에서 uvicorn 등으로 직접 수행)
+      # Python 실행 설정
+      PYTHONUNBUFFERED: "1"
+
+      # (선택) 외부 도구 경로 — PlantUML, Mermaid CLI
+      PLANTUML_JAR_PATH: /workspace/lang-java-springboot/libs/plantuml.jar
+      MMDC_PATH: /usr/local/bin/mmdc
+
+    # Dev Container 내부에서 별도 명령 실행 없이 attach 상태 유지
     command: bash -lc "sleep infinity"
 
-    ports:
-      - "13000:13000"  # 앱에서 쓸 포트(원하면 변경/추가)
-      - "7474:7474"    # Neo4j Browser (forwarding 편의를 위해 app에도 노출)
-      - "7687:7687"    # Bolt
+    # Ona Dev Container UI 포트 포워딩 (host 네트워크라 필수는 아님)
+    # forwardPorts는 devcontainer.json에서 관리됨.
 
+  # === Neo4j Database (Community Edition) ===
   neo4j:
     image: neo4j:5
     hostname: neo4j
     restart: unless-stopped
-
-    ports:
-      - "7478:7478"  # HTTP(Browser)
-      - "7687:7687"  # Bolt
+    # host 네트워크를 사용 중인 app 컨테이너와 동일 네트워크로 설정
+    network_mode: host
 
     environment:
-      # 최초 관리자 neo4j 계정의 임시 비번
+      # 관리자 계정 초기 비밀번호
       NEO4J_AUTH: neo4j/neo4j-temp
-      # Community는 기본 DB 1개만 사용 → 기본 DB 이름을 csadb01로 지정
+      # 기본 데이터베이스 이름
       NEO4J_dbms_default__database: csadb01
-      # (선택) 플러그인
+      # 플러그인(APOC, GDS)
       NEO4J_PLUGINS: "apoc,gds"
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      # 메모리 설정
       NEO4J_dbms_memory_heap_initial__size: 512m
       NEO4J_dbms_memory_heap_max__size: 1g
 
+    # Neo4j 데이터 디렉터리 마운트
     volumes:
-      # compose 파일(.devcontainer) 기준 상대경로
       - ../neo4j/data:/data
       - ../neo4j/import:/import
       - ../neo4j/plugins:/plugins
 
+    # Neo4j 준비 여부 확인
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j-temp", "RETURN 1;"]
       interval: 5s
       timeout: 3s
       retries: 30
 
-  # 초기 사용자/보안 설정을 자동 적용하는 1회성 job 컨테이너
+  # === Neo4j 초기 설정 (csauser 생성, 보안 초기화) ===
   neo4j-init:
     image: neo4j:5
     depends_on:
       neo4j:
         condition: service_healthy
+    network_mode: host
 
-    # 루트의 .env에서 CSAUSER_PASSWORD 로드
     env_file:
       - ../.env
 
     volumes:
-      # 사용자/보안 설정 스크립트 (system DB에서 실행)
-      - ../neo4j/scripts/init.system.cypher:/init.system.cypher:ro
+      - ../neo4j/init.system.cypher:/init.system.cypher:ro
 
     entrypoint: ["/bin/bash", "-lc"]
     command: >
       "
       set -e
-      # csauser 생성 및 홈 DB 지정 (Community는 RBAC 없음)
+      echo 'Initializing Neo4j user setup...'
       cypher-shell -u neo4j -p neo4j-temp -d system -f /init.system.cypher
-      echo 'Neo4j Community init done'
+      echo 'Neo4j Community init done ✅'
       "
