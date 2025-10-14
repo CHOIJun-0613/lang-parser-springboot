@@ -75,8 +75,6 @@ def fetch_call_chain(
     WITH source_method, target_method, path
     OPTIONAL MATCH (target_class:Class)-[:HAS_METHOD]->(target_method)
     OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
-    OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
-    OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
     RETURN
         source_method.name as source_method,
         source_class.name as source_class,
@@ -88,9 +86,6 @@ def fetch_call_chain(
         sql.sql_type as sql_type,
         sql.tables as sql_tables,
         sql.columns as sql_columns,
-        table.name as table_name,
-        column.name as column_name,
-        column.table_name as column_table_name,
         LENGTH(path) as depth
     ORDER BY depth, source_method
     """
@@ -180,8 +175,13 @@ def is_external_library_call(call: Dict) -> bool:
     )
 
 
-def get_table_schema(session, table_name: str, project_name: Optional[str]) -> Optional[str]:
-    """Resolve table schema information."""
+def get_table_schema(session, table_name: str, project_name: Optional[str]) -> str:
+    """Resolve table schema information.
+
+    Returns:
+        Schema string in format "database.schema" if Table node exists.
+        Empty string ("") if Table node does not exist.
+    """
     query = """
     MATCH (t:Table {name: $table_name})
     WHERE ($project_name IS NULL OR t.project_name = $project_name)
@@ -190,7 +190,7 @@ def get_table_schema(session, table_name: str, project_name: Optional[str]) -> O
     result = session.run(query, table_name=table_name, project_name=project_name)
     record = result.single()
     if not record:
-        return None
+        return ""
 
     schema = record["schema"] or "public"
     database = record["database_name"] or "default"

@@ -225,4 +225,6 @@ csa/models/__pycache__/
 logs/
 *.log
 
-target_dir/
+neo4j/data/
+neo4j/import/
+neo4j/plugins/

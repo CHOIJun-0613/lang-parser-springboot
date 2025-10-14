@@ -41,8 +41,6 @@ class CallChainMixin:
         OPTIONAL MATCH (m)-[:CALLS*0..5]->(target_method:Method)
         OPTIONAL MATCH (target_method)<-[:HAS_METHOD]-(target_class:Class)
         OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
-        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
-        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
         RETURN m.name as source_method,
                c.name as source_class,
                c.package_name as source_package,
@@ -52,10 +50,7 @@ class CallChainMixin:
                sql.id as sql_id,
                sql.sql_type as sql_type,
                sql.tables as sql_tables,
-               sql.columns as sql_columns,
-               table.name as table_name,
-               column.name as column_name,
-               column.table_name as column_table_name
+               sql.columns as sql_columns
         ORDER BY source_method, target_class.name, target_method.name
         """
 
@@ -74,9 +69,6 @@ class CallChainMixin:
                     "sql_type": record["sql_type"],
                     "sql_tables": json.loads(record["sql_tables"]) if record["sql_tables"] else [],
                     "sql_columns": json.loads(record["sql_columns"]) if record["sql_columns"] else [],
-                    "table_name": record["table_name"],
-                    "column_name": record["column_name"],
-                    "column_table_name": record["column_table_name"],
                 }
             )
         return call_chain
@@ -87,8 +79,6 @@ class CallChainMixin:
         OPTIONAL MATCH (m)-[:CALLS*0..5]->(target_method:Method)
         OPTIONAL MATCH (target_method)<-[:HAS_METHOD]-(target_class:Class)
         OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
-        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
-        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
         RETURN m.name as source_method,
                c.name as source_class,
                c.package_name as source_package,
@@ -98,10 +88,7 @@ class CallChainMixin:
                sql.id as sql_id,
                sql.sql_type as sql_type,
                sql.tables as sql_tables,
-               sql.columns as sql_columns,
-               table.name as table_name,
-               column.name as column_name,
-               column.table_name as column_table_name
+               sql.columns as sql_columns
         ORDER BY source_method, target_class.name, target_method.name
         """
 
@@ -120,9 +107,6 @@ class CallChainMixin:
                     "sql_type": record["sql_type"],
                     "sql_tables": json.loads(record["sql_tables"]) if record["sql_tables"] else [],
                     "sql_columns": json.loads(record["sql_columns"]) if record["sql_columns"] else [],
-                    "table_name": record["table_name"],
-                    "column_name": record["column_name"],
-                    "column_table_name": record["column_table_name"],
                 }
             )
         return call_chain
@@ -133,8 +117,6 @@ class CallChainMixin:
         OPTIONAL MATCH (m)-[:CALLS*0..5]->(target_method:Method)
         OPTIONAL MATCH (target_method)<-[:HAS_METHOD]-(target_class:Class)
         OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
-        OPTIONAL MATCH (sql)-[:USES_TABLE]->(table:Table)
-        OPTIONAL MATCH (sql)-[:USES_COLUMN]->(column:Column)
         RETURN m.name as source_method,
                c.name as source_class,
                c.package_name as source_package,
@@ -144,10 +126,7 @@ class CallChainMixin:
                sql.id as sql_id,
                sql.sql_type as sql_type,
                sql.tables as sql_tables,
-               sql.columns as sql_columns,
-               table.name as table_name,
-               column.name as column_name,
-               column.table_name as column_table_name
+               sql.columns as sql_columns
         ORDER BY source_class, source_method, target_class.name, target_method.name
         """
 
@@ -166,9 +145,6 @@ class CallChainMixin:
                     "sql_type": record["sql_type"],
                     "sql_tables": json.loads(record["sql_tables"]) if record["sql_tables"] else [],
                     "sql_columns": json.loads(record["sql_columns"]) if record["sql_columns"] else [],
-                    "table_name": record["table_name"],
-                    "column_name": record["column_name"],
-                    "column_table_name": record["column_table_name"],
                 }
             )
         return call_chain
@@ -230,6 +206,9 @@ class CallChainMixin:
         missing_nodes: Dict[str, List[str]],
     ) -> Dict[str, Any]:
         class_stats: Dict[str, Dict[str, int]] = {}
+        all_tables: Set[str] = set()
+        all_columns: Set[str] = set()
+
         for call in call_chain:
             source_class = call["source_class"]
             if source_class not in class_stats:
@@ -243,18 +222,28 @@ class CallChainMixin:
                 class_stats[source_class]["method_count"] += 1
             if call["sql_id"]:
                 class_stats[source_class]["sql_count"] += 1
-            if call["table_name"]:
-                class_stats[source_class]["table_count"] += 1
-            if call["column_name"]:
-                class_stats[source_class]["column_count"] += 1
+
+            # sql_tables JSON에서 테이블 추출
+            if call.get("sql_tables"):
+                for table_info in call["sql_tables"]:
+                    if isinstance(table_info, dict) and "name" in table_info:
+                        all_tables.add(table_info["name"])
+                        class_stats[source_class]["table_count"] += 1
+
+            # sql_columns JSON에서 컬럼 추출
+            if call.get("sql_columns"):
+                for column_info in call["sql_columns"]:
+                    if isinstance(column_info, dict) and "name" in column_info:
+                        all_columns.add(column_info["name"])
+                        class_stats[source_class]["column_count"] += 1
 
         return {
             "total_calls": len(call_chain),
             "unique_classes": len(class_stats),
             "unique_methods": len({call["source_method"] for call in call_chain if call["source_method"]}),
             "unique_sql_statements": len({call["sql_id"] for call in call_chain if call["sql_id"]}),
-            "unique_tables": len({call["table_name"] for call in call_chain if call["table_name"]}),
-            "unique_columns": len({call["column_name"] for call in call_chain if call["column_name"]}),
+            "unique_tables": len(all_tables),
+            "unique_columns": len(all_columns),
             "missing_tables_count": len(missing_nodes["missing_tables"]),
             "missing_columns_count": len(missing_nodes["missing_columns"]),
             "class_stats": class_stats,

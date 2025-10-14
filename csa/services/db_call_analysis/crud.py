@@ -1,11 +1,38 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class CrudMatrixMixin:
     """Build CRUD matrices and supporting summaries."""
+
+    def _get_table_schema_info(self, session, table_name: str, project_name: Optional[str]) -> Dict[str, str]:
+        """Table 노드에서 schema 정보 조회. 없으면 빈 문자열 반환.
+
+        Args:
+            session: Neo4j 세션
+            table_name: 테이블명
+            project_name: 프로젝트명
+
+        Returns:
+            {"database_name": str, "schema_name": str} 형태의 dict
+            Table 노드가 없으면 빈 문자열 반환
+        """
+        query = """
+        MATCH (t:Table {name: $table_name})
+        WHERE ($project_name IS NULL OR t.project_name = $project_name)
+        RETURN t.schema as schema, t.database_name as database_name
+        """
+        result = session.run(query, table_name=table_name, project_name=project_name)
+        record = result.single()
+        if not record:
+            return {"database_name": "", "schema_name": ""}
+
+        return {
+            "database_name": record["database_name"] or "",
+            "schema_name": record["schema"] or "",
+        }
 
     def generate_crud_matrix(self, project_name: str = None) -> Dict[str, Any]:
         """
@@ -44,8 +71,6 @@ class CrudMatrixMixin:
                     package_name = row["package_name"]
                     operation = row["operation"]
                     sql_id = row["sql_id"]
-                    database_name = "default"
-                    schema_name = "public"
 
                     try:
                         tables_json = row["tables_json"]
@@ -57,6 +82,11 @@ class CrudMatrixMixin:
                                     combination_key = f"{class_name}_{table_name}"
                                     if combination_key not in processed_combinations:
                                         processed_combinations.add(combination_key)
+
+                                        # Table 노드에서 schema 정보 조회
+                                        schema_info = self._get_table_schema_info(session, table_name, project_name)
+                                        database_name = schema_info["database_name"]
+                                        schema_name = schema_info["schema_name"]
 
                                         table_operations = set()
                                         table_sql_statements = set()
