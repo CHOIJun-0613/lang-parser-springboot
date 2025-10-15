@@ -1,6 +1,9 @@
 # Python Dev Container (Debian 기반)
 FROM mcr.microsoft.com/devcontainers/python:3.12
 
+# timezone 설정
+RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime && echo "Asia/Seoul" > /etc/timezone
+
 # ------------------------------------------------------------
 # 기본 유틸 + Node.js/npm + OpenJDK 21 + graphviz
 # ------------------------------------------------------------
