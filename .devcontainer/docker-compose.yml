@@ -1,80 +1,61 @@
 version: "3.9"
 
 services:
-  # === VS Code Dev Container (Python + Neo4j 연동 + Ona Agent 지원) ===
   app:
-    # Dev Container 빌드용 Dockerfile (PlantUML, Mermaid CLI 포함 가능)
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
 
-    # Ona Agent 연결 문제 방지를 위한 host 네트워크 사용
+    # Ona Agent 연결 문제 방지
     network_mode: host
 
-    # 컨테이너 내 작업 경로
-    working_dir: /workspace
+    # VS Code가 attach 하는 컨테이너의 작업 폴더
+    working_dir: /workspace/lang-java-springboot
 
-    # 프로젝트 루트 마운트
     volumes:
       - ..:/workspace:cached
 
-    # Neo4j와 환경 변수 공유 (.env에서 비밀번호 로드)
-    env_file:
-      - ../.env
-
+    # .env 유무와 상관없이 기본값을 보유(루트 .env가 있으면 자동으로 override 됨)
     environment:
-      # Neo4j 연결 정보
       NEO4J_URI: bolt://localhost:7687
       NEO4J_USERNAME: csauser
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-
-      # Python 실행 설정
+      NEO4J_PASSWORD: ${CSAUSER_PASSWORD:-csauser123}
       PYTHONUNBUFFERED: "1"
-
-      # (선택) 외부 도구 경로 — PlantUML, Mermaid CLI
       PLANTUML_JAR_PATH: /workspace/lang-java-springboot/libs/plantuml.jar
       MMDC_PATH: /usr/local/bin/mmdc
 
-    # Dev Container 내부에서 별도 명령 실행 없이 attach 상태 유지
+    # Dev Container attach만 유지(앱 실행은 터미널에서)
     command: bash -lc "sleep infinity"
 
-    # Ona Dev Container UI 포트 포워딩 (host 네트워크라 필수는 아님)
-    # forwardPorts는 devcontainer.json에서 관리됨.
-
-  # === Neo4j Database (Community Edition) ===
   neo4j:
     image: neo4j:5
     hostname: neo4j
     restart: unless-stopped
-    # host 네트워크를 사용 중인 app 컨테이너와 동일 네트워크로 설정
     network_mode: host
 
     environment:
-      # 관리자 계정 초기 비밀번호
+      # 초기 관리자 암호(임시)
       NEO4J_AUTH: neo4j/neo4j-temp
-      # 기본 데이터베이스 이름
+      # Community: 기본 DB 이름 지정
       NEO4J_dbms_default__database: csadb01
-      # 플러그인(APOC, GDS)
+      # 플러그인
       NEO4J_PLUGINS: "apoc,gds"
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-      # 메모리 설정
+      # 메모리
       NEO4J_dbms_memory_heap_initial__size: 512m
       NEO4J_dbms_memory_heap_max__size: 1g
 
-    # Neo4j 데이터 디렉터리 마운트
     volumes:
       - ../neo4j/data:/data
       - ../neo4j/import:/import
       - ../neo4j/plugins:/plugins
 
-    # Neo4j 준비 여부 확인
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j-temp", "RETURN 1;"]
       interval: 5s
       timeout: 3s
       retries: 30
 
-  # === Neo4j 초기 설정 (csauser 생성, 보안 초기화) ===
   neo4j-init:
     image: neo4j:5
     depends_on:
@@ -82,8 +63,9 @@ services:
         condition: service_healthy
     network_mode: host
 
-    env_file:
-      - ../.env
+    environment:
+      # .env 없을 때도 기본값으로 기동되도록
+      CSAUSER_PASSWORD: ${CSAUSER_PASSWORD:-csauser123}
 
     volumes:
       - ../neo4j/init.system.cypher:/init.system.cypher:ro
@@ -92,7 +74,7 @@ services:
     command: >
       "
       set -e
-      echo 'Initializing Neo4j user setup...'
+      echo '[init] Creating csauser in system DB...'
       cypher-shell -u neo4j -p neo4j-temp -d system -f /init.system.cypher
-      echo 'Neo4j Community init done ✅'
+      echo '[init] Neo4j user init done ✅'
       "

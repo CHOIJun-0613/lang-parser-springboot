@@ -2,7 +2,14 @@
   "name": "CSA Dev Container",
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
-  "workspaceFolder": "/workspace",
+  "workspaceFolder": "/workspace/lang-java-springboot",
+
+  // 컨테이너 시작 전(호스트에서 실행): env.gitpod → .env 자동 복사
+  "initializeCommand": "bash -lc 'cd ..; if [ ! -f .env ] && [ -f env.gitpod ]; then cp env.gitpod .env; echo \"[init] Copied env.gitpod -> .env\"; fi'",
+
+  // 컨테이너 안에서: 작업 폴더 보장 + PlantUML JAR 복사 + Python deps 설치
+  "postCreateCommand": "mkdir -p /workspace/lang-java-springboot && /usr/local/bin/ensure-plantuml-into-workspace && if [ -f requirements.txt ]; then pip install -r requirements.txt; fi",
+
   "forwardPorts": [13000, 7474, 7687],
   "customizations": {
     "vscode": {
@@ -13,7 +20,6 @@
       ]
     }
   },
-  "postCreateCommand": "if [ ! -f ../.env ]; then cp ../.env.gitpod ../.env; fi && pip install -r requirements.txt",
   "remoteUser": "vscode"
 }
 
