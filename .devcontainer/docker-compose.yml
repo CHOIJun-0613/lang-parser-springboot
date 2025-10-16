@@ -23,6 +23,7 @@ services:
       PYTHONUNBUFFERED: "1"
       PLANTUML_JAR_PATH: /workspace/lang-java-springboot/libs/plantuml.jar
       MMDC_PATH: /usr/local/bin/mmdc
+      JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
 
     # Dev Container attach만 유지(앱 실행은 터미널에서)
     command: bash -lc "sleep infinity"

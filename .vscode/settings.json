@@ -1,0 +1,11 @@
+{
+    // VSCode 터미널에서 올바른 JAVA_HOME 설정
+    "terminal.integrated.env.linux": {
+        "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
+    },
+    // Python 설정
+    "python.defaultInterpreterPath": "/usr/local/bin/python",
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.autopep8"
+    }
+}
