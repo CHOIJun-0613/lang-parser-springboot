@@ -34,7 +34,7 @@ RUN mkdir -p /opt/plantuml \
 RUN printf '%s\n' \
 '#!/usr/bin/env bash' \
 'set -euo pipefail' \
-'TARGET="/workspace/lang-java-springboot/libs/plantuml.jar"' \
+'TARGET="/workspace/libs/plantuml.jar"' \
 'if [ ! -f "$TARGET" ]; then' \
 '  mkdir -p "$(dirname "$TARGET")"' \
 '  cp -f /opt/plantuml/plantuml.jar "$TARGET"' \
@@ -58,7 +58,7 @@ RUN wget -O - https://debian.neo4j.com/neotechnology.gpg.key | gpg --dearmor | t
 # ------------------------------------------------------------
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
-ENV PLANTUML_JAR_PATH=/workspace/lang-java-springboot/libs/plantuml.jar
+ENV PLANTUML_JAR_PATH=/workspace/libs/plantuml.jar
 ENV MMDC_PATH=/usr/local/bin/mmdc
 
-WORKDIR /workspace/lang-java-springboot
+WORKDIR /workspace
