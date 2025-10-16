@@ -3,11 +3,8 @@
 DROP USER csauser IF EXISTS;
 
 CREATE USER csauser
-  SET PASSWORD '${NEO4J_PASSWORD}'
-  CHANGE NOT REQUIRED
-  SET HOME DATABASE csadb01;
+  SET PASSWORD 'csauser123'
+  CHANGE NOT REQUIRED;
 
-// (보안 권장) 기본 neo4j 계정 조치
-// ALTER USER neo4j SET STATUS SUSPENDED;
-// 또는
-ALTER USER neo4j SET PASSWORD 'neo4j123' CHANGE REQUIRED;
+// Community Edition에서는 HOME DATABASE 설정 불가
+// Community Edition에서는 GRANT ROLE 명령 불가 (기본 권한 사용)
