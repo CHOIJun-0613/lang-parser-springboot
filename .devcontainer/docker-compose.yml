@@ -52,10 +52,11 @@ services:
       - ../neo4j/plugins:/plugins
 
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j-temp", "RETURN 1;"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 10s
       retries: 30
+      start_period: 40s
 
   neo4j-init:
     image: neo4j:5
