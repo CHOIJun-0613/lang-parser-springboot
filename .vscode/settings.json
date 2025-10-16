@@ -7,5 +7,9 @@
     "python.defaultInterpreterPath": "/usr/local/bin/python",
     "[python]": {
         "editor.defaultFormatter": "ms-python.autopep8"
+    },
+    "neo4j.connection": {
+        "uri": "bolt://localhost:7687",
+        "username": "neo4j"
     }
 }
