@@ -61,4 +61,10 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 ENV PLANTUML_JAR_PATH=/workspace/libs/plantuml.jar
 ENV MMDC_PATH=/usr/local/bin/mmdc
 
+# Python 가상환경 자동 활성화 설정
+RUN echo 'if [ -f /workspace/.venv/bin/activate ]; then' >> /home/vscode/.bashrc \
+ && echo '    source /workspace/.venv/bin/activate' >> /home/vscode/.bashrc \
+ && echo '    echo "[venv] Python virtual environment activated"' >> /home/vscode/.bashrc \
+ && echo 'fi' >> /home/vscode/.bashrc
+
 WORKDIR /workspace
