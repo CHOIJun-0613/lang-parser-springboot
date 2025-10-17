@@ -52,19 +52,34 @@ def _determine_project_name(
     detected_name: Optional[str],
     logger=None,
 ) -> str:
-    """Determine project name. Priority: CLI argument > detected name."""
+    """
+    Determine project name using the following priority:
+    1. CLI-provided project name (--project-name)
+    2. Auto-detected project name
+    3. Error if neither is available
+    """
     if logger is None:
         logger = get_logger(__name__, command="analyze")
+
+    # 1순위: CLI로 제공된 프로젝트명
     if project_name:
-        logger.info("Using provided project name: %s", project_name)
+        logger.info("Using CLI-provided project name: %s", project_name)
         return project_name
 
+    # 2순위: 자동 감지된 프로젝트명
     if detected_name:
-        logger.info("Using detected project name: %s", detected_name)
+        logger.warning(
+            "Project name not provided. Auto-detected: %s. "
+            "Use --project-name to override.",
+            detected_name
+        )
         return detected_name
 
-    logger.warning("Project name not provided and detection failed. Falling back to default value.")
-    return "default_project"
+    # 3순위: None - 오류 발생
+    raise ValueError(
+        "Cannot determine project name. "
+        "Please provide --project-name option."
+    )
 
 
 def determine_project_name(project_name: Optional[str], detected_name: Optional[str], logger):
@@ -80,24 +95,44 @@ def _get_or_determine_project_name(
     java_source_folder: Optional[str],
     logger=None,
 ) -> str:
-    """Resolve the project name using provided, detected, or fallback values."""
+    """
+    Resolve the project name using the following priority:
+    1. CLI-provided project name (--project-name)
+    2. Auto-detected from folder name
+    3. Error if neither is available
+    """
     if logger is None:
         logger = get_logger(__name__, command="analyze")
+
+    # 1순위: CLI로 제공된 프로젝트명
     if project_name:
-        logger.info("Using provided project name: %s", project_name)
+        logger.info("Using CLI-provided project name: %s", project_name)
         return project_name
 
+    # 2순위: 폴더명에서 자동 추출
     if detected_project_name:
-        logger.info("Using detected project name: %s", detected_project_name)
+        logger.warning(
+            "Project name not provided. Auto-detected from folder: %s. "
+            "Use --project-name to override.",
+            detected_project_name
+        )
         return detected_project_name
 
     if java_source_folder:
-        fallback_name = Path(java_source_folder).resolve().name
-    else:
-        fallback_name = os.getenv("PROJECT_NAME", "default_project")
+        folder_name = Path(java_source_folder).resolve().name
+        if folder_name and folder_name != '.':
+            logger.warning(
+                "Project name not provided. Auto-detected from folder: %s. "
+                "Use --project-name to override.",
+                folder_name
+            )
+            return folder_name
 
-    logger.info("Using fallback project name: %s", fallback_name)
-    return fallback_name
+    # 3순위: None - 오류 발생
+    raise ValueError(
+        "Cannot determine project name. "
+        "Either provide --project-name option or ensure --java-source-folder points to a valid directory."
+    )
 
 
 def get_or_determine_project_name(
