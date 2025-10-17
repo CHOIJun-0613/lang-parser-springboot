@@ -270,6 +270,128 @@ def add_single_class_objects(
                 )
 
 
+def add_single_class_objects_streaming(
+    db: GraphDB,
+    class_node,
+    package_name: str,
+    project_name: str,
+    logger,
+) -> dict:
+    """
+    파일별 즉시 저장 (스트리밍 방식)
+
+    파일 하나를 파싱한 후 즉시 Neo4j에 저장합니다.
+    Bean 의존성은 Neo4j 쿼리로 해결하므로 여기서는 생성하지 않습니다.
+
+    Args:
+        db: Neo4j GraphDB 인스턴스
+        class_node: 파싱된 클래스 노드
+        package_name: 패키지명
+        project_name: 프로젝트명
+        logger: 로거 인스턴스
+
+    Returns:
+        dict: 처리 통계
+            {
+                'beans': int,
+                'endpoints': int,
+                'jpa_entities': int,
+                'jpa_repositories': int,
+                'jpa_queries': int,
+                'test_classes': int,
+                'mybatis_mappers': int,
+                'sql_statements': int,
+            }
+    """
+    from .jpa import extract_jpa_queries_from_repositories, extract_jpa_repositories_from_classes
+
+    classes_list = [class_node]
+    stats = {
+        'beans': 0,
+        'endpoints': 0,
+        'jpa_entities': 0,
+        'jpa_repositories': 0,
+        'jpa_queries': 0,
+        'test_classes': 0,
+        'mybatis_mappers': 0,
+        'sql_statements': 0,
+    }
+
+    # Bean 추출 및 저장 (의존성 해결은 제외)
+    beans = extract_beans_from_classes(classes_list)
+    if beans:
+        for bean in beans:
+            db.add_bean(bean, project_name)
+        stats['beans'] = len(beans)
+        logger.debug(f"  → Bean {len(beans)}개 저장")
+
+    # Endpoint 추출 및 저장
+    endpoints = extract_endpoints_from_classes(classes_list)
+    if endpoints:
+        for endpoint in endpoints:
+            db.add_endpoint(endpoint, project_name)
+        stats['endpoints'] = len(endpoints)
+        logger.debug(f"  → Endpoint {len(endpoints)}개 저장")
+
+    # JPA Entity 추출 및 저장
+    jpa_entities = extract_jpa_entities_from_classes(classes_list)
+    if jpa_entities:
+        for entity in jpa_entities:
+            db.add_jpa_entity(entity, project_name)
+        stats['jpa_entities'] = len(jpa_entities)
+        logger.debug(f"  → JPA Entity {len(jpa_entities)}개 저장")
+
+    # JPA Repository 추출 및 저장 + Queries 즉시 추출
+    jpa_repositories = extract_jpa_repositories_from_classes(classes_list)
+    if jpa_repositories:
+        for repo in jpa_repositories:
+            db.add_jpa_repository(repo, project_name)
+        stats['jpa_repositories'] = len(jpa_repositories)
+        logger.debug(f"  → JPA Repository {len(jpa_repositories)}개 저장")
+
+        # JPA Queries 즉시 추출 및 저장
+        jpa_queries = extract_jpa_queries_from_repositories(jpa_repositories)
+        if jpa_queries:
+            for query in jpa_queries:
+                db.add_jpa_query(query, project_name)
+            stats['jpa_queries'] = len(jpa_queries)
+            logger.debug(f"  → JPA Query {len(jpa_queries)}개 저장")
+
+    # Test 추출 및 저장
+    test_classes = extract_test_classes_from_classes(classes_list)
+    if test_classes:
+        for test_class in test_classes:
+            db.add_test_class(test_class, project_name)
+        stats['test_classes'] = len(test_classes)
+        logger.debug(f"  → Test Class {len(test_classes)}개 저장")
+
+    # MyBatis Mapper 추출 및 저장 + SQL Statements 즉시 추출
+    mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
+    if mybatis_mappers:
+        for mapper in mybatis_mappers:
+            db.add_mybatis_mapper(mapper, project_name)
+        stats['mybatis_mappers'] = len(mybatis_mappers)
+        logger.debug(f"  → MyBatis Mapper {len(mybatis_mappers)}개 저장")
+
+        # SQL Statements 즉시 추출 및 저장
+        sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
+        if sql_statements:
+            for sql_statement in sql_statements:
+                db.add_sql_statement(sql_statement, project_name)
+
+                with _session_scope(db) as session:
+                    session.execute_write(
+                        db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                        sql_statement.mapper_name,
+                        sql_statement.id,
+                        project_name,
+                    )
+            stats['sql_statements'] = len(sql_statements)
+            logger.debug(f"  → SQL Statement {len(sql_statements)}개 저장")
+
+    return stats
+
+
 def _add_packages(db: GraphDB, packages: Sequence[object], project_name: str, logger) -> None:
     """Helper for writing package nodes."""
     logger.info("DB 저장 -  %s packages...", len(packages))
@@ -392,6 +514,7 @@ def save_java_objects_to_neo4j(
 
 __all__ = [
     "add_single_class_objects",
+    "add_single_class_objects_streaming",
     "add_springboot_objects",
     "clean_db_objects",
     "clean_java_objects",

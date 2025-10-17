@@ -753,6 +753,198 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
         project_name,
     )
 
+def parse_java_project_streaming(
+    directory: str,
+    graph_db: GraphDB,
+    project_name: str,
+) -> dict:
+    """
+    스트리밍 방식 Java 프로젝트 파싱
+
+    파일을 하나씩 파싱하고 즉시 Neo4j에 저장한 후 메모리에서 제거합니다.
+    메모리 사용량을 최소화하여 대규모 프로젝트 분석이 가능합니다.
+
+    Args:
+        directory: Java 소스 디렉토리 경로
+        graph_db: Neo4j GraphDB 인스턴스
+        project_name: 프로젝트명
+
+    Returns:
+        dict: 분석 통계
+            {
+                'total_files': int,
+                'processed_files': int,
+                'packages': int,
+                'classes': int,
+                'beans': int,
+                'endpoints': int,
+                'jpa_entities': int,
+                'jpa_repositories': int,
+                'jpa_queries': int,
+                'test_classes': int,
+                'mybatis_mappers': int,
+                'sql_statements': int,
+                'config_files': int,
+            }
+    """
+    from csa.services.analysis.neo4j_writer import add_single_class_objects_streaming
+
+    logger = get_logger(__name__)
+
+    logger.info(f"Starting Java project streaming analysis in: {directory}")
+    logger.info(f"Project name: {project_name}")
+
+    packages_saved = set()
+    stats = {
+        'total_files': 0,
+        'processed_files': 0,
+        'packages': 0,
+        'classes': 0,
+        'beans': 0,
+        'endpoints': 0,
+        'jpa_entities': 0,
+        'jpa_repositories': 0,
+        'jpa_queries': 0,
+        'test_classes': 0,
+        'mybatis_mappers': 0,
+        'sql_statements': 0,
+        'config_files': 0,
+    }
+
+    # 진행 상황 추적
+    total_classes = 0
+    processed_classes = 0
+    last_logged_percent = 0
+
+    # 먼저 전체 클래스 개수를 계산
+    logger.info("클래스 개수 계산 중...")
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".java"):
+                stats['total_files'] += 1
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        file_content = f.read()
+
+                    tree = javalang.parse.parse(file_content)
+                    for type_decl in tree.types:
+                        if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
+                            total_classes += 1
+                except Exception:
+                    continue
+
+    logger.info(f"총 {total_classes}개 클래스 발견")
+
+    # 1. 파일별 스트리밍 처리
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".java"):
+                file_path = os.path.join(root, file)
+
+                try:
+                    # 파일 파싱
+                    package_node, class_node, package_name = parse_single_java_file(
+                        file_path, project_name, graph_db
+                    )
+
+                    if not class_node:
+                        continue
+
+                    # Package 즉시 저장 (중복 체크)
+                    if package_name and package_name not in packages_saved:
+                        graph_db.add_package(package_node, project_name)
+                        packages_saved.add(package_name)
+                        stats['packages'] += 1
+                        logger.debug(f"Package saved: {package_name}")
+
+                    # Class 즉시 저장
+                    graph_db.add_class(class_node, package_name, project_name)
+                    stats['classes'] += 1
+
+                    # Bean/Endpoint 등 즉시 저장
+                    class_stats = add_single_class_objects_streaming(
+                        graph_db, class_node, package_name, project_name, logger
+                    )
+
+                    # 통계 누적
+                    stats['beans'] += class_stats.get('beans', 0)
+                    stats['endpoints'] += class_stats.get('endpoints', 0)
+                    stats['jpa_entities'] += class_stats.get('jpa_entities', 0)
+                    stats['jpa_repositories'] += class_stats.get('jpa_repositories', 0)
+                    stats['jpa_queries'] += class_stats.get('jpa_queries', 0)
+                    stats['test_classes'] += class_stats.get('test_classes', 0)
+                    stats['mybatis_mappers'] += class_stats.get('mybatis_mappers', 0)
+                    stats['sql_statements'] += class_stats.get('sql_statements', 0)
+
+                    # 진행 상황 로깅
+                    processed_classes += 1
+                    current_percent = int((processed_classes / total_classes) * 100) if total_classes > 0 else 0
+
+                    if current_percent >= last_logged_percent + 10 or processed_classes == total_classes:
+                        last_logged_percent = current_percent
+                        logger.info(f"클래스 파싱 및 저장 진행중 [{processed_classes}/{total_classes}] ({current_percent}%) - 최근: {class_node.name}")
+
+                    # 메모리 해제 (GC 대상)
+                    del class_node
+                    del package_node
+
+                    stats['processed_files'] += 1
+
+                except Exception as e:
+                    logger.error(f"Error processing {file_path}: {e}")
+                    continue
+
+    # 2. MyBatis XML mappers 추출 및 저장
+    logger.info("MyBatis XML mappers 처리 중...")
+    xml_mappers = extract_mybatis_xml_mappers(directory, project_name, graph_db)
+    for mapper in xml_mappers:
+        graph_db.add_mybatis_mapper(mapper, project_name)
+        stats['mybatis_mappers'] += 1
+
+        # XML mapper의 SQL statements 즉시 추출 및 저장
+        from csa.services.analysis.neo4j_writer import _session_scope
+        sql_statements = extract_sql_statements_from_mappers([mapper], project_name)
+        for sql_statement in sql_statements:
+            graph_db.add_sql_statement(sql_statement, project_name)
+            with _session_scope(graph_db) as session:
+                session.execute_write(
+                    graph_db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                    sql_statement.mapper_name,
+                    sql_statement.id,
+                    project_name,
+                )
+            stats['sql_statements'] += 1
+
+    # 3. Config files 처리
+    logger.info("Config files 처리 중...")
+    config_files = extract_config_files(directory)
+    for config in config_files:
+        graph_db.add_config_file(config, project_name)
+        stats['config_files'] += 1
+
+    # 4. Bean 의존성 해결 (Neo4j 쿼리)
+    if stats['beans'] > 0:
+        logger.info("")
+        from csa.services.java_analysis.bean_dependency_resolver import (
+            resolve_bean_dependencies_from_neo4j
+        )
+        resolve_bean_dependencies_from_neo4j(graph_db, project_name, logger)
+
+    logger.info(f"Java project streaming analysis complete:")
+    logger.info(f"  - Java files processed: {stats['processed_files']}/{stats['total_files']}")
+    logger.info(f"  - Packages found: {stats['packages']}")
+    logger.info(f"  - Classes found: {stats['classes']}")
+    logger.info(f"  - Beans: {stats['beans']}")
+    logger.info(f"  - Endpoints: {stats['endpoints']}")
+    logger.info(f"  - JPA Repositories: {stats['jpa_repositories']}")
+    logger.info(f"  - JPA Queries: {stats['jpa_queries']}")
+    logger.info(f"  - MyBatis Mappers: {stats['mybatis_mappers']}")
+    logger.info(f"  - SQL Statements: {stats['sql_statements']}")
+
+    return stats
+
+
 def parse_java_project(directory: str, graph_db: GraphDB = None) -> list[Class]:
     """
     Compatibility wrapper that returns only the parsed classes.
@@ -774,6 +966,7 @@ def parse_java_project(directory: str, graph_db: GraphDB = None) -> list[Class]:
 __all__ = [
     "parse_java_project",
     "parse_java_project_full",
+    "parse_java_project_streaming",
     "parse_single_java_file",
 ]
 
