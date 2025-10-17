@@ -373,6 +373,15 @@ def save_java_objects_to_neo4j(
         logger,
     )
 
+    # Bean 의존성 해결 (Neo4j 기반)
+    # artifacts.beans가 Neo4j에 저장된 후 실행
+    if artifacts.beans:
+        logger.info("")
+        from csa.services.java_analysis.bean_dependency_resolver import (
+            resolve_bean_dependencies_from_neo4j
+        )
+        resolve_bean_dependencies_from_neo4j(db, project_name, logger)
+
     java_end_time = datetime.now()
     java_stats.start_time = java_start_time
     java_stats.end_time = java_end_time

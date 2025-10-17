@@ -708,7 +708,11 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
     
     classes_list = list(classes.values())
     beans = extract_beans_from_classes(classes_list)
-    dependencies = analyze_bean_dependencies(classes_list, beans)
+
+    # NOTE: Bean 의존성은 Neo4j에 저장된 후 resolve_bean_dependencies_from_neo4j()로 해결
+    # 메모리 효율을 위해 파싱 단계에서는 의존성을 해결하지 않음 (방안 B)
+    dependencies = []
+
     endpoints = extract_endpoints_from_classes(classes_list)
     mybatis_mappers = extract_mybatis_mappers_from_classes(classes_list)
     jpa_entities = extract_jpa_entities_from_classes(classes_list)
