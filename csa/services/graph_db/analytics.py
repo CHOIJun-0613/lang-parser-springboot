@@ -223,7 +223,7 @@ class AnalyticsMixin:
                 query = """
                 MATCH (s:SqlStatement)
                 WHERE s.project_name = $project_name
-                RETURN 
+                RETURN
                     s.mapper_name as mapper_name,
                     count(*) as sql_count,
                     collect(DISTINCT s.sql_type) as sql_types
@@ -233,7 +233,7 @@ class AnalyticsMixin:
             else:
                 query = """
                 MATCH (s:SqlStatement)
-                RETURN 
+                RETURN
                     s.mapper_name as mapper_name,
                     count(*) as sql_count,
                     collect(DISTINCT s.sql_type) as sql_types
@@ -241,3 +241,89 @@ class AnalyticsMixin:
                 """
                 result = session.run(query)
             return [record.data() for record in result]
+
+    def get_database_statistics(self, project_name: Optional[str] = None) -> Dict[str, Any]:
+        """Neo4j 데이터베이스에 실제 저장된 노드와 관계 통계 조회"""
+        with self._driver.session(database=self._database) as session:
+            params = {"project_name": project_name} if project_name else {}
+
+            # 전체 노드 수 조회
+            if project_name:
+                total_nodes_query = """
+                MATCH (n)
+                WHERE n.project_name = $project_name
+                RETURN count(n) as count
+                """
+                total_nodes = session.run(total_nodes_query, params).single()["count"]
+            else:
+                total_nodes_query = "MATCH (n) RETURN count(n) as count"
+                total_nodes = session.run(total_nodes_query).single()["count"]
+
+            # 전체 관계 수 조회
+            if project_name:
+                total_rels_query = """
+                MATCH (n)-[r]->(m)
+                WHERE n.project_name = $project_name AND m.project_name = $project_name
+                RETURN count(r) as count
+                """
+                total_rels = session.run(total_rels_query, params).single()["count"]
+            else:
+                total_rels_query = "MATCH ()-[r]->() RETURN count(r) as count"
+                total_rels = session.run(total_rels_query).single()["count"]
+
+            # 라벨별 노드 수 조회
+            if project_name:
+                node_labels_query = """
+                MATCH (n)
+                WHERE n.project_name = $project_name
+                WITH labels(n) as node_labels
+                UNWIND node_labels as label
+                RETURN label, count(*) as count
+                ORDER BY count DESC
+                """
+                node_counts_result = session.run(node_labels_query, params)
+            else:
+                node_labels_query = """
+                CALL db.labels() YIELD label
+                CALL {
+                    WITH label
+                    MATCH (n) WHERE label IN labels(n)
+                    RETURN count(n) as count
+                }
+                RETURN label, count
+                ORDER BY count DESC
+                """
+                node_counts_result = session.run(node_labels_query)
+
+            node_counts = {record["label"]: record["count"] for record in node_counts_result}
+
+            # 타입별 관계 수 조회
+            if project_name:
+                rel_types_query = """
+                MATCH (n)-[r]->(m)
+                WHERE n.project_name = $project_name AND m.project_name = $project_name
+                RETURN type(r) as relationshipType, count(r) as count
+                ORDER BY count DESC
+                """
+                rel_counts_result = session.run(rel_types_query, params)
+            else:
+                rel_types_query = """
+                CALL db.relationshipTypes() YIELD relationshipType
+                CALL {
+                    WITH relationshipType
+                    MATCH ()-[r]->() WHERE type(r) = relationshipType
+                    RETURN count(r) as count
+                }
+                RETURN relationshipType, count
+                ORDER BY count DESC
+                """
+                rel_counts_result = session.run(rel_types_query)
+
+            rel_counts = {record["relationshipType"]: record["count"] for record in rel_counts_result}
+
+            return {
+                "total_nodes": total_nodes,
+                "total_relationships": total_rels,
+                "node_counts_by_label": node_counts,
+                "relationship_counts_by_type": rel_counts,
+            }

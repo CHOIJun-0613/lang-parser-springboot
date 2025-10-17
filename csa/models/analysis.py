@@ -113,3 +113,15 @@ class DatabaseAnalysisArtifacts(BaseModel):
     class Config:
         arbitrary_types_allowed = True
         allow_mutation = True
+
+
+class Neo4jDatabaseStats(BaseModel):
+    """Neo4j 데이터베이스에 실제 저장된 객체 통계"""
+
+    total_nodes: int = 0
+    total_relationships: int = 0
+    node_counts_by_label: Dict[str, int] = Field(default_factory=dict)
+    relationship_counts_by_type: Dict[str, int] = Field(default_factory=dict)
+
+    class Config:
+        allow_mutation = True

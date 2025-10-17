@@ -105,6 +105,19 @@ def analyze_project(
             logger,
         )
 
+        # DB 분석을 먼저 수행하여 스키마 정보를 Neo4j에 저장
+        if all_objects or db_object:
+            if resolved_db_folder:
+                if os.path.exists(resolved_db_folder):
+                    db_stats = analyze_full_project_db(db, resolved_db_folder, project_name, dry_run, logger)
+                else:
+                    logger.warning("Database script folder does not exist: %s", resolved_db_folder)
+                    logger.info("Please check the DB_SCRIPT_FOLDER path in your .env file or use --db-script-folder option")
+            else:
+                logger.warning("Database script folder not provided - skipping database analysis")
+                logger.info("To analyze database objects, use --db-script-folder option to specify the path to SQL script files")
+
+        # Java 분석을 나중에 수행하여 DB 스키마와의 관계를 정확하게 연결
         if all_objects or java_object:
             artifacts, final_project_name = analyze_full_project_java(java_source_folder, project_name, logger)
             java_stats = save_java_objects_to_neo4j(
@@ -117,19 +130,8 @@ def analyze_project(
                 logger,
             )
 
-        if all_objects or db_object:
-            if resolved_db_folder:
-                if os.path.exists(resolved_db_folder):
-                    db_stats = analyze_full_project_db(db, resolved_db_folder, project_name, dry_run, logger)
-                else:
-                    logger.warning("Database script folder does not exist: %s", resolved_db_folder)
-                    logger.info("Please check the DB_SCRIPT_FOLDER path in your .env file or use --db-script-folder option")
-            else:
-                logger.warning("Database script folder not provided - skipping database analysis")
-                logger.info("To analyze database objects, use --db-script-folder option to specify the path to SQL script files")
-
         overall_end_time = datetime.now()
-        print_analysis_summary(overall_start_time, overall_end_time, java_stats, db_stats, dry_run)
+        print_analysis_summary(overall_start_time, overall_end_time, java_stats, db_stats, dry_run, db, project_name)
 
         result = AnalysisResult(
             success=True,

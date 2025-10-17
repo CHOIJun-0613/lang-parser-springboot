@@ -107,6 +107,8 @@ def print_analysis_summary(
     java_stats: Optional[JavaAnalysisStats],
     db_stats: Optional[DatabaseAnalysisStats],
     dry_run: bool,
+    graph_db=None,
+    project_name: Optional[str] = None,
 ) -> None:
     """
     Print a detailed summary of the analysis execution.
@@ -195,5 +197,44 @@ def print_analysis_summary(
         logger.info("  - Columns: %s개", format_number(db_stats.columns))
         logger.info("  - Indexes: %s개", format_number(db_stats.indexes))
         logger.info("  - Constraints: %s개", format_number(db_stats.constraints))
+
+    # Neo4j 실제 저장 통계 출력
+    if graph_db and not dry_run:
+        logger.info("")
+        logger.info("-" * 80)
+        logger.info("[Neo4j Database 저장 현황]")
+        logger.info("-" * 80)
+
+        try:
+            # 전체 DB 통계 조회
+            all_stats = graph_db.get_database_statistics(None)
+
+            logger.info("전체 데이터베이스 저장 객체:")
+            logger.info("  - 총 노드 수: %s개", format_number(all_stats["total_nodes"]))
+            logger.info("  - 총 관계 수: %s개", format_number(all_stats["total_relationships"]))
+
+            # 프로젝트별 통계가 의미있는 경우에만 추가 표시
+            if project_name:
+                project_stats = graph_db.get_database_statistics(project_name)
+                if project_stats["total_nodes"] > 0:
+                    logger.info("")
+                    logger.info(f"현재 프로젝트({project_name}) 저장 객체:")
+                    logger.info("  - 노드 수: %s개", format_number(project_stats["total_nodes"]))
+                    logger.info("  - 관계 수: %s개", format_number(project_stats["total_relationships"]))
+
+            if all_stats["node_counts_by_label"]:
+                logger.info("")
+                logger.info("라벨별 노드 수 (전체):")
+                for label, count in all_stats["node_counts_by_label"].items():
+                    logger.info("  - %s: %s개", label, format_number(count))
+
+            if all_stats["relationship_counts_by_type"]:
+                logger.info("")
+                logger.info("관계 타입별 수 (전체):")
+                for rel_type, count in all_stats["relationship_counts_by_type"].items():
+                    logger.info("  - %s: %s개", rel_type, format_number(count))
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("Neo4j 통계 조회 실패: %s", str(e))
 
     _log_quick_summary(overall_start_time, java_stats, db_stats)
