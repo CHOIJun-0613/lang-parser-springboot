@@ -3,13 +3,80 @@
     "terminal.integrated.env.linux": {
         "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
     },
-    // Python 설정
+    //Python 설정
     "python.defaultInterpreterPath": "/usr/local/bin/python",
     "[python]": {
         "editor.defaultFormatter": "ms-python.autopep8"
     },
-    "neo4j.connection": {
-        "uri": "bolt://localhost:7687",
-        "username": "neo4j"
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.fontLigatures.fallbackLigatures": [
+
+        "<--",
+        "<---",
+        "<<-",
+        "<-",
+        "->",
+        "->>",
+        "-->",
+        "--->",
+        "<==",
+        "<===",
+        "<<=",
+        "<=",
+        "=>",
+        "=>>",
+        "==>",
+        "===>",
+        ">=",
+        ">>=",
+        "<->",
+        "<-->",
+        "<--->",
+        "<---->",
+        "<=>",
+        "<==>",
+        "<===>",
+        "<====>",
+        "::",
+        ":::",
+        "<~~",
+        "</",
+        "</>",
+        "/>",
+        "~~>",
+        "==",
+        "!=",
+        "/=",
+        "~=",
+        "<>",
+        "===",
+        "!==",
+        "!===",
+        "<:",
+        ":=",
+        "*=",
+        "*+",
+        "<*",
+        "<*>",
+        "*>",
+        "<|",
+        "<|>",
+        "|>",
+        "+*",
+        "=*",
+        "=:",
+        ":>",
+        "/*",
+        "*/",
+        "+++",
+        "<!--",
+        "<!---"
+    ],
+    "terminal.integrated.automationProfile.linux": {
+
+    },
+    "terminal.integrated.automationProfile.osx": {
+
     }
 }
