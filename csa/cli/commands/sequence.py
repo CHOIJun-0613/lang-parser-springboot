@@ -6,6 +6,7 @@ import click
 from csa.cli.core.lifecycle import with_command_lifecycle
 from csa.dbwork.connection_pool import get_connection_pool
 from csa.diagrams.sequence.generator import SequenceDiagramGenerator
+from csa.utils.logger import set_command_context
 
 
 @click.command(name="sequence")
@@ -48,6 +49,8 @@ def sequence_command(
     output_dir,
 ):
     """Generate sequence diagram for a specific class and optionally a method."""
+    # 명령어 실행 직전에 컨텍스트 설정 (모든 로거가 같은 파일 사용)
+    set_command_context("sequence")
 
     result = {
         "success": False,

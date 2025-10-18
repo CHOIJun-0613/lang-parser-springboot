@@ -22,16 +22,29 @@ class RulesManager:
     def __init__(self):
         if self._initialized:
             return
-            
-        self.logger = get_logger(__name__)
+
+        self._logger = None  # 지연 초기화: 첫 사용 시 생성
         self.rules_directory = "rules"
         self._logical_name_rules: Dict[str, Dict[str, Any]] = {}
         self._description_rules: Dict[str, Dict[str, Any]] = {}
+        self._rules_loaded = False  # 규칙 로드 여부 플래그
         self._initialized = True
-        
-        # 애플리케이션 시작 시 모든 규칙 로드
-        self._load_all_rules()
-    
+
+        # 규칙은 첫 사용 시 지연 로드
+
+    @property
+    def logger(self):
+        """지연 초기화된 로거 프로퍼티"""
+        if self._logger is None:
+            self._logger = get_logger(__name__)
+        return self._logger
+
+    def _ensure_rules_loaded(self):
+        """규칙이 로드되지 않았으면 로드"""
+        if not self._rules_loaded:
+            self._load_all_rules()
+            self._rules_loaded = True
+
     def _load_all_rules(self):
         """모든 규칙 파일을 한 번에 로드"""
         self.logger.info("규칙 파일들을 로드 중...")
@@ -199,18 +212,21 @@ class RulesManager:
     
     def get_logical_name_rules(self, project_name: str) -> Dict[str, Any]:
         """프로젝트별 논리명 규칙 반환"""
+        self._ensure_rules_loaded()  # 첫 사용 시 로드
         return self._logical_name_rules.get(project_name, self._logical_name_rules.get("default", {}))
-    
+
     def get_description_rules(self, project_name: str) -> Dict[str, Any]:
         """프로젝트별 Description 규칙 반환"""
+        self._ensure_rules_loaded()  # 첫 사용 시 로드
         return self._description_rules.get(project_name, self._description_rules.get("default", {}))
-    
+
     def reload_rules(self):
         """규칙 파일들 재로드 (개발 중 규칙 변경 시 사용)"""
         self.logger.info("규칙 파일들 재로드 중...")
         self._logical_name_rules.clear()
         self._description_rules.clear()
-        self._load_all_rules()
+        self._rules_loaded = False
+        self._ensure_rules_loaded()  # 즉시 재로드
 
 
 # 전역 인스턴스

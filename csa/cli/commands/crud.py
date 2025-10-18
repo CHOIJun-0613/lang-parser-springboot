@@ -9,6 +9,7 @@ from csa.cli.core.lifecycle import with_command_lifecycle
 from csa.cli.core.storage import _save_crud_matrix_as_excel, _save_crud_matrix_as_image
 from csa.services.db_call_analysis import DBCallAnalysisService
 from csa.services.graph_db import GraphDB
+from csa.utils.logger import set_command_context
 
 
 def _ensure_password() -> str | None:
@@ -38,6 +39,9 @@ def _ensure_password() -> str | None:
 @with_command_lifecycle("crud-matrix")
 def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto_create_relationships):
     """Show CRUD matrix for classes and tables."""
+
+    # 명령어 실행 직전에 컨텍스트 설정 (모든 로거가 같은 파일 사용)
+    set_command_context("crud-matrix")
 
     result = {"success": False, "message": "", "stats": {}, "error": None, "files": []}
 

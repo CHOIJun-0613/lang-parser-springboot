@@ -9,7 +9,21 @@ from typing import Any, Dict, List, Optional
 from csa.parsers.base import collapse_whitespace
 from csa.utils.logger import get_logger
 
-LOGGER = get_logger(__name__)
+_LOGGER = None
+
+def _get_logger():
+    """지연 초기화된 로거"""
+    global _LOGGER
+    if _LOGGER is None:
+        _LOGGER = get_logger(__name__)
+    return _LOGGER
+
+# 하위 호환성을 위해 LOGGER 별칭 제공
+class _LoggerProxy:
+    def __getattr__(self, name):
+        return getattr(_get_logger(), name)
+
+LOGGER = _LoggerProxy()
 
 
 @dataclass

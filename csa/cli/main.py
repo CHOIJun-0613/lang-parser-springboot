@@ -3,6 +3,7 @@ import sys
 
 import click
 from dotenv import load_dotenv
+from csa.utils.logger import set_command_context
 
 # Ensure project root is on sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -13,23 +14,24 @@ from csa.cli.commands.db_calls import register as register_db_commands
 from csa.cli.commands.graph_queries import register as register_graph_queries
 from csa.cli.commands.sequence import register as register_sequence
 from csa.dbwork.connection_pool import get_connection_pool
-from csa.utils.logger import get_logger
 
 load_dotenv()
 
-# 애플리케이션 시작 시 규칙 매니저 초기화
+# 애플리케이션 시작 시 규칙 매니저 초기화 (로거는 수정 후 사용)
 try:
     from csa.utils.rules_manager import rules_manager
-    logger = get_logger(__name__)
-    logger.info("규칙 매니저 초기화 완료")
 except Exception as e:
-    logger = get_logger(__name__)
-    logger.warning(f"규칙 매니저 초기화 실패: {e}")
+    import sys
+    print(f"Warning: 규칙 매니저 초기화 실패: {e}", file=sys.stderr)
 
 
 @click.group()
-def cli():
+@click.pass_context
+def cli(ctx):
     """CSA CLI entrypoint."""
+    # Click에서 호출된 명령어 이름을 컨텍스트에 저장
+    # (이 시점에는 명령어가 결정되지 않았으므로, result_callback 사용)
+    pass
 
 
 register_graph_queries(cli)

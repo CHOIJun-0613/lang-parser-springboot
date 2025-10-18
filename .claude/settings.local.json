@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(pip install psutil)"
+      "Bash(pip install psutil)",
+      "Bash(for file in logs/*.log)",
+      "Bash(do echo \"\")",
+      "Bash(head -3 \"$file\")",
+      "Bash(done)",
+      "Bash(head -5 \"$file\")",
+      "Bash(cat logs/run-20251018.log)",
+      "Bash(if [ -f logs/run-20251018.log ])",
+      "Bash(then echo \"❌ run-20251018.log 존재\")",
+      "Bash(else echo \"✅ run-20251018.log 없음 (성공!)\")",
+      "Bash(fi)"
     ],
     "deny": [],
     "ask": []

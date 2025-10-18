@@ -4,7 +4,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
 from csa.dbwork.connection_pool import get_connection_pool
-from csa.utils.logger import get_logger
+from csa.utils.logger import get_logger, set_command_context
 
 
 def format_duration(seconds: float) -> str:
@@ -31,8 +31,19 @@ def start(command_name: str) -> Dict[str, Any]:
     Returns:
         dict: 시작 시간, 로거, 커넥션 풀 등의 컨텍스트 정보
     """
+    # 전역 컨텍스트 설정: 모든 서브 모듈의 로거가 동일한 로그 파일을 사용하도록 함
+    set_command_context(command_name)
+
     start_time = datetime.now()
     logger = get_logger(__name__, command=command_name)
+
+    # 규칙 매니저 초기화 로그 출력 (명령어별 로그 파일에 기록)
+    try:
+        from csa.utils.rules_manager import rules_manager
+        logger.info("규칙 매니저 초기화 완료")
+    except Exception as e:
+        logger.warning(f"규칙 매니저 초기화 실패: {e}")
+
     logger.info("")
     logger.info(f"====== {command_name} 작업 시작 ======")
 

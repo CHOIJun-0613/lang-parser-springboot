@@ -9,7 +9,7 @@ from csa.services.analyze_service import (
     validate_analyze_options,
 )
 from csa.services.java_parser import extract_project_name
-from csa.utils.logger import get_logger
+from csa.utils.logger import get_logger, set_command_context
 
 
 @click.command(name="analyze")
@@ -49,6 +49,9 @@ def analyze_command(
     update,
 ):
     """Analyze Java project and database objects."""
+
+    # 명령어 실행 직전에 컨텍스트 설정 (모든 로거가 같은 파일 사용)
+    set_command_context("analyze")
 
     logger = get_logger(__name__, command="analyze")
 
