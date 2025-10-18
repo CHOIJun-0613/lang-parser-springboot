@@ -93,7 +93,7 @@ class ProjectMixin:
         """Add a class node and all dependent relationships."""
         package_name = package_name or getattr(class_node, "package_name", None) or getattr(class_node, "package", "")
         project_name = project_name or getattr(class_node, "project_name", None) or getattr(class_node, "project", "")
-        self.logger.debug(f"Adding class: {class_node.name}, package: {package_name}, project: {project_name}")
+        self.logger.debug(f"Adding class: {class_node.name}, package_name: {package_name}, project: {project_name}")
         try:
             self._execute_write(self._create_class_node_tx, class_node, package_name, project_name)
             self.logger.debug(f"Successfully added class: {class_node.name}")
@@ -126,11 +126,11 @@ class ProjectMixin:
                 return normalised
             return {"value": raw}
         class_query = (
-            "MERGE (c:Class {name: $name, package: $package}) "
+            "MERGE (c:Class {name: $name, package_name: $package_name}) "
             "SET c.file_path = $file_path, c.type = $type, c.sub_type = $sub_type, "
             "c.source = $source, c.logical_name = $logical_name, "
             "c.superclass = $superclass, c.interfaces = $interfaces, "
-            "c.imports = $imports, c.package_name = $package_name, c.package = $package_name, "
+            "c.imports = $imports, c.package_name = $package_name, "
             "c.project_name = $project_name, c.description = $description, c.ai_description = $ai_description, "
             "c.updated_at = $updated_at"
         )
@@ -146,7 +146,6 @@ class ProjectMixin:
             interfaces=class_node.interfaces,
             imports=class_node.imports,
             package_name=package_name,
-            package=package_name,
             project_name=project_name,
             description=class_node.description or "",
             ai_description=class_node.ai_description or "",
@@ -155,7 +154,7 @@ class ProjectMixin:
         if package_name:
             package_class_query = (
                 "MATCH (p:Package {name: $package_name}) "
-                "MATCH (c:Class {name: $class_name}) "
+                "MATCH (c:Class {name: $class_name, package_name: $package_name}) "
                 "MERGE (p)-[:CONTAINS]->(c)"
             )
             tx.run(
@@ -165,38 +164,39 @@ class ProjectMixin:
             )
         project_class_query = (
             "MATCH (proj:Project {name: $project_name}) "
-            "MATCH (c:Class {name: $class_name}) "
+            "MATCH (c:Class {name: $class_name, package_name: $package_name}) "
             "MERGE (proj)-[:CONTAINS]->(c)"
         )
         tx.run(
             project_class_query,
             project_name=project_name,
             class_name=class_node.name,
+            package_name=package_name,
         )
         for import_class in class_node.imports:
             if is_external_library(import_class):
                 # 외부 라이브러리: name만 사용, package는 빈 문자열
                 import_query = (
-                    "MERGE (imp:Class {name: $import_class, package: ''}) "
+                    "MERGE (imp:Class {name: $import_class, package_name: ''}) "
                     "SET imp.is_external = true "
                     "WITH imp "
-                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MATCH (c:Class {name: $class_name, package_name: $package_name}) "
                     "MERGE (c)-[:IMPORTS]->(imp)"
                 )
                 tx.run(
                     import_query,
                     import_class=import_class,
                     class_name=class_node.name,
-                    package=package_name,
+                    package_name=package_name,
                 )
             else:
                 # 프로젝트 내부: name + package 조합
                 simple_name, import_package = extract_package_from_full_name(import_class)
                 import_query = (
-                    "MERGE (imp:Class {name: $import_name, package: $import_package}) "
+                    "MERGE (imp:Class {name: $import_name, package_name: $import_package}) "
                     "SET imp.is_external = false "
                     "WITH imp "
-                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MATCH (c:Class {name: $class_name, package_name: $package_name}) "
                     "MERGE (c)-[:IMPORTS]->(imp)"
                 )
                 tx.run(
@@ -204,7 +204,7 @@ class ProjectMixin:
                     import_name=simple_name,
                     import_package=import_package or "",
                     class_name=class_node.name,
-                    package=package_name,
+                    package_name=package_name,
                 )
         for annotation in class_node.annotations:
             annotation_name = getattr(annotation, "name", str(annotation))
@@ -221,25 +221,25 @@ class ProjectMixin:
         if class_node.superclass:
             if is_external_library(class_node.superclass):
                 superclass_query = (
-                    "MERGE (super:Class {name: $superclass, package: ''}) "
+                    "MERGE (super:Class {name: $superclass, package_name: ''}) "
                     "SET super.is_external = true "
                     "WITH super "
-                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MATCH (c:Class {name: $class_name, package_name: $package_name}) "
                     "MERGE (c)-[:EXTENDS]->(super)"
                 )
                 tx.run(
                     superclass_query,
                     superclass=class_node.superclass,
                     class_name=class_node.name,
-                    package=package_name,
+                    package_name=package_name,
                 )
             else:
                 simple_name, super_package = extract_package_from_full_name(class_node.superclass)
                 superclass_query = (
-                    "MERGE (super:Class {name: $superclass, package: $super_package}) "
+                    "MERGE (super:Class {name: $superclass, package_name: $super_package}) "
                     "SET super.is_external = false "
                     "WITH super "
-                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MATCH (c:Class {name: $class_name, package_name: $package_name}) "
                     "MERGE (c)-[:EXTENDS]->(super)"
                 )
                 tx.run(
@@ -247,7 +247,7 @@ class ProjectMixin:
                     superclass=simple_name,
                     super_package=super_package or "",
                     class_name=class_node.name,
-                    package=package_name,
+                    package_name=package_name,
                 )
         for interface in class_node.interfaces:
             interface_query = (
@@ -518,7 +518,7 @@ class ProjectMixin:
             if is_external_library(method_call.target_class, target_package):
                 # 외부 라이브러리
                 target_class_query = (
-                    "MERGE (tc:Class {name: $target_class, package: ''}) "
+                    "MERGE (tc:Class {name: $target_class, package_name: ''}) "
                     "SET tc.is_external = true"
                 )
                 tx.run(
@@ -526,7 +526,7 @@ class ProjectMixin:
                     target_class=method_call.target_class,
                 )
                 target_method_query = (
-                    "MATCH (tc:Class {name: $target_class, package: ''}) "
+                    "MATCH (tc:Class {name: $target_class, package_name: ''}) "
                     "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
                     "MERGE (tc)-[:HAS_METHOD]->(tm)"
                 )
@@ -544,21 +544,21 @@ class ProjectMixin:
                     # Neo4j에서 외부 클래스의 정확한 패키지 조회
                     outer_class_result = tx.run(
                         "MATCH (oc:Class {name: $outer_class, project_name: $project_name}) "
-                        "RETURN oc.package as package "
+                        "RETURN oc.package_name as package_name "
                         "LIMIT 1",
                         outer_class=outer_class,
                         project_name=project_name
                     )
 
                     record = outer_class_result.single()
-                    if record and record['package']:
-                        actual_target_package = record['package']
+                    if record and record['package_name']:
+                        actual_target_package = record['package_name']
                     else:
                         # 외부 클래스를 찾지 못한 경우 target_package 사용
                         actual_target_package = target_package or package_name
 
                     target_class_query = (
-                        "MERGE (tc:Class {name: $target_class, package: $target_package}) "
+                        "MERGE (tc:Class {name: $target_class, package_name: $target_package}) "
                         "SET tc.is_external = false, tc.is_inner_class = true"
                     )
                     tx.run(
@@ -567,7 +567,7 @@ class ProjectMixin:
                         target_package=actual_target_package,
                     )
                     target_method_query = (
-                        "MATCH (tc:Class {name: $target_class, package: $target_package}) "
+                        "MATCH (tc:Class {name: $target_class, package_name: $target_package}) "
                         "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
                         "MERGE (tc)-[:HAS_METHOD]->(tm)"
                     )
@@ -580,7 +580,7 @@ class ProjectMixin:
                 else:
                     # 일반 클래스
                     target_class_query = (
-                        "MERGE (tc:Class {name: $target_class, package: $target_package}) "
+                        "MERGE (tc:Class {name: $target_class, package_name: $target_package}) "
                         "SET tc.is_external = false"
                     )
                     tx.run(
@@ -589,7 +589,7 @@ class ProjectMixin:
                         target_package=target_package,
                     )
                     target_method_query = (
-                        "MATCH (tc:Class {name: $target_class, package: $target_package}) "
+                        "MATCH (tc:Class {name: $target_class, package_name: $target_package}) "
                         "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
                         "MERGE (tc)-[:HAS_METHOD]->(tm)"
                     )

@@ -499,3 +499,12 @@ class Class(BaseModel):
                 values["package_name"] = package
         return values
 
+    @property
+    def package(self) -> str:
+        """기존 코드 호환을 위해 package 속성을 package_name과 동기화한다."""
+        return self.package_name
+
+    @package.setter
+    def package(self, value: str) -> None:
+        """package 속성에 값을 넣으면 내부적으로 package_name에 반영한다."""
+        self.package_name = value
