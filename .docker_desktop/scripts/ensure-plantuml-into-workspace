@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET="/working/csaadm/libs/plantuml.jar"
+SOURCE="/opt/plantuml/plantuml.jar"
+
+if [ ! -f "$TARGET" ]; then
+  echo "[ensure-plantuml] plantuml.jar not found at $TARGET. Copying from image..."
+  mkdir -p "$(dirname "$TARGET")"
+  cp -f "$SOURCE" "$TARGET"
+  echo "[ensure-plantuml] Copied plantuml.jar -> $TARGET"
+else
+  echo "[ensure-plantuml] plantuml.jar already exists at $TARGET (skip copy)"
+fi

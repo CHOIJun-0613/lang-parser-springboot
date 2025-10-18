@@ -1,0 +1,37 @@
+{
+  "name": "CSA Dev Container",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/working/csaadm",
+
+  // 컨테이너 시작 전(호스트에서 실행): env.desktop → .env 자동 복사
+  "initializeCommand": "powershell -Command \"if (-not (Test-Path .\\.env -PathType Leaf) -and (Test-Path .\\env.desktop -PathType Leaf)) { Copy-Item .\\env.desktop .\\.env; Write-Host '[init] Copied env.gitpod -> .env' }\"",
+
+  // 컨테이너 안에서: 개발 환경 설정
+  "postCreateCommand": [
+    "echo '[setup] Starting dev environment setup...'",
+    "/usr/local/bin/ensure-plantuml-into-workspace",
+    "echo '[setup] Creating Python virtual environment...'",
+    "python -m venv /working/csaadm/.venv",
+    "echo '[setup] Installing Python packages...'",
+    "/working/csaadm/.venv/bin/pip install --upgrade pip",
+    "/working/csaadm/.venv/bin/pip install -r /working/csaadm/requirements.txt",
+    "echo '[setup] Installing Claude Code CLI...'",
+    "sudo npm install -g @anthropic-ai/claude-code",
+    "echo '[setup] Installing Codex CLI...'",
+    "sudo npm install -g @openai/codex",
+    "echo '[setup] Dev environment setup complete!'"
+  ],
+
+  "forwardPorts": [13000, 7474, 7687],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker",
+        "neo4j.neo4j-extension"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}

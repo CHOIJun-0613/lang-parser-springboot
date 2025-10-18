@@ -1,0 +1,96 @@
+version: "3.9"
+
+networks:
+  csa-net:
+    driver: bridge
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .docker_desktop/Dockerfile
+    networks:
+      - csa-net
+    # .env 파일을 읽어 환경 변수로 사용
+    env_file: ../.env
+
+    # VS Code가 attach 하는 컨테이너의 작업 폴더
+    working_dir: /working/csaadm
+
+    volumes:
+      - ..:/working/csaadm:cached
+
+    # .env 파일에 없거나 .env 파일이 없을 경우의 기본값
+    environment:
+      NEO4J_URI: bolt://csadb-neo4j:7687 # localhost -> 서비스명(csadb-neo4j)으로 변경
+      NEO4J_USERNAME: csaadm
+      PYTHONUNBUFFERED: "1"
+      PLANTUML_JAR_PATH: /working/csaadm/libs/plantuml.jar
+      MMDC_PATH: /usr/local/bin/mmdc
+      JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
+
+    # Dev Container attach만 유지(앱 실행은 터미널에서)
+    command: bash -lc "sleep infinity"
+
+  csadb-neo4j:
+    image: neo4j:5
+    hostname: csadb-neo4j
+    networks:
+      - csa-net
+    restart: unless-stopped
+    ports:
+      - "7474:7474" # Neo4j Browser
+      - "7687:7687" # Bolt port
+
+    environment:
+      # 초기 관리자 암호(임시)
+      NEO4J_AUTH: neo4j/neo4j-temp
+      # Community: 기본 DB 이름 지정
+      NEO4J_dbms_default__database: csadb01
+      # 플러그인
+      NEO4J_PLUGINS: "apoc,gds"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      # 메모리
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 1g
+
+    volumes:
+      - ../neo4j/data:/data
+      - ../neo4j/import:/import
+      - ../neo4j/plugins:/plugins
+      - ../neo4j/conf:/var/lib/neo4j/conf
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"] # 컨테이너 내부에서는 localhost 사용
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+
+  neo4j-init:
+    image: neo4j:5
+    depends_on:
+      csadb-neo4j:
+        condition: service_healthy
+    networks:
+      - csa-net
+    # .env 파일을 읽어 환경 변수로 사용
+    env_file: ../.env
+
+    volumes:
+      - ../neo4j/init.system.cypher:/init.system.cypher:ro
+
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      "
+      set -e
+      echo '[init] Waiting for Neo4j to be ready...'
+      until cypher-shell -a bolt://csadb-neo4j:7687 -u neo4j -p neo4j-temp 'RETURN 1' &> /dev/null; do
+        echo '[init] Neo4j is unavailable - sleeping'
+        sleep 2
+      done
+      
+      echo '[init] Neo4j is up - creating csaadm...'
+      cypher-shell -a bolt://csadb-neo4j:7687 -u neo4j -p neo4j-temp -d system -f /init.system.cypher
+      echo '[init] Neo4j user csaadm init done ✅'
+      "
