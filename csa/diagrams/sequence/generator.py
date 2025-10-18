@@ -9,24 +9,26 @@ from neo4j import Driver
 class SequenceDiagramGenerator:
     """Facade for sequence diagram generation - delegates to format-specific generators."""
     
-    def __init__(self, driver: Driver, format: str = 'mermaid'):
+    def __init__(self, driver: Driver, format: str = 'mermaid', database: Optional[str] = None):
         """
         Initialize the sequence diagram generator.
         
         Args:
             driver: Neo4j driver instance
             format: Diagram format ('plantuml' or 'mermaid')
+            database: Target Neo4j database (optional)
         """
         self.driver = driver
         self.format = format.lower()
+        self.database = database
         
-        # Format에 따라 적절한 generator 선택
+        # Format별로 맞는 generator 구성
         if self.format == 'plantuml':
             from csa.diagrams.sequence.plantuml import PlantUMLDiagramGenerator
-            self._generator = PlantUMLDiagramGenerator(driver)
+            self._generator = PlantUMLDiagramGenerator(driver, database=database)
         else:
             from csa.diagrams.sequence.mermaid import MermaidDiagramGenerator
-            self._generator = MermaidDiagramGenerator(driver)
+            self._generator = MermaidDiagramGenerator(driver, database=database)
 
     def generate_sequence_diagram(
         self,
@@ -53,7 +55,7 @@ class SequenceDiagramGenerator:
             image_format: Image format (png, svg, pdf, or none)
             image_width: Image width in pixels
             image_height: Image height in pixels
-            
+        
         Returns:
             Dictionary containing generated file paths and metadata
         """

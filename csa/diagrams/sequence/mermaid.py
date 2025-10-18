@@ -26,8 +26,9 @@ logger = get_logger(__name__)
 class MermaidDiagramGenerator:
     """Generates Mermaid sequence diagrams from Java code analysis data."""
 
-    def __init__(self, driver: Driver, external_packages: Optional[Set[str]] = None):
+    def __init__(self, driver: Driver, database: Optional[str] = None, external_packages: Optional[Set[str]] = None):
         self.driver = driver
+        self.database = database
 
     def generate_sequence_diagram(
         self,
@@ -42,7 +43,8 @@ class MermaidDiagramGenerator:
         image_height: int = 800
     ) -> Dict:
         try:
-            with self.driver.session() as session:
+            session_kwargs = {"database": self.database} if self.database else {}
+            with self.driver.session(**session_kwargs) as session:
                 class_info = self._get_class_info(session, class_name, project_name)
                 if not class_info:
                     return f"Error: Class '{class_name}' not found in database."

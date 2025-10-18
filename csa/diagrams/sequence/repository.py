@@ -67,12 +67,13 @@ def fetch_call_chain(
     project_name: Optional[str],
 ) -> List[Dict]:
     """Retrieve call chain from Neo4j."""
-    query = """
-    MATCH (source_class:Class {name: $class_name})-[:HAS_METHOD]->(source_method:Method)
+    depth_limit = max(0, int(max_depth))
+    query = f"""
+    MATCH (source_class:Class {{name: $class_name}})-[:HAS_METHOD]->(source_method:Method)
     WHERE ($method_name IS NULL OR source_method.name = $method_name)
       AND ($project_name IS NULL OR source_class.project_name = $project_name)
-    OPTIONAL MATCH path = (source_method)-[:CALLS*0..$max_depth]->(target_method:Method)
-    WITH source_method, target_method, path
+    OPTIONAL MATCH path = (source_method)-[:CALLS*0..{depth_limit}]->(target_method:Method)
+    WITH source_class, source_method, target_method, path
     OPTIONAL MATCH (target_class:Class)-[:HAS_METHOD]->(target_method)
     OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
     RETURN
@@ -93,7 +94,6 @@ def fetch_call_chain(
         query,
         class_name=class_name,
         method_name=method_name,
-        max_depth=max_depth,
         project_name=project_name,
     )
     return [dict(record) for record in result]

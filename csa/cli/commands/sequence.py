@@ -77,7 +77,7 @@ def sequence_command(
     generated_files: list[str] = []
     try:
         with pool.connection() as conn:
-            generator = SequenceDiagramGenerator(conn.driver, format=format)
+            generator = SequenceDiagramGenerator(conn.driver, format=format, database=conn.database)
 
             click.echo(f"Generating {format} sequence diagram for class: {class_name}")
             if method_name:

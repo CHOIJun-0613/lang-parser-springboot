@@ -26,8 +26,9 @@ logger = get_logger(__name__)
 class PlantUMLDiagramGenerator:
     """Generates PlantUML sequence diagrams from Java code analysis data."""
 
-    def __init__(self, driver: Driver, external_packages: Optional[Set[str]] = None):
+    def __init__(self, driver: Driver, database: Optional[str] = None, external_packages: Optional[Set[str]] = None):
         self.driver = driver
+        self.database = database
 
     def generate_sequence_diagram(
         self,
@@ -42,7 +43,8 @@ class PlantUMLDiagramGenerator:
         image_height: int = 800
     ) -> Dict:
         try:
-            with self.driver.session() as session:
+            session_kwargs = {"database": self.database} if self.database else {}
+            with self.driver.session(**session_kwargs) as session:
                 class_info = get_class_info(session, class_name, project_name)
                 if not class_info:
                     return f"Error: Class '{class_name}' not found in database."
@@ -351,6 +353,16 @@ class PlantUMLDiagramGenerator:
             
             # Build properly ordered flow with activation stack management
             activation_events = build_activation_aware_flow(calls, main_class_name, top_method)
+            for event in activation_events:
+                if event.get('type') == 'call':
+                    call_details = event.get('call', {}) or {}
+                    event.setdefault('source', call_details.get('source_class', main_class_name))
+                    event.setdefault('target', call_details.get('target_class'))
+                    event.setdefault('method', call_details.get('target_method'))
+                    event.setdefault('return_type', call_details.get('return_type', 'void'))
+                    event.setdefault('source_package', call_details.get('source_package'))
+                    event.setdefault('target_package', call_details.get('target_package'))
+                    event.setdefault('call', call_details)
             
             # Render the events with proper activation lifecycle
             activation_stack = []  # Track activation stack for proper lifecycle

@@ -149,7 +149,7 @@ def list_classes_command(neo4j_uri, neo4j_user, neo4j_database):
             return
 
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
-        generator = SequenceDiagramGenerator(driver)
+        generator = SequenceDiagramGenerator(driver, database=neo4j_database)
 
         classes = generator.get_available_classes()
         if not classes:
@@ -177,9 +177,10 @@ def list_classes_command(neo4j_uri, neo4j_user, neo4j_database):
 @click.command(name="list-methods")
 @click.option("--neo4j-uri", default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help="Neo4j URI")
 @click.option("--neo4j-user", default=os.getenv("NEO4J_USER", "neo4j"), help="Neo4j username")
+@click.option("--neo4j-database", default=os.getenv("NEO4J_DATABASE", "neo4j"), help="Neo4j database name")
 @click.option("--class-name", required=True, help="Name of the class to list methods for")
 @with_command_lifecycle("list-methods")
-def list_methods_command(neo4j_uri, neo4j_user, class_name):
+def list_methods_command(neo4j_uri, neo4j_user, neo4j_database, class_name):
     """List all methods declared for the specified class."""
 
     driver = None
@@ -191,7 +192,7 @@ def list_methods_command(neo4j_uri, neo4j_user, class_name):
             return
 
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
-        generator = SequenceDiagramGenerator(driver)
+        generator = SequenceDiagramGenerator(driver, database=neo4j_database)
 
         methods = generator.get_class_methods(class_name)
         if not methods:
