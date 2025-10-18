@@ -58,10 +58,10 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
     
     try:
         tree = javalang.parse.parse(file_content)
-        logger.info(f"Successfully parsed file: {file_path}")
+        logger.debug(f"Successfully parsed file: {file_path}")
         
         package_name = tree.package.name if tree.package else ""
-        logger.info(f"Parsed package name: {package_name}")
+        logger.debug(f"Parsed package name: {package_name}")
         
         if package_name:
             package_node = Package(name=package_name)
@@ -326,7 +326,7 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             
             class_node.methods.append(method)
         
-        logger.info(f"Successfully parsed single file: {file_path}")
+        logger.debug(f"Successfully parsed single file: {file_path}")
         return package_node, class_node, package_name
         
     except Exception as e:

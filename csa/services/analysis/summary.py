@@ -11,6 +11,102 @@ from csa.models.analysis import DatabaseAnalysisStats, JavaAnalysisStats
 from csa.utils.logger import get_logger
 
 
+def get_java_stats_from_neo4j(
+    graph_db,
+    project_name: str,
+    logger,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+) -> JavaAnalysisStats:
+    """
+    스트리밍 모드용: Neo4j에서 직접 통계를 조회하여 JavaAnalysisStats 생성
+
+    Args:
+        graph_db: Neo4j GraphDB 인스턴스
+        project_name: 프로젝트명
+        logger: 로거 인스턴스
+        start_time: 분석 시작 시간 (선택사항)
+        end_time: 분석 종료 시간 (선택사항)
+
+    Returns:
+        JavaAnalysisStats: 통계 정보
+    """
+    if start_time is None:
+        start_time = datetime.now()
+    if end_time is None:
+        end_time = datetime.now()
+
+    try:
+        # Neo4j에서 프로젝트별 통계 조회
+        stats = graph_db.get_database_statistics(project_name)
+        node_counts = stats.get("node_counts_by_label", {})
+
+        # 각 라벨별 카운트 추출
+        packages = node_counts.get("Package", 0)
+        classes = node_counts.get("Class", 0)
+        methods = node_counts.get("Method", 0)
+        fields = node_counts.get("Field", 0)
+        beans = node_counts.get("Bean", 0)
+        endpoints = node_counts.get("Endpoint", 0)
+        mybatis_mappers = node_counts.get("MyBatisMapper", 0)
+        jpa_entities = node_counts.get("JpaEntity", 0)
+        jpa_repositories = node_counts.get("JpaRepository", 0)
+        jpa_queries = node_counts.get("JpaQuery", 0)
+        config_files = node_counts.get("ConfigFile", 0)
+        test_classes = node_counts.get("TestClass", 0)
+        sql_statements = node_counts.get("SqlStatement", 0)
+
+        logger.info("Neo4j에서 통계 조회 완료:")
+        logger.info(f"  - Packages: {packages}")
+        logger.info(f"  - Classes: {classes}")
+        logger.info(f"  - Methods: {methods}")
+        logger.info(f"  - Fields: {fields}")
+        logger.info(f"  - Beans: {beans}")
+        logger.info(f"  - Endpoints: {endpoints}")
+
+        return JavaAnalysisStats(
+            project_name=project_name,
+            total_files=0,  # 스트리밍 모드에서는 파일 카운트 추적 안 함
+            processed_files=0,
+            error_files=0,
+            packages=packages,
+            classes=classes,
+            methods=methods,
+            fields=fields,
+            beans=beans,
+            endpoints=endpoints,
+            mybatis_mappers=mybatis_mappers,
+            jpa_entities=jpa_entities,
+            jpa_repositories=jpa_repositories,
+            jpa_queries=jpa_queries,
+            config_files=config_files,
+            test_classes=test_classes,
+            sql_statements=sql_statements,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    except Exception as e:
+        logger.error(f"Neo4j 통계 조회 실패: {e}")
+        # 빈 통계 반환
+        return JavaAnalysisStats(
+            project_name=project_name,
+            packages=0,
+            classes=0,
+            methods=0,
+            fields=0,
+            beans=0,
+            endpoints=0,
+            mybatis_mappers=0,
+            jpa_entities=0,
+            jpa_repositories=0,
+            jpa_queries=0,
+            config_files=0,
+            test_classes=0,
+            sql_statements=0,
+        )
+
+
 def calculate_java_statistics(
     packages: Iterable[object],
     classes: Iterable[object],

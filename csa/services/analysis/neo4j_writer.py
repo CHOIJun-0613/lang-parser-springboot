@@ -303,7 +303,10 @@ def add_single_class_objects_streaming(
                 'sql_statements': int,
             }
     """
-    from .jpa import extract_jpa_queries_from_repositories, extract_jpa_repositories_from_classes
+    from csa.services.java_analysis.jpa import (
+        extract_jpa_queries_from_repositories,
+        extract_jpa_repositories_from_classes,
+    )
 
     classes_list = [class_node]
     stats = {

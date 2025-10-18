@@ -71,24 +71,9 @@ def end(context: Dict[str, Any], result: Optional[Dict[str, Any]] = None) -> Non
     command_name = context.get("command_name", "unknown")
     start_time = context.get("start_time")
 
-    if result:
-        if result.get("success"):
-            logger.info(f"작업 완료: {result.get('message', 'Success')}")
-            if "stats" in result and result["stats"]:
-                stats = result["stats"]
-                logger.info("-" * 80)
-                logger.info("[작업 요약]")
-                for key, value in stats.items():
-                    logger.info(f"  • {key}: {value}")
-        else:
-            logger.error(f"작업 실패: {result.get('error', 'Unknown error')}")
-
-    if start_time:
-        duration = (end_time - start_time).total_seconds()
-        logger.info(f"총 소요 시간: {format_duration(duration)}")
-
-    logger.info(f"====== {command_name} 작업 종료 ======")
-    logger.info("")
+    # 에러가 발생한 경우에만 로그 출력
+    if result and not result.get("success"):
+        logger.error(f"작업 실패: {result.get('error', 'Unknown error')}")
 
 
 def with_command_lifecycle(command_name: str) -> Callable[[Callable[..., Any]], Callable[..., Dict[str, Any]]]:

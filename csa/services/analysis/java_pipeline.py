@@ -76,12 +76,21 @@ def _analyze_with_streaming(
     logger.info("Project name: %s", final_project_name)
     logger.info("Parsing Java project at: %s", java_source_folder)
 
+    # 시작 시간 기록
+    from datetime import datetime
+    start_time = datetime.now()
+
     # 스트리밍 파싱 실행
     stats = parse_java_project_streaming(
         java_source_folder,
         graph_db,
         final_project_name,
     )
+
+    # 종료 시간 기록
+    end_time = datetime.now()
+    stats['start_time'] = start_time
+    stats['end_time'] = end_time
 
     logger.info("Streaming parsing complete:")
     logger.info("  - Packages: %s", stats['packages'])
@@ -105,6 +114,12 @@ def _analyze_with_streaming(
         test_classes=[],
         sql_statements=[],
         project_name=final_project_name,
+        metadata={
+            'start_time': start_time,
+            'end_time': end_time,
+            'total_files': stats.get('total_files', 0),
+            'processed_files': stats.get('processed_files', 0),
+        },
     )
 
     return artifacts, final_project_name

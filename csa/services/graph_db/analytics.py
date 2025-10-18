@@ -285,7 +285,7 @@ class AnalyticsMixin:
             else:
                 node_labels_query = """
                 CALL db.labels() YIELD label
-                CALL {
+                CALL (label) {
                     WITH label
                     MATCH (n) WHERE label IN labels(n)
                     RETURN count(n) as count
@@ -309,7 +309,7 @@ class AnalyticsMixin:
             else:
                 rel_types_query = """
                 CALL db.relationshipTypes() YIELD relationshipType
-                CALL {
+                CALL (relationshipType) {
                     WITH relationshipType
                     MATCH ()-[r]->() WHERE type(r) = relationshipType
                     RETURN count(r) as count

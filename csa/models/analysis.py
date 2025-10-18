@@ -98,6 +98,7 @@ class JavaAnalysisArtifacts(BaseModel):
     test_classes: Sequence[Any]
     sql_statements: Sequence[Any]
     project_name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     class Config:
         arbitrary_types_allowed = True
