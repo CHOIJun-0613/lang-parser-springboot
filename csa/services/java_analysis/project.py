@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+from threading import Lock
 from typing import Dict, List, Optional, Tuple
 
 from csa.vendor import javalang
@@ -753,10 +757,32 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
         project_name,
     )
 
+def _parse_single_file_wrapper(file_path: str, project_name: str) -> tuple:
+    """
+    병렬 처리용 파싱 래퍼 함수 (Neo4j 연결 없이 파싱만 수행)
+
+    Args:
+        file_path: Java 파일 경로
+        project_name: 프로젝트명
+
+    Returns:
+        tuple: (file_path, package_node, class_node, package_name) 또는 (file_path, None, None, None) on error
+    """
+    try:
+        package_node, class_node, package_name = parse_single_java_file(
+            file_path, project_name, None  # graph_db=None for parsing only
+        )
+        return (file_path, package_node, class_node, package_name)
+    except Exception as e:
+        # 예외 발생 시 None 반환 (메인 스레드에서 로깅)
+        return (file_path, None, None, str(e))
+
+
 def parse_java_project_streaming(
     directory: str,
     graph_db: GraphDB,
     project_name: str,
+    parallel_workers: int = 8,
 ) -> dict:
     """
     스트리밍 방식 Java 프로젝트 파싱
@@ -811,89 +837,116 @@ def parse_java_project_streaming(
         'config_files': 0,
     }
 
-    # 진행 상황 추적
-    total_classes = 0
+    # 진행 상황 추적 (스레드 안전)
     processed_classes = 0
     last_logged_percent = 0
+    progress_lock = Lock()
 
-    # 먼저 전체 클래스 개수를 계산
-    logger.info("클래스 개수 계산 중...")
+    # 1회 스캔: 모든 .java 파일 경로 수집
+    logger.info("Java 파일 수집 중...")
+    java_files = []
     for root, _, files in os.walk(directory):
         for file in files:
             if file.endswith(".java"):
-                stats['total_files'] += 1
-                file_path = os.path.join(root, file)
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        file_content = f.read()
+                java_files.append(os.path.join(root, file))
 
-                    tree = javalang.parse.parse(file_content)
-                    for type_decl in tree.types:
-                        if isinstance(type_decl, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration)):
-                            total_classes += 1
-                except Exception:
+    total_files = len(java_files)
+    stats['total_files'] = total_files
+    logger.info(f"총 {total_files}개 Java 파일 발견")
+
+    # 환경 변수에서 병렬 워커 수 가져오기 (기본값 8)
+    parallel_workers = int(os.getenv("JAVA_PARSE_WORKERS", str(parallel_workers)))
+    batch_size = int(os.getenv("NEO4J_BATCH_SIZE", "50"))  # 배치 크기
+    logger.info(f"병렬 파싱 워커 수: {parallel_workers}, Neo4j 배치 크기: {batch_size}")
+
+    # 1. 병렬 파일 파싱 + 배치 Neo4j 저장
+    logger.info("병렬 파싱 시작...")
+    parse_start_time = time.time()
+
+    # 파싱된 결과를 임시 저장할 버퍼
+    parsed_buffer = []
+
+    with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+        # 모든 파일을 병렬로 파싱 제출
+        future_to_file = {
+            executor.submit(_parse_single_file_wrapper, file_path, project_name): file_path
+            for file_path in java_files
+        }
+
+        # 완료된 순서대로 처리
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                # 파싱 결과 획득
+                _, package_node, class_node, package_name = future.result()
+
+                # 파싱 실패 시 (에러 메시지가 package_name에 담김)
+                if class_node is None:
+                    if isinstance(package_name, str) and package_name:
+                        logger.error(f"Error parsing {file_path}: {package_name}")
                     continue
 
-    logger.info(f"총 {total_classes}개 클래스 발견")
-
-    # 1. 파일별 스트리밍 처리
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".java"):
-                file_path = os.path.join(root, file)
-
-                try:
-                    # 파일 파싱
-                    package_node, class_node, package_name = parse_single_java_file(
-                        file_path, project_name, graph_db
-                    )
-
-                    if not class_node:
-                        continue
-
-                    # Package 즉시 저장 (중복 체크)
-                    if package_name and package_name not in packages_saved:
-                        graph_db.add_package(package_node, project_name)
-                        packages_saved.add(package_name)
-                        stats['packages'] += 1
-                        logger.debug(f"Package saved: {package_name}")
-
-                    # Class 즉시 저장
-                    graph_db.add_class(class_node, package_name, project_name)
-                    stats['classes'] += 1
-
-                    # Bean/Endpoint 등 즉시 저장
-                    class_stats = add_single_class_objects_streaming(
-                        graph_db, class_node, package_name, project_name, logger
-                    )
-
-                    # 통계 누적
-                    stats['beans'] += class_stats.get('beans', 0)
-                    stats['endpoints'] += class_stats.get('endpoints', 0)
-                    stats['jpa_entities'] += class_stats.get('jpa_entities', 0)
-                    stats['jpa_repositories'] += class_stats.get('jpa_repositories', 0)
-                    stats['jpa_queries'] += class_stats.get('jpa_queries', 0)
-                    stats['test_classes'] += class_stats.get('test_classes', 0)
-                    stats['mybatis_mappers'] += class_stats.get('mybatis_mappers', 0)
-                    stats['sql_statements'] += class_stats.get('sql_statements', 0)
-
-                    # 진행 상황 로깅
+                # 버퍼에 추가 (스레드 안전)
+                with progress_lock:
+                    parsed_buffer.append((package_node, class_node, package_name))
                     processed_classes += 1
-                    current_percent = int((processed_classes / total_classes) * 100) if total_classes > 0 else 0
 
-                    if current_percent >= last_logged_percent + 10 or processed_classes == total_classes:
+                    # 진행 상황 로깅 (파싱 단계) - 10% 단위로만 출력
+                    current_percent = int((processed_classes / total_files) * 100) if total_files > 0 else 0
+                    if current_percent > last_logged_percent and current_percent % 10 == 0:
                         last_logged_percent = current_percent
-                        logger.info(f"클래스 파싱 및 저장 진행중 [{processed_classes}/{total_classes}] ({current_percent}%) - 최근: {class_node.name}")
+                        logger.info(f"파싱 진행중 [{processed_classes}/{total_files}] ({current_percent}%)")
 
-                    # 메모리 해제 (GC 대상)
-                    del class_node
-                    del package_node
+                    # 배치 크기에 도달하거나 마지막 파일인 경우 저장
+                    if len(parsed_buffer) >= batch_size or processed_classes == total_files:
+                        batch_start_time = time.time()
+                        logger.debug(f"배치 저장 시작 ({len(parsed_buffer)}개 클래스)")
 
-                    stats['processed_files'] += 1
+                        # Package 저장 (개별, 중복 체크 필요)
+                        for package_node, class_node, package_name in parsed_buffer:
+                            if package_name and package_name not in packages_saved:
+                                graph_db.add_package(package_node, project_name)
+                                packages_saved.add(package_name)
+                                stats['packages'] += 1
 
-                except Exception as e:
-                    logger.error(f"Error processing {file_path}: {e}")
-                    continue
+                        # Class 배치 저장
+                        classes_to_save = [cls for _, cls, _ in parsed_buffer]
+                        class_to_package = {cls.name: pkg for _, cls, pkg in parsed_buffer}
+
+                        for cls in classes_to_save:
+                            pkg_name = class_to_package.get(cls.name, "")
+                            graph_db.add_class(cls, pkg_name, project_name)
+                            stats['classes'] += 1
+
+                        # Bean/Endpoint 등 배치 저장
+                        from csa.services.analysis.neo4j_writer import add_batch_class_objects_streaming
+                        batch_stats = add_batch_class_objects_streaming(
+                            graph_db, parsed_buffer, project_name, logger
+                        )
+
+                        # 통계 누적
+                        stats['beans'] += batch_stats.get('beans', 0)
+                        stats['endpoints'] += batch_stats.get('endpoints', 0)
+                        stats['jpa_entities'] += batch_stats.get('jpa_entities', 0)
+                        stats['jpa_repositories'] += batch_stats.get('jpa_repositories', 0)
+                        stats['jpa_queries'] += batch_stats.get('jpa_queries', 0)
+                        stats['test_classes'] += batch_stats.get('test_classes', 0)
+                        stats['mybatis_mappers'] += batch_stats.get('mybatis_mappers', 0)
+                        stats['sql_statements'] += batch_stats.get('sql_statements', 0)
+
+                        stats['processed_files'] += len(parsed_buffer)
+
+                        # 버퍼 비우기
+                        parsed_buffer.clear()
+                        batch_elapsed = time.time() - batch_start_time
+                        logger.debug(f"배치 저장 완료 ({batch_elapsed:.2f}초)")
+
+            except Exception as e:
+                logger.error(f"Error processing {file_path}: {e}")
+                continue
+
+    parse_elapsed = time.time() - parse_start_time
+    logger.info(f"파싱 및 저장 완료 - 소요 시간: {parse_elapsed:.2f}초 (파일당 평균: {parse_elapsed/total_files*1000:.0f}ms)")
 
     # 2. MyBatis XML mappers 추출 및 저장
     logger.info("MyBatis XML mappers 처리 중...")

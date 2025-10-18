@@ -270,6 +270,112 @@ def add_single_class_objects(
                 )
 
 
+def add_batch_class_objects_streaming(
+    db: GraphDB,
+    classes_batch: list,
+    project_name: str,
+    logger,
+) -> dict:
+    """
+    여러 클래스의 객체들을 배치로 저장 (진정한 배치 처리)
+
+    Args:
+        db: Neo4j GraphDB 인스턴스
+        classes_batch: (package_node, class_node, package_name) 튜플 리스트
+        project_name: 프로젝트명
+        logger: 로거 인스턴스
+
+    Returns:
+        dict: 처리 통계
+    """
+    from csa.services.java_analysis.jpa import (
+        extract_jpa_queries_from_repositories,
+        extract_jpa_repositories_from_classes,
+    )
+
+    # 모든 클래스 노드 추출
+    all_classes = [cls for _, cls, _ in classes_batch]
+
+    stats = {
+        'beans': 0,
+        'endpoints': 0,
+        'jpa_entities': 0,
+        'jpa_repositories': 0,
+        'jpa_queries': 0,
+        'test_classes': 0,
+        'mybatis_mappers': 0,
+        'sql_statements': 0,
+    }
+
+    # Bean 추출 및 배치 저장
+    beans = extract_beans_from_classes(all_classes)
+    if beans:
+        db.add_beans_batch(beans, project_name)
+        stats['beans'] = len(beans)
+        logger.debug(f"  → Bean {len(beans)}개 배치 저장")
+
+    # Endpoint 추출 및 배치 저장
+    endpoints = extract_endpoints_from_classes(all_classes)
+    if endpoints:
+        db.add_endpoints_batch(endpoints, project_name)
+        stats['endpoints'] = len(endpoints)
+        logger.debug(f"  → Endpoint {len(endpoints)}개 배치 저장")
+
+    # JPA Entity 추출 및 배치 저장
+    jpa_entities = extract_jpa_entities_from_classes(all_classes)
+    if jpa_entities:
+        db.add_jpa_entities_batch(jpa_entities, project_name)
+        stats['jpa_entities'] = len(jpa_entities)
+        logger.debug(f"  → JPA Entity {len(jpa_entities)}개 배치 저장")
+
+    # JPA Repository 추출 및 배치 저장
+    jpa_repositories = extract_jpa_repositories_from_classes(all_classes)
+    if jpa_repositories:
+        db.add_jpa_repositories_batch(jpa_repositories, project_name)
+        stats['jpa_repositories'] = len(jpa_repositories)
+        logger.debug(f"  → JPA Repository {len(jpa_repositories)}개 배치 저장")
+
+        # JPA Queries 즉시 추출 및 배치 저장
+        jpa_queries = extract_jpa_queries_from_repositories(jpa_repositories)
+        if jpa_queries:
+            db.add_jpa_queries_batch(jpa_queries, project_name)
+            stats['jpa_queries'] = len(jpa_queries)
+            logger.debug(f"  → JPA Query {len(jpa_queries)}개 배치 저장")
+
+    # Test 추출 및 배치 저장
+    test_classes = extract_test_classes_from_classes(all_classes)
+    if test_classes:
+        db.add_test_classes_batch(test_classes, project_name)
+        stats['test_classes'] = len(test_classes)
+        logger.debug(f"  → Test Class {len(test_classes)}개 배치 저장")
+
+    # MyBatis Mapper 추출 및 배치 저장
+    mybatis_mappers = extract_mybatis_mappers_from_classes(all_classes)
+    if mybatis_mappers:
+        db.add_mybatis_mappers_batch(mybatis_mappers, project_name)
+        stats['mybatis_mappers'] = len(mybatis_mappers)
+        logger.debug(f"  → MyBatis Mapper {len(mybatis_mappers)}개 배치 저장")
+
+        # SQL Statements 즉시 추출 및 배치 저장
+        sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
+        if sql_statements:
+            db.add_sql_statements_batch(sql_statements, project_name)
+
+            # Mapper-SQL 관계는 개별로 생성 (UNWIND로 할 수도 있지만 복잡도 고려)
+            for sql_statement in sql_statements:
+                with _session_scope(db) as session:
+                    session.execute_write(
+                        db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
+                        sql_statement.mapper_name,
+                        sql_statement.id,
+                        project_name,
+                    )
+            stats['sql_statements'] = len(sql_statements)
+            logger.debug(f"  → SQL Statement {len(sql_statements)}개 배치 저장")
+
+    return stats
+
+
 def add_single_class_objects_streaming(
     db: GraphDB,
     class_node,
@@ -516,6 +622,7 @@ def save_java_objects_to_neo4j(
 
 
 __all__ = [
+    "add_batch_class_objects_streaming",
     "add_single_class_objects",
     "add_single_class_objects_streaming",
     "add_springboot_objects",

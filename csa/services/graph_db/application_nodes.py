@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import List
 
 from csa.models.graph_entities import Bean, BeanDependency, ConfigFile, Endpoint, TestClass
 from csa.services.graph_db.base import GraphDBBase
@@ -12,6 +13,12 @@ class ApplicationMixin:
     def add_bean(self, bean: Bean, project_name: str) -> None:
         """Add or update a Spring bean node."""
         self._execute_write(self._create_bean_node_tx, bean, project_name)
+
+    def add_beans_batch(self, beans: List[Bean], project_name: str) -> None:
+        """Add or update multiple Spring bean nodes in a single transaction."""
+        if not beans:
+            return
+        self._execute_write(self._create_beans_batch_tx, beans, project_name)
 
     def add_bean_dependency(self, dependency: BeanDependency, project_name: str) -> None:
         """Register dependency information between beans."""
@@ -28,6 +35,18 @@ class ApplicationMixin:
     def add_test_class(self, test_class: TestClass, project_name: str) -> None:
         """Add test class metadata."""
         self._execute_write(self._create_test_class_node_tx, test_class, project_name)
+
+    def add_endpoints_batch(self, endpoints: List[Endpoint], project_name: str) -> None:
+        """Add or update multiple endpoint nodes in a single transaction."""
+        if not endpoints:
+            return
+        self._execute_write(self._create_endpoints_batch_tx, endpoints, project_name)
+
+    def add_test_classes_batch(self, test_classes: List[TestClass], project_name: str) -> None:
+        """Add or update multiple test class nodes in a single transaction."""
+        if not test_classes:
+            return
+        self._execute_write(self._create_test_classes_batch_tx, test_classes, project_name)
 
     @staticmethod
     def _create_bean_node_tx(tx, bean: Bean, project_name: str) -> None:
@@ -55,6 +74,38 @@ class ApplicationMixin:
             ai_description=bean.ai_description or "",
             updated_at=current_timestamp,
         )
+
+    @staticmethod
+    def _create_beans_batch_tx(tx, beans: List[Bean], project_name: str) -> None:
+        """배치로 여러 Bean을 한 번의 트랜잭션에 저장"""
+        current_timestamp = GraphDBBase._get_current_timestamp()
+        bean_query = (
+            "UNWIND $beans AS bean "
+            "MERGE (b:Bean {name: bean.name}) "
+            "SET b.type = bean.type, b.scope = bean.scope, b.class_name = bean.class_name, "
+            "b.package_name = bean.package_name, b.annotation_names = bean.annotation_names, "
+            "b.method_count = bean.method_count, b.property_count = bean.property_count, "
+            "b.project_name = bean.project_name, b.description = bean.description, "
+            "b.ai_description = bean.ai_description, b.updated_at = bean.updated_at"
+        )
+        beans_data = [
+            {
+                'name': bean.name,
+                'type': bean.type,
+                'scope': bean.scope,
+                'class_name': bean.class_name,
+                'package_name': bean.package_name,
+                'annotation_names': json.dumps(bean.annotation_names),
+                'method_count': bean.method_count,
+                'property_count': bean.property_count,
+                'project_name': project_name,
+                'description': bean.description or "",
+                'ai_description': bean.ai_description or "",
+                'updated_at': current_timestamp,
+            }
+            for bean in beans
+        ]
+        tx.run(bean_query, beans=beans_data)
 
     @staticmethod
     def _create_bean_dependency_tx(tx, dependency: BeanDependency, project_name: str) -> None:
@@ -160,3 +211,82 @@ class ApplicationMixin:
             ai_description=test_class.ai_description or "",
             updated_at=current_timestamp,
         )
+
+    @staticmethod
+    def _create_endpoints_batch_tx(tx, endpoints: List[Endpoint], project_name: str) -> None:
+        """배치로 여러 Endpoint를 한 번의 트랜잭션에 저장"""
+        current_timestamp = GraphDBBase._get_current_timestamp()
+        endpoint_query = (
+            "UNWIND $endpoints AS ep "
+            "MERGE (e:Endpoint {path: ep.path, method: ep.method}) "
+            "SET e.controller_class = ep.controller_class, "
+            "e.handler_method = ep.handler_method, "
+            "e.endpoint_parameters = ep.endpoint_parameters, "
+            "e.return_type = ep.return_type, "
+            "e.annotations = ep.annotations, "
+            "e.full_path = ep.full_path, "
+            "e.project_name = ep.project_name, "
+            "e.description = ep.description, "
+            "e.ai_description = ep.ai_description, "
+            "e.updated_at = ep.updated_at"
+        )
+        endpoints_data = [
+            {
+                'path': ep.path,
+                'method': ep.method,
+                'controller_class': ep.controller_class,
+                'handler_method': ep.handler_method,
+                'endpoint_parameters': json.dumps(ep.parameters),
+                'return_type': ep.return_type,
+                'annotations': json.dumps(ep.annotations),
+                'full_path': ep.full_path,
+                'project_name': project_name,
+                'description': ep.description or "",
+                'ai_description': ep.ai_description or "",
+                'updated_at': current_timestamp,
+            }
+            for ep in endpoints
+        ]
+        tx.run(endpoint_query, endpoints=endpoints_data)
+
+    @staticmethod
+    def _create_test_classes_batch_tx(tx, test_classes: List[TestClass], project_name: str) -> None:
+        """배치로 여러 TestClass를 한 번의 트랜잭션에 저장"""
+        current_timestamp = GraphDBBase._get_current_timestamp()
+        test_query = (
+            "UNWIND $tests AS t "
+            "MERGE (tc:TestClass {name: t.name}) "
+            "SET tc.package_name = t.package_name, "
+            "tc.test_framework = t.test_framework, "
+            "tc.test_type = t.test_type, "
+            "tc.annotations = t.annotations, "
+            "tc.test_methods = t.test_methods, "
+            "tc.setup_methods = t.setup_methods, "
+            "tc.mock_dependencies = t.mock_dependencies, "
+            "tc.test_configurations = t.test_configurations, "
+            "tc.file_path = t.file_path, "
+            "tc.project_name = t.project_name, "
+            "tc.description = t.description, "
+            "tc.ai_description = t.ai_description, "
+            "tc.updated_at = t.updated_at"
+        )
+        tests_data = [
+            {
+                'name': tc.name,
+                'package_name': tc.package_name,
+                'test_framework': tc.test_framework,
+                'test_type': tc.test_type,
+                'annotations': json.dumps(tc.annotations),
+                'test_methods': json.dumps(tc.test_methods),
+                'setup_methods': json.dumps(tc.setup_methods),
+                'mock_dependencies': json.dumps(tc.mock_dependencies),
+                'test_configurations': json.dumps(tc.test_configurations),
+                'file_path': tc.file_path,
+                'project_name': project_name,
+                'description': tc.description or "",
+                'ai_description': tc.ai_description or "",
+                'updated_at': current_timestamp,
+            }
+            for tc in test_classes
+        ]
+        tx.run(test_query, tests=tests_data)

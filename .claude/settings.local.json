@@ -12,7 +12,9 @@
       "Bash(if [ -f logs/run-20251018.log ])",
       "Bash(then echo \"❌ run-20251018.log 존재\")",
       "Bash(else echo \"✅ run-20251018.log 없음 (성공!)\")",
-      "Bash(fi)"
+      "Bash(fi)",
+      "Bash(export USE_STREAMING_PARSE=true)",
+      "Bash(export LOG_LEVEL=DEBUG)"
     ],
     "deny": [],
     "ask": []

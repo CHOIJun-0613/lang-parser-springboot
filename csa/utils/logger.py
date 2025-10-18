@@ -1,6 +1,7 @@
 import os
 import logging
 import glob
+import threading
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -9,6 +10,10 @@ load_dotenv()
 
 # 전역 변수: 현재 실행 중인 명령어 저장
 _current_command = None
+
+# 로거 캐시 (스레드 안전)
+_logger_cache = {}
+_logger_lock = threading.Lock()
 
 def set_command_context(command: str):
     """현재 실행 중인 명령어 컨텍스트 설정"""
@@ -166,13 +171,30 @@ def setup_logger(name: str = None, command: str = None) -> logging.Logger:
 
 def get_logger(name: str = None, command: str = None) -> logging.Logger:
     """
-    로거를 가져옵니다. 환경변수 변경을 반영하기 위해 항상 새로 설정합니다.
-    
+    로거를 가져옵니다. 스레드 안전하게 캐시된 로거를 반환합니다.
+
     Args:
         name: 로거 이름 (기본값: None)
         command: 작업 명령어 (로그 파일명 결정용, 기본값: None, 전역 컨텍스트 사용)
-    
+
     Returns:
         로거 객체
     """
-    return setup_logger(name, command)
+    global _current_command
+
+    # command가 명시적으로 전달되지 않으면 전역 컨텍스트 사용
+    if command is None:
+        command = _current_command if _current_command else "run"
+
+    # 캐시 키 생성 (name + command 조합)
+    cache_key = f"{name}:{command}"
+
+    # 이미 캐시된 로거가 있으면 반환 (스레드 안전)
+    with _logger_lock:
+        if cache_key in _logger_cache:
+            return _logger_cache[cache_key]
+
+        # 새 로거 생성 및 캐시
+        logger = setup_logger(name, command)
+        _logger_cache[cache_key] = logger
+        return logger
