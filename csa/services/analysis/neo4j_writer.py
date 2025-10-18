@@ -281,7 +281,7 @@ def add_batch_class_objects_streaming(
 
     Args:
         db: Neo4j GraphDB 인스턴스
-        classes_batch: (package_node, class_node, package_name) 튜플 리스트
+        classes_batch: (package_node, class_node, inner_classes, package_name) 튜플 리스트
         project_name: 프로젝트명
         logger: 로거 인스턴스
 
@@ -293,8 +293,11 @@ def add_batch_class_objects_streaming(
         extract_jpa_repositories_from_classes,
     )
 
-    # 모든 클래스 노드 추출
-    all_classes = [cls for _, cls, _ in classes_batch]
+    # 모든 클래스 노드 추출 (Top-level 클래스 + Inner classes)
+    all_classes = []
+    for package_node, class_node, inner_classes, package_name in classes_batch:
+        all_classes.append(class_node)
+        all_classes.extend(inner_classes)
 
     stats = {
         'beans': 0,

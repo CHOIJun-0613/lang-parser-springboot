@@ -168,18 +168,34 @@ def parse_inner_classes(
 
                     method_annotations = parse_annotations(method_declaration.annotations, "method") if hasattr(method_declaration, 'annotations') else []
 
+                    # 메서드 파라미터를 Field 객체로 생성
                     parameters = []
                     if hasattr(method_declaration, 'parameters') and method_declaration.parameters:
                         for param in method_declaration.parameters:
-                            param_type = param.type.name if hasattr(param.type, 'name') else str(param.type)
-                            parameters.append(f"{param_type} {param.name}")
+                            param_type_name = 'Unknown'
+                            if param.type:
+                                if hasattr(param.type, 'sub_type') and param.type.sub_type:
+                                    param_type_name = f"{param.type.name}.{param.type.sub_type.name}"
+                                elif hasattr(param.type, 'name') and param.type.name:
+                                    param_type_name = param.type.name
+
+                            parameters.append(Field(
+                                name=param.name,
+                                logical_name=f"{package_name}.{outer_class_name}.{method_name}.{param.name}",
+                                type=param_type_name,
+                                package_name=package_name,
+                                class_name=outer_class_name
+                            ))
+
+                    # 메서드 modifiers 추출
+                    modifiers = list(method_declaration.modifiers) if hasattr(method_declaration, 'modifiers') else []
 
                     method = Method(
                         name=method_name,
                         return_type=return_type,
                         annotations=method_annotations,
                         parameters=parameters,
-                        access_modifier="public" if 'public' in str(method_declaration.modifiers) else "private"
+                        modifiers=modifiers
                     )
 
                     inner_class_node.methods.append(method)
