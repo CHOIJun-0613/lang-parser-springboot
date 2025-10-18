@@ -71,19 +71,19 @@ def resolve_bean_dependencies_from_neo4j(
     logger.info(f"✓ Field injection 완료: {field_count}개 의존성 생성")
     logger.info("")
 
-    # Phase 2: Constructor injection 해결 (향후 구현)
-    # logger.info("Phase 2: Constructor injection 의존성 해결 중...")
-    # constructor_count = _resolve_constructor_injections(db, project_name, logger)
-    # logger.info(f"✓ Constructor injection 완료: {constructor_count}개 의존성 생성")
-    # logger.info("")
+    # Phase 2: Constructor injection 해결
+    logger.info("Phase 2: Constructor injection 의존성 해결 중...")
+    constructor_count = _resolve_constructor_injections(db, project_name, logger)
+    logger.info(f"✓ Constructor injection 완료: {constructor_count}개 의존성 생성")
+    logger.info("")
 
-    # Phase 3: Setter injection 해결 (향후 구현)
-    # logger.info("Phase 3: Setter injection 의존성 해결 중...")
-    # setter_count = _resolve_setter_injections(db, project_name, logger)
-    # logger.info(f"✓ Setter injection 완료: {setter_count}개 의존성 생성")
-    # logger.info("")
+    # Phase 3: Setter injection 해결
+    logger.info("Phase 3: Setter injection 의존성 해결 중...")
+    setter_count = _resolve_setter_injections(db, project_name, logger)
+    logger.info(f"✓ Setter injection 완료: {setter_count}개 의존성 생성")
+    logger.info("")
 
-    total_count = field_count
+    total_count = field_count + constructor_count + setter_count
     logger.info("=" * 80)
     logger.info(f"Bean 의존성 해결 완료: 총 {total_count}개 의존성 생성")
     logger.info("=" * 80)
@@ -193,12 +193,94 @@ def _resolve_constructor_injections(
 
     Returns:
         int: 생성된 DEPENDS_ON 관계의 개수
-
-    Note:
-        향후 구현 예정
     """
-    logger.debug("  → Constructor injection 의존성 해결 (향후 구현)")
-    return 0
+    import json
+
+    logger.debug("  → Constructor injection 의존성 쿼리 실행 중...")
+
+    # Step 1: 생성자 정보 조회 쿼리
+    query_constructors = """
+    MATCH (sourceClass:Class)-[:HAS_METHOD]->(constructor:Method {project_name: $project_name})
+    MATCH (sourceBean:Bean {class_name: sourceClass.name, project_name: $project_name})
+    WHERE constructor.name = sourceClass.name
+      AND constructor.parameters IS NOT NULL
+    RETURN sourceBean.name as source_bean,
+           sourceBean.class_name as source_class,
+           constructor.name as constructor_name,
+           constructor.parameters as parameters_json
+    ORDER BY source_bean
+    """
+
+    # Step 2: DEPENDS_ON 관계 생성 쿼리
+    query_create_dependency = """
+    MATCH (sourceBean:Bean {name: $source_bean, project_name: $project_name})
+    MATCH (targetBean:Bean {class_name: $param_type, project_name: $project_name})
+    MERGE (sourceBean)-[r:DEPENDS_ON]->(targetBean)
+    SET r.injection_type = 'constructor',
+        r.parameter_name = $param_name,
+        r.parameter_type = $param_type,
+        r.parameter_order = $param_order,
+        r.created_by = 'neo4j_resolver'
+    RETURN targetBean.name as target_bean
+    """
+
+    created_count = 0
+
+    try:
+        with db._driver.session() as session:
+            # 생성자 정보 조회
+            result = session.run(query_constructors, project_name=project_name)
+            records = list(result)
+
+            # 각 생성자의 파라미터 처리
+            for record in records:
+                source_bean = record["source_bean"]
+                parameters_json = record["parameters_json"]
+
+                # JSON 파싱
+                try:
+                    parameters = json.loads(parameters_json)
+                except json.JSONDecodeError:
+                    logger.warning(f"  ⚠ {source_bean}: parameters JSON 파싱 실패")
+                    continue
+
+                # 각 파라미터에 대해 Bean 매칭 시도
+                for param in parameters:
+                    param_name = param.get("name")
+                    param_type = param.get("type")
+                    param_order = param.get("order", 0)
+
+                    if not param_type:
+                        continue
+
+                    # DEPENDS_ON 관계 생성
+                    dep_result = session.run(
+                        query_create_dependency,
+                        source_bean=source_bean,
+                        param_type=param_type,
+                        param_name=param_name,
+                        param_order=param_order,
+                        project_name=project_name
+                    )
+
+                    dep_record = dep_result.single()
+                    if dep_record:
+                        target_bean = dep_record["target_bean"]
+                        logger.debug(
+                            f"     {source_bean} --(@Constructor {param_name})--> {target_bean}"
+                        )
+                        created_count += 1
+
+            if created_count > 0:
+                logger.debug(f"  → {created_count}개의 Constructor injection 의존성 생성됨")
+            else:
+                logger.debug("  → Constructor injection 의존성이 생성되지 않음")
+
+    except Exception as e:
+        logger.error(f"  ✗ Constructor injection 의존성 해결 중 오류: {e}")
+        raise
+
+    return created_count
 
 
 def _resolve_setter_injections(
@@ -219,12 +301,96 @@ def _resolve_setter_injections(
 
     Returns:
         int: 생성된 DEPENDS_ON 관계의 개수
-
-    Note:
-        향후 구현 예정
     """
-    logger.debug("  → Setter injection 의존성 해결 (향후 구현)")
-    return 0
+    import json
+
+    logger.debug("  → Setter injection 의존성 쿼리 실행 중...")
+
+    # Step 1: setter 정보 조회 쿼리
+    query_setters = """
+    MATCH (sourceClass:Class)-[:HAS_METHOD]->(setter:Method {project_name: $project_name})
+    MATCH (sourceBean:Bean {class_name: sourceClass.name, project_name: $project_name})
+    WHERE setter.name STARTS WITH 'set'
+      AND setter.parameters IS NOT NULL
+      AND setter.annotations_json IS NOT NULL
+      AND setter.annotations_json CONTAINS '"Autowired"'
+    RETURN sourceBean.name as source_bean,
+           sourceBean.class_name as source_class,
+           setter.name as setter_name,
+           setter.parameters as parameters_json
+    ORDER BY source_bean, setter_name
+    """
+
+    # Step 2: DEPENDS_ON 관계 생성 쿼리
+    query_create_dependency = """
+    MATCH (sourceBean:Bean {name: $source_bean, project_name: $project_name})
+    MATCH (targetBean:Bean {class_name: $param_type, project_name: $project_name})
+    MERGE (sourceBean)-[r:DEPENDS_ON]->(targetBean)
+    SET r.injection_type = 'setter',
+        r.parameter_name = $param_name,
+        r.parameter_type = $param_type,
+        r.setter_name = $setter_name,
+        r.created_by = 'neo4j_resolver'
+    RETURN targetBean.name as target_bean
+    """
+
+    created_count = 0
+
+    try:
+        with db._driver.session() as session:
+            # setter 정보 조회
+            result = session.run(query_setters, project_name=project_name)
+            records = list(result)
+
+            # 각 setter의 파라미터 처리
+            for record in records:
+                source_bean = record["source_bean"]
+                setter_name = record["setter_name"]
+                parameters_json = record["parameters_json"]
+
+                # JSON 파싱
+                try:
+                    parameters = json.loads(parameters_json)
+                except json.JSONDecodeError:
+                    logger.warning(f"  ⚠ {source_bean}.{setter_name}: parameters JSON 파싱 실패")
+                    continue
+
+                # 각 파라미터에 대해 Bean 매칭 시도 (setter는 일반적으로 파라미터 1개)
+                for param in parameters:
+                    param_name = param.get("name")
+                    param_type = param.get("type")
+
+                    if not param_type:
+                        continue
+
+                    # DEPENDS_ON 관계 생성
+                    dep_result = session.run(
+                        query_create_dependency,
+                        source_bean=source_bean,
+                        param_type=param_type,
+                        param_name=param_name,
+                        setter_name=setter_name,
+                        project_name=project_name
+                    )
+
+                    dep_record = dep_result.single()
+                    if dep_record:
+                        target_bean = dep_record["target_bean"]
+                        logger.debug(
+                            f"     {source_bean} --(@Autowired {setter_name})--> {target_bean}"
+                        )
+                        created_count += 1
+
+            if created_count > 0:
+                logger.debug(f"  → {created_count}개의 Setter injection 의존성 생성됨")
+            else:
+                logger.debug("  → Setter injection 의존성이 생성되지 않음")
+
+    except Exception as e:
+        logger.error(f"  ✗ Setter injection 의존성 해결 중 오류: {e}")
+        raise
+
+    return created_count
 
 
 __all__ = [

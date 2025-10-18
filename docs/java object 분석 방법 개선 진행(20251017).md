@@ -206,7 +206,11 @@
   - 메모리 효율: 850MB → 10-20MB (약 97% 감소)
   - 확장성: 수만 개 클래스 프로젝트 분석 가능
   - 정확성: Field injection 의존성 정확히 해결
-  - 향후 확장: Constructor/Setter injection 추가 준비 완료
+  - ✅ **완료 (2025-10-18)**: Constructor/Setter injection 구현 완료
+    - Constructor injection: 7개 의존성 정상 해결
+    - Setter injection: 구조 준비 완료 (현재 프로젝트 미사용)
+    - Field/Constructor/Setter 3가지 injection 방식 모두 지원
+    - 상세: `/workspace/docs/Constructor_Setter_Injection_구현_완료_20251018.md`
 
   📂 생성/수정된 파일
 
