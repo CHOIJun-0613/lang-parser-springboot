@@ -37,9 +37,11 @@ def start(command_name: str) -> Dict[str, Any]:
     start_time = datetime.now()
     logger = get_logger(__name__, command=command_name)
 
-    # 규칙 매니저 초기화 로그 출력 (명령어별 로그 파일에 기록)
+    # 규칙 매니저 초기화 (명령어별 로그 파일에 기록)
     try:
         from csa.utils.rules_manager import rules_manager
+        # 규칙 로드 (이전에 지연 초기화되었으므로 명시적으로 호출)
+        rules_manager._ensure_rules_loaded()
         logger.info("규칙 매니저 초기화 완료")
     except Exception as e:
         logger.warning(f"규칙 매니저 초기화 실패: {e}")
