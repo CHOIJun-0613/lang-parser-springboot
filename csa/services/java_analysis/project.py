@@ -53,7 +53,151 @@ from .utils import (
     parse_annotations,
 )
 
-def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB = None) -> tuple[Package, Class, str]:
+def parse_inner_classes(
+    outer_class_declaration: javalang.tree.ClassDeclaration,
+    outer_class_name: str,
+    package_name: str,
+    file_path: str,
+    file_content: str,
+    project_name: str,
+    import_map: dict
+) -> list[Class]:
+    """
+    재귀적으로 Inner class 파싱
+
+    Args:
+        outer_class_declaration: 외부 클래스 선언
+        outer_class_name: 외부 클래스명
+        package_name: 패키지명
+        file_path: 파일 경로
+        file_content: 소스 코드
+        project_name: 프로젝트명
+        import_map: import 맵
+
+    Returns:
+        Inner class 노드 리스트
+    """
+    logger = get_logger(__name__)
+    inner_classes = []
+
+    if not hasattr(outer_class_declaration, 'body') or not outer_class_declaration.body:
+        return inner_classes
+
+    for body_item in outer_class_declaration.body:
+        if isinstance(body_item, javalang.tree.ClassDeclaration):
+            # Inner class 이름
+            inner_class_full_name = f"{outer_class_name}.{body_item.name}"
+
+            inner_class_annotations = parse_annotations(body_item.annotations, "class") if hasattr(body_item, 'annotations') else []
+
+            # 논리명 추출
+            from csa.services.java_parser_addon_r001 import extract_java_class_logical_name
+            inner_class_logical_name = extract_java_class_logical_name(file_content, body_item.name, project_name)
+
+            # description 추출
+            from csa.parsers.java.description import extract_java_class_description
+            inner_class_description = extract_java_class_description(inner_class_annotations, project_name)
+
+            # Inner class 노드 생성
+            inner_class_node = Class(
+                name=inner_class_full_name,
+                logical_name=inner_class_logical_name if inner_class_logical_name else "",
+                file_path=file_path,
+                type="class",
+                sub_type="inner_class",
+                source=file_content,
+                annotations=inner_class_annotations,
+                package_name=package_name,
+                project_name=project_name,
+                description=inner_class_description if inner_class_description else "",
+                ai_description=""
+            )
+
+            # imports 추가
+            for imp in import_map.values():
+                inner_class_node.imports.append(imp)
+
+            # 상속 관계 처리
+            if hasattr(body_item, 'extends') and body_item.extends:
+                superclass_name = body_item.extends.name
+                if superclass_name in import_map:
+                    inner_class_node.superclass = import_map[superclass_name]
+                else:
+                    inner_class_node.superclass = f"{package_name}.{superclass_name}" if package_name else superclass_name
+
+            # 인터페이스 구현 처리
+            if hasattr(body_item, 'implements') and body_item.implements:
+                for impl_ref in body_item.implements:
+                    interface_name = impl_ref.name
+                    if interface_name in import_map:
+                        inner_class_node.interfaces.append(import_map[interface_name])
+                    else:
+                        inner_class_node.interfaces.append(f"{package_name}.{interface_name}" if package_name else interface_name)
+
+            # 필드 처리
+            if hasattr(body_item, 'fields'):
+                for field_declaration in body_item.fields:
+                    for declarator in field_declaration.declarators:
+                        field_type = field_declaration.type.name if hasattr(field_declaration.type, 'name') else str(field_declaration.type)
+
+                        field_annotations = parse_annotations(field_declaration.annotations, "field") if hasattr(field_declaration, 'annotations') else []
+
+                        initial_value = ""
+                        if hasattr(declarator, 'initializer') and declarator.initializer:
+                            if hasattr(declarator.initializer, 'value'):
+                                initial_value = str(declarator.initializer.value)
+                            elif hasattr(declarator.initializer, 'type'):
+                                initial_value = str(declarator.initializer.type)
+
+                        field = Field(
+                            name=declarator.name,
+                            type=field_type,
+                            annotations=field_annotations,
+                            initial_value=initial_value,
+                            access_modifier="private"
+                        )
+
+                        inner_class_node.properties.append(field)
+
+            # 메서드 처리
+            if hasattr(body_item, 'methods'):
+                call_order = 0
+                for method_declaration in body_item.methods:
+                    method_name = method_declaration.name
+                    return_type = method_declaration.return_type.name if hasattr(method_declaration.return_type, 'name') else (str(method_declaration.return_type) if method_declaration.return_type else "void")
+
+                    method_annotations = parse_annotations(method_declaration.annotations, "method") if hasattr(method_declaration, 'annotations') else []
+
+                    parameters = []
+                    if hasattr(method_declaration, 'parameters') and method_declaration.parameters:
+                        for param in method_declaration.parameters:
+                            param_type = param.type.name if hasattr(param.type, 'name') else str(param.type)
+                            parameters.append(f"{param_type} {param.name}")
+
+                    method = Method(
+                        name=method_name,
+                        return_type=return_type,
+                        annotations=method_annotations,
+                        parameters=parameters,
+                        access_modifier="public" if 'public' in str(method_declaration.modifiers) else "private"
+                    )
+
+                    inner_class_node.methods.append(method)
+
+            inner_classes.append(inner_class_node)
+
+            # 중첩된 inner class (재귀)
+            if hasattr(body_item, 'body') and body_item.body:
+                nested = parse_inner_classes(
+                    body_item, inner_class_full_name, package_name, file_path,
+                    file_content, project_name, import_map
+                )
+                inner_classes.extend(nested)
+
+    return inner_classes
+
+
+def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB = None) -> tuple[Package, Class, list[Class], str]:
     """Parse a single Java file and return parsed entities."""
     logger = get_logger(__name__)
     
@@ -87,7 +231,7 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
         
         if not class_declaration:
             logger.error(f"No class declaration found in file: {file_path}")
-            return None, None, ""
+            return None, None, [], ""
         
         class_name = class_declaration.name
         class_annotations = parse_annotations(class_declaration.annotations, "class") if hasattr(class_declaration, 'annotations') else []
@@ -278,19 +422,9 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
                                     if target_class_name in import_map:
                                         resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
                                     else:
+                                        # import_map에 없으면 현재 패키지만 사용
+                                        # (잘못된 패키지 추론 로직 제거)
                                         resolved_target_package = package_name
-                                        
-                                        # 패키지 기반 추론 로직
-                                        if package_name and 'controller' in package_name:
-                                            service_package = package_name.replace('controller', 'service')
-                                            resolved_target_package = service_package
-                                        
-                                        elif package_name and 'domain' in package_name:
-                                            domain_parts = package_name.split('.')
-                                            if len(domain_parts) >= 3:
-                                                domain_base = '.'.join(domain_parts[:3])
-                                                service_package = f"{domain_base}.{domain_parts[2]}.service"
-                                                resolved_target_package = service_package
                                 
                                 if '<' in target_class_name:
                                     base_type = target_class_name.split('<')[0]
@@ -329,13 +463,24 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
                         call_order += 1
             
             class_node.methods.append(method)
-        
-        logger.debug(f"Successfully parsed single file: {file_path}")
-        return package_node, class_node, package_name
-        
+
+        # Inner class 파싱
+        inner_classes = parse_inner_classes(
+            class_declaration,
+            class_name,
+            package_name,
+            file_path,
+            file_content,
+            project_name,
+            import_map
+        )
+
+        logger.debug(f"Successfully parsed single file: {file_path} (found {len(inner_classes)} inner classes)")
+        return package_node, class_node, inner_classes, package_name
+
     except Exception as e:
         logger.error(f"Error parsing file: {e}")
-        return None, None, ""
+        return None, None, [], ""
 
 def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[list[Package], list[Class], dict[str, str], list[Bean], list[BeanDependency], list[Endpoint], list[MyBatisMapper], list[JpaEntity], list[JpaRepository], list[JpaQuery], list[ConfigFile], list[TestClass], list[SqlStatement], str]:
     """Parse Java project and return parsed entities."""
@@ -647,18 +792,9 @@ def parse_java_project_full(directory: str, graph_db: GraphDB = None) -> tuple[l
                                                 if target_class_name in import_map:
                                                     resolved_target_package = ".".join(import_map[target_class_name].split(".")[:-1])
                                                 else:
+                                                    # import_map에 없으면 현재 패키지만 사용
+                                                    # (잘못된 패키지 추론 로직 제거)
                                                     resolved_target_package = package_name
-                                                    
-                                                    if package_name and 'controller' in package_name:
-                                                        service_package = package_name.replace('controller', 'service')
-                                                        resolved_target_package = service_package
-                                                    
-                                                    elif package_name and 'domain' in package_name:
-                                                        domain_parts = package_name.split('.')
-                                                        if len(domain_parts) >= 3:
-                                                            domain_base = '.'.join(domain_parts[:3])
-                                                            service_package = f"{domain_base}.{domain_parts[2]}.service"
-                                                            resolved_target_package = service_package
                                                 
                                                 if '<' in target_class_name:
                                                     base_type = target_class_name.split('<')[0]
@@ -766,16 +902,16 @@ def _parse_single_file_wrapper(file_path: str, project_name: str) -> tuple:
         project_name: 프로젝트명
 
     Returns:
-        tuple: (file_path, package_node, class_node, package_name) 또는 (file_path, None, None, None) on error
+        tuple: (file_path, package_node, class_node, inner_classes, package_name) 또는 (file_path, None, None, [], None) on error
     """
     try:
-        package_node, class_node, package_name = parse_single_java_file(
+        package_node, class_node, inner_classes, package_name = parse_single_java_file(
             file_path, project_name, None  # graph_db=None for parsing only
         )
-        return (file_path, package_node, class_node, package_name)
+        return (file_path, package_node, class_node, inner_classes, package_name)
     except Exception as e:
         # 예외 발생 시 None 반환 (메인 스레드에서 로깅)
-        return (file_path, None, None, str(e))
+        return (file_path, None, None, [], str(e))
 
 
 def parse_java_project_streaming(
@@ -878,7 +1014,7 @@ def parse_java_project_streaming(
             file_path = future_to_file[future]
             try:
                 # 파싱 결과 획득
-                _, package_node, class_node, package_name = future.result()
+                _, package_node, class_node, inner_classes, package_name = future.result()
 
                 # 파싱 실패 시 (에러 메시지가 package_name에 담김)
                 if class_node is None:
@@ -888,7 +1024,8 @@ def parse_java_project_streaming(
 
                 # 버퍼에 추가 (스레드 안전)
                 with progress_lock:
-                    parsed_buffer.append((package_node, class_node, package_name))
+                    # Top-level 클래스와 Inner classes를 함께 저장
+                    parsed_buffer.append((package_node, class_node, inner_classes, package_name))
                     processed_classes += 1
 
                     # 진행 상황 로깅 (파싱 단계) - 10% 단위로만 출력
@@ -903,15 +1040,24 @@ def parse_java_project_streaming(
                         logger.debug(f"배치 저장 시작 ({len(parsed_buffer)}개 클래스)")
 
                         # Package 저장 (개별, 중복 체크 필요)
-                        for package_node, class_node, package_name in parsed_buffer:
+                        for package_node, class_node, inner_classes, package_name in parsed_buffer:
                             if package_name and package_name not in packages_saved:
                                 graph_db.add_package(package_node, project_name)
                                 packages_saved.add(package_name)
                                 stats['packages'] += 1
 
-                        # Class 배치 저장
-                        classes_to_save = [cls for _, cls, _ in parsed_buffer]
-                        class_to_package = {cls.name: pkg for _, cls, pkg in parsed_buffer}
+                        # Class 배치 저장 (Top-level + Inner classes)
+                        classes_to_save = []
+                        class_to_package = {}
+
+                        for package_node, class_node, inner_classes, package_name in parsed_buffer:
+                            classes_to_save.append(class_node)
+                            class_to_package[class_node.name] = package_name
+
+                            # Inner classes도 저장
+                            for inner_class in inner_classes:
+                                classes_to_save.append(inner_class)
+                                class_to_package[inner_class.name] = package_name
 
                         for cls in classes_to_save:
                             pkg_name = class_to_package.get(cls.name, "")

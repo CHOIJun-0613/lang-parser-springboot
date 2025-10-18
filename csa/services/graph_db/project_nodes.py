@@ -6,6 +6,12 @@ from typing import Any, Optional
 from csa.models.graph_entities import Class, Package, Project
 from csa.services.graph_db.base import GraphDBBase
 from csa.utils.logger import get_logger
+from csa.utils.class_helpers import (
+    is_external_library,
+    extract_package_from_full_name,
+    is_inner_class,
+    extract_outer_class_name,
+)
 
 
 class ProjectMixin:
@@ -168,16 +174,38 @@ class ProjectMixin:
             class_name=class_node.name,
         )
         for import_class in class_node.imports:
-            import_query = (
-                "MERGE (imp:Class {name: $import_class}) "
-                "MERGE (c:Class {name: $class_name}) "
-                "MERGE (c)-[:IMPORTS]->(imp)"
-            )
-            tx.run(
-                import_query,
-                import_class=import_class,
-                class_name=class_node.name,
-            )
+            if is_external_library(import_class):
+                # 외부 라이브러리: name만 사용, package는 빈 문자열
+                import_query = (
+                    "MERGE (imp:Class {name: $import_class, package: ''}) "
+                    "SET imp.is_external = true "
+                    "WITH imp "
+                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MERGE (c)-[:IMPORTS]->(imp)"
+                )
+                tx.run(
+                    import_query,
+                    import_class=import_class,
+                    class_name=class_node.name,
+                    package=package_name,
+                )
+            else:
+                # 프로젝트 내부: name + package 조합
+                simple_name, import_package = extract_package_from_full_name(import_class)
+                import_query = (
+                    "MERGE (imp:Class {name: $import_name, package: $import_package}) "
+                    "SET imp.is_external = false "
+                    "WITH imp "
+                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MERGE (c)-[:IMPORTS]->(imp)"
+                )
+                tx.run(
+                    import_query,
+                    import_name=simple_name,
+                    import_package=import_package or "",
+                    class_name=class_node.name,
+                    package=package_name,
+                )
         for annotation in class_node.annotations:
             annotation_name = getattr(annotation, "name", str(annotation))
             annotation_query = (
@@ -191,16 +219,36 @@ class ProjectMixin:
                 annotation_name=annotation_name,
             )
         if class_node.superclass:
-            superclass_query = (
-                "MERGE (super:Class {name: $superclass}) "
-                "MERGE (c:Class {name: $class_name}) "
-                "MERGE (c)-[:EXTENDS]->(super)"
-            )
-            tx.run(
-                superclass_query,
-                superclass=class_node.superclass,
-                class_name=class_node.name,
-            )
+            if is_external_library(class_node.superclass):
+                superclass_query = (
+                    "MERGE (super:Class {name: $superclass, package: ''}) "
+                    "SET super.is_external = true "
+                    "WITH super "
+                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MERGE (c)-[:EXTENDS]->(super)"
+                )
+                tx.run(
+                    superclass_query,
+                    superclass=class_node.superclass,
+                    class_name=class_node.name,
+                    package=package_name,
+                )
+            else:
+                simple_name, super_package = extract_package_from_full_name(class_node.superclass)
+                superclass_query = (
+                    "MERGE (super:Class {name: $superclass, package: $super_package}) "
+                    "SET super.is_external = false "
+                    "WITH super "
+                    "MATCH (c:Class {name: $class_name, package: $package}) "
+                    "MERGE (c)-[:EXTENDS]->(super)"
+                )
+                tx.run(
+                    superclass_query,
+                    superclass=simple_name,
+                    super_package=super_package or "",
+                    class_name=class_node.name,
+                    package=package_name,
+                )
         for interface in class_node.interfaces:
             interface_query = (
                 "MERGE (i:Interface {name: $interface}) "
@@ -465,23 +513,92 @@ class ProjectMixin:
                 )
                 continue
 
-            target_class_query = (
-                "MERGE (tc:Class {name: $target_class})"
-            )
-            tx.run(
-                target_class_query,
-                target_class=method_call.target_class,
-            )
-            target_method_query = (
-                "MATCH (tc:Class {name: $target_class}) "
-                "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
-                "MERGE (tc)-[:HAS_METHOD]->(tm)"
-            )
-            tx.run(
-                target_method_query,
-                target_class=method_call.target_class,
-                target_method=method_call.target_method,
-            )
+            target_package = method_call.target_package or ""
+
+            if is_external_library(method_call.target_class, target_package):
+                # 외부 라이브러리
+                target_class_query = (
+                    "MERGE (tc:Class {name: $target_class, package: ''}) "
+                    "SET tc.is_external = true"
+                )
+                tx.run(
+                    target_class_query,
+                    target_class=method_call.target_class,
+                )
+                target_method_query = (
+                    "MATCH (tc:Class {name: $target_class, package: ''}) "
+                    "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
+                    "MERGE (tc)-[:HAS_METHOD]->(tm)"
+                )
+                tx.run(
+                    target_method_query,
+                    target_class=method_call.target_class,
+                    target_method=method_call.target_method,
+                )
+            else:
+                # 프로젝트 내부 - Inner class 특별 처리
+                if is_inner_class(method_call.target_class):
+                    # Inner class: 외부 클래스와 동일한 패키지 사용
+                    outer_class = extract_outer_class_name(method_call.target_class)
+
+                    # Neo4j에서 외부 클래스의 정확한 패키지 조회
+                    outer_class_result = tx.run(
+                        "MATCH (oc:Class {name: $outer_class, project_name: $project_name}) "
+                        "RETURN oc.package as package "
+                        "LIMIT 1",
+                        outer_class=outer_class,
+                        project_name=project_name
+                    )
+
+                    record = outer_class_result.single()
+                    if record and record['package']:
+                        actual_target_package = record['package']
+                    else:
+                        # 외부 클래스를 찾지 못한 경우 target_package 사용
+                        actual_target_package = target_package or package_name
+
+                    target_class_query = (
+                        "MERGE (tc:Class {name: $target_class, package: $target_package}) "
+                        "SET tc.is_external = false, tc.is_inner_class = true"
+                    )
+                    tx.run(
+                        target_class_query,
+                        target_class=method_call.target_class,
+                        target_package=actual_target_package,
+                    )
+                    target_method_query = (
+                        "MATCH (tc:Class {name: $target_class, package: $target_package}) "
+                        "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
+                        "MERGE (tc)-[:HAS_METHOD]->(tm)"
+                    )
+                    tx.run(
+                        target_method_query,
+                        target_class=method_call.target_class,
+                        target_package=actual_target_package,
+                        target_method=method_call.target_method,
+                    )
+                else:
+                    # 일반 클래스
+                    target_class_query = (
+                        "MERGE (tc:Class {name: $target_class, package: $target_package}) "
+                        "SET tc.is_external = false"
+                    )
+                    tx.run(
+                        target_class_query,
+                        target_class=method_call.target_class,
+                        target_package=target_package,
+                    )
+                    target_method_query = (
+                        "MATCH (tc:Class {name: $target_class, package: $target_package}) "
+                        "MERGE (tm:Method {name: $target_method, class_name: $target_class}) "
+                        "MERGE (tc)-[:HAS_METHOD]->(tm)"
+                    )
+                    tx.run(
+                        target_method_query,
+                        target_class=method_call.target_class,
+                        target_package=target_package,
+                        target_method=method_call.target_method,
+                    )
             call_query = (
                 "MATCH (sm:Method {name: $source_method, class_name: $source_class}) "
                 "MATCH (tm:Method {name: $target_method, class_name: $target_class}) "

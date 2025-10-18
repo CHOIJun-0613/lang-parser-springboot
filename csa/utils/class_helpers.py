@@ -40,20 +40,33 @@ def is_external_library(class_name: str, package: Optional[str] = None) -> bool:
     # 외부 라이브러리 패키지 패턴
     external_prefixes = (
         "java.",
+        "java",
         "javax.",
+        "javax",
         "jakarta.",
+        "jakarta",
         "org.springframework.",
+        "org.springframework",
         "org.apache.",
+        "org.apache",
         "org.hibernate.",
+        "org.hibernate",
         "org.slf4j.",
+        "org.slf4j",
         "org.junit.",
+        "org.junit",
         "org.mockito.",
+        "org.mockito",
         "org.hamcrest.",
+        "org.hamcrest",
         "lombok.",
         "lombok",
         "com.fasterxml.jackson.",
+        "com.fasterxml.jackson",
         "ch.qos.logback.",
+        "ch.qos.logback",
         "junit.",
+        "junit",
     )
 
     return package.startswith(external_prefixes)
@@ -133,8 +146,61 @@ def normalize_class_identifier(
     }
 
 
+def is_inner_class(class_name: str) -> bool:
+    """
+    Inner class(중첩 클래스)인지 판별
+
+    Inner class는 외부 클래스 내부에 정의된 클래스입니다.
+    점(.) 또는 달러($)를 포함하는 클래스명으로 표현됩니다.
+
+    Args:
+        class_name: 클래스명 (예: "ServiceCenterOperatingHours.TimeSlot")
+
+    Returns:
+        Inner class이면 True, 일반 클래스이면 False
+
+    Examples:
+        >>> is_inner_class("ServiceCenterOperatingHours.TimeSlot")
+        True
+        >>> is_inner_class("Outer$Inner")
+        True
+        >>> is_inner_class("TimeSlot")
+        False
+    """
+    return '.' in class_name or '$' in class_name
+
+
+def extract_outer_class_name(inner_class_name: str) -> str:
+    """
+    Inner class에서 외부 클래스명 추출
+
+    Inner class 표현을 외부 클래스명으로 분해합니다.
+
+    Args:
+        inner_class_name: Inner class명 (예: "Outer.Inner" 또는 "Outer$Inner")
+
+    Returns:
+        외부 클래스명
+
+    Examples:
+        >>> extract_outer_class_name("ServiceCenterOperatingHours.TimeSlot")
+        "ServiceCenterOperatingHours"
+        >>> extract_outer_class_name("Outer$Inner")
+        "Outer"
+        >>> extract_outer_class_name("TimeSlot")
+        "TimeSlot"
+    """
+    if '.' in inner_class_name:
+        return inner_class_name.split('.')[0]
+    if '$' in inner_class_name:
+        return inner_class_name.split('$')[0]
+    return inner_class_name
+
+
 __all__ = [
     "is_external_library",
     "extract_package_from_full_name",
     "normalize_class_identifier",
+    "is_inner_class",
+    "extract_outer_class_name",
 ]
