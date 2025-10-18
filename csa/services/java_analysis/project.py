@@ -53,6 +53,46 @@ from .utils import (
     parse_annotations,
 )
 
+def extract_inner_class_source(inner_class_declaration: javalang.tree.ClassDeclaration, file_content: str) -> str:
+    """
+    Inner class의 선언부 소스 코드 추출
+
+    Args:
+        inner_class_declaration: Inner class 선언 노드
+        file_content: 전체 파일 소스 코드
+
+    Returns:
+        Inner class 선언부 소스 코드
+    """
+    if not inner_class_declaration.position:
+        return ""
+
+    lines = file_content.splitlines(keepends=True)
+    start_line = inner_class_declaration.position.line - 1
+
+    # 중괄호 개수로 클래스 선언 끝 위치 찾기
+    brace_count = 0
+    end_line = start_line
+    found_opening_brace = False
+
+    for i in range(start_line, len(lines)):
+        line = lines[i]
+        for char in line:
+            if char == '{':
+                brace_count += 1
+                found_opening_brace = True
+            elif char == '}':
+                brace_count -= 1
+                if found_opening_brace and brace_count == 0:
+                    end_line = i
+                    break
+
+        if found_opening_brace and brace_count == 0:
+            break
+
+    return ''.join(lines[start_line:end_line + 1])
+
+
 def parse_inner_classes(
     outer_class_declaration: javalang.tree.ClassDeclaration,
     outer_class_name: str,
@@ -90,6 +130,9 @@ def parse_inner_classes(
 
             inner_class_annotations = parse_annotations(body_item.annotations, "class") if hasattr(body_item, 'annotations') else []
 
+            # Inner class 선언부 소스 추출
+            inner_class_source = extract_inner_class_source(body_item, file_content)
+
             # 논리명 추출
             from csa.services.java_parser_addon_r001 import extract_java_class_logical_name
             inner_class_logical_name = extract_java_class_logical_name(file_content, body_item.name, project_name)
@@ -105,7 +148,7 @@ def parse_inner_classes(
                 file_path=file_path,
                 type="class",
                 sub_type="inner_class",
-                source=file_content,
+                source=inner_class_source,
                 annotations=inner_class_annotations,
                 package_name=package_name,
                 project_name=project_name,
