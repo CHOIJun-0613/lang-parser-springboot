@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-CSA (Code Static Analyzer)는 Spring Boot 기반 Java 애플리케이션을 정적 분석하여 코드 구조, 호출 관계, 데이터베이스 상호작용을 분석하고 Neo4j 그래프 데이터베이스에 저장한 뒤 시퀀스 다이어그램과 CRUD 매트릭스를 생성하는 Python 기반 도구입니다.
+**CSA (Code Static Analyzer)**는 Spring Boot 기반 Java 애플리케이션을 자동으로 정적 분석하여 다음을 수행하는 Python 기반 도구입니다:
+
+- **Java 코드 분석**: 패키지, 클래스, 메서드, 필드, 내부 클래스 추출 및 Spring Bean/Endpoint 식별
+- **JPA & MyBatis 분석**: 엔티티, 매퍼, SQL 문 파싱 및 데이터베이스 매핑
+- **데이터베이스 분석**: DDL 파싱으로 Database/Table/Column/Index/Constraint 추출
+- **호출 관계 추적**: Method → SQL → Table 호출 체인 분석
+- **Neo4j 저장**: 모든 분석 결과를 그래프 데이터베이스에 저장
+- **시각화 생성**: PlantUML/Mermaid 시퀀스 다이어그램, CRUD 매트릭스, 호출 체인 다이어그램 생성
+
+**핵심 특징:**
+- **NO-Configuration**: 프로젝트 구조를 자동으로 인식
+- **Scalable**: 스트리밍 모드로 대규모 프로젝트 지원 (`USE_STREAMING_PARSE=true`)
+- **Customizable**: 규칙 기반 논리명/설명 추출 (`csa/rules/`)
+- **Multi-Format**: Neo4j, Excel, Markdown, PlantUML, Mermaid 등 다양한 출력
 
 ## 핵심 아키텍처
 
@@ -12,63 +25,180 @@ CSA (Code Static Analyzer)는 Spring Boot 기반 Java 애플리케이션을 정�
 
 ```
 csa/
-├── cli/                    # CLI 진입점 및 명령어 핸들러
-│   ├── main.py            # Click 기반 CLI 엔트리포인트
-│   └── commands/          # 각 명령어별 핸들러
-├── models/                # Pydantic 도메인 모델
-│   ├── graph_entities.py  # Neo4j 그래프 엔티티 (Project, Class, Method, Bean, Endpoint 등)
-│   └── analysis.py        # 분석 관련 모델
-├── services/              # 핵심 분석 서비스
-│   ├── analysis/          # 분석 오케스트레이션
-│   │   ├── java_pipeline.py    # Java 분석 파이프라인
-│   │   ├── db_pipeline.py      # DB 분석 파이프라인
-│   │   ├── neo4j_writer.py     # Neo4j 데이터 저장
-│   │   └── handlers.py         # 파싱 결과 처리
-│   ├── java_analysis/     # Java 파싱 세부 모듈
-│   │   ├── project.py     # 프로젝트 구조 분석
-│   │   ├── spring.py      # Spring Boot 어노테이션 분석
-│   │   ├── mybatis.py     # MyBatis 매퍼 분석
-│   │   ├── jpa.py         # JPA 엔티티 분석
-│   │   ├── config.py      # 설정 파일 분석
-│   │   ├── tests.py       # 테스트 코드 분석
-│   │   └── utils.py       # 파싱 유틸리티
-│   ├── java_parser.py     # Java 파싱 Facade
-│   ├── java_parser_addon_r001.py  # 논리명 추출 규칙
-│   ├── sql_parser.py      # SQL 문 분석
-│   ├── db_parser.py       # DB DDL 스키마 파싱
-│   ├── graph_db/          # Neo4j 데이터베이스 작업
-│   │   ├── base.py        # 기본 연결 및 트랜잭션
-│   │   ├── project_nodes.py     # Project 노드 CRUD
-│   │   ├── application_nodes.py # Class/Method/Field 노드 CRUD
-│   │   ├── persistence_nodes.py # JPA/MyBatis 노드 CRUD
-│   │   ├── database_nodes.py    # Table/Column/Index 노드 CRUD
-│   │   ├── analytics.py   # 분석 쿼리
-│   │   └── maintenance.py # 유지보수 작업
-│   └── db_call_analysis/  # DB 호출 관계 분석
-│       ├── call_chain.py  # Controller→Service→Repository→SQL→Table 체인
-│       ├── crud.py        # CRUD 매트릭스 생성
-│       ├── diagrams.py    # 호출 체인 다이어그램
-│       ├── impact.py      # 영향도 분석
-│       └── reports.py     # 분석 리포트
-├── parsers/               # 특화 파서
-│   ├── java/              # Java 논리명 추출
-│   │   └── logical_name.py
-│   └── db/                # DB DDL 파싱
-│       └── ddl_parser.py
-├── diagrams/              # 다이어그램 생성
-│   └── sequence/          # 시퀀스 다이어그램 생성기 (PlantUML/Mermaid)
-├── dbwork/                # Neo4j 연결 풀 관리
-├── utils/                 # 공용 유틸리티 (로거, 환경변수 헬퍼 등)
-├── rules/                 # 논리명 추출 규칙 정의
-└── vendor/                # 외부 벤더 통합
+├── cli/                          # Click 기반 CLI 진입점 및 명령어 핸들러
+│   ├── main.py                   # CLI 그룹 및 명령어 등록
+│   ├── commands/                 # 각 명령어별 핸들러
+│   │   ├── analyze.py            # Java/DB 정적 분석 명령
+│   │   ├── sequence.py           # 시퀀스 다이어그램 생성 명령
+│   │   ├── crud.py               # CRUD 매트릭스/교차표 생성 명령
+│   │   ├── db_calls.py           # DB 호출 관계 분석 명령
+│   │   └── graph_queries.py      # Neo4j 그래프 쿼리 명령
+│   └── core/                     # 명령어 공용 로직
+│       ├── lifecycle.py          # 명령어 라이프사이클 관리
+│       └── storage.py            # 저장소 관리
+│
+├── models/                       # Pydantic 데이터 모델
+│   ├── graph_entities.py         # Neo4j 그래프 엔티티
+│   │                            # (Project, Package, Class, Method, Field, Annotation)
+│   │                            # (Bean, Endpoint, BeanDependency)
+│   │                            # (MyBatisMapper, MyBatisSqlStatement, SqlStatement)
+│   │                            # (JpaEntity, JpaRepository, JpaQuery)
+│   │                            # (Database, Table, Column, Index, Constraint)
+│   └── analysis.py              # 분석 통계 모델
+│
+├── services/                     # 핵심 분석 엔진
+│   ├── analyze_service.py        # 분석 파사드 (진입점)
+│   │
+│   ├── analysis/                 # 분석 파이프라인 오케스트레이션
+│   │   ├── handlers.py           # Java/DB 파이프라인 실행 및 초기화
+│   │   ├── java_pipeline.py      # 배치/스트리밍 Java 파서 관리
+│   │   ├── db_pipeline.py        # DDL 디렉터리 분석 및 저장
+│   │   ├── neo4j_writer.py       # Neo4j 데이터 저장 및 통계 계산
+│   │   ├── options.py            # CLI 옵션 검증
+│   │   └── summary.py            # 분석 결과 요약 통계
+│   │
+│   ├── java_analysis/            # Java 파싱 세부 모듈
+│   │   ├── project.py            # 패키지, 클래스, 메서드, 필드, 내부 클래스 분석
+│   │   ├── spring.py             # Spring 어노테이션 (@Component, @Autowired 등)
+│   │   ├── jpa.py                # JPA 엔티티, 레포지토리, 쿼리 분석
+│   │   ├── mybatis.py            # MyBatis 매퍼 및 SQL 추출
+│   │   ├── config.py             # application.yml/properties 분석
+│   │   ├── tests.py              # 테스트 코드 식별
+│   │   ├── bean_dependency_resolver.py  # Bean 의존성 재구성
+│   │   └── utils.py              # 파싱 유틸리티 함수
+│   │
+│   ├── graph_db/                 # Neo4j 데이터베이스 CRUD 및 분석
+│   │   ├── base.py               # 기본 연결, 트랜잭션 관리
+│   │   ├── project_nodes.py      # Project 노드 CRUD
+│   │   ├── application_nodes.py  # Class/Method/Field 노드 CRUD
+│   │   ├── persistence_nodes.py  # Bean/Endpoint/Mapper/SQL 노드 CRUD
+│   │   ├── database_nodes.py     # Database/Table/Column 노드 CRUD
+│   │   ├── analytics.py          # 분석 쿼리 (SQL 복잡도, 테이블 사용량)
+│   │   └── maintenance.py        # 유지보수 작업
+│   │
+│   ├── db_call_analysis/         # DB 호출 관계 분석
+│   │   ├── base.py               # 기본 클래스
+│   │   ├── call_chain.py         # Controller→Service→Repository→SQL→Table 체인
+│   │   ├── crud.py               # CRUD 매트릭스 생성
+│   │   ├── diagrams.py           # 호출 체인 Markdown/이미지 다이어그램
+│   │   ├── impact.py             # 영향도 분석
+│   │   └── reports.py            # 리포트 생성
+│   │
+│   ├── java_parser.py            # Java 파싱 파사드
+│   ├── java_parser_addon_r001.py # 논리명 추출 규칙 엔진
+│   ├── sql_parser.py             # SQL 문 분석 헬퍼
+│   └── db_parser.py              # DDL 디렉터리 파서
+│
+├── parsers/                      # 저수준 파싱 엔진
+│   ├── java/
+│   │   ├── logical_name.py       # 클래스/메서드/필드 논리명 추출
+│   │   └── description.py        # 설명 추출
+│   ├── db/
+│   │   └── ddl_parser.py         # DDL 구조 분석
+│   ├── sql/
+│   │   └── parser.py             # SQL 문 파싱
+│   ├── base.py                   # 기본 파서 인터페이스
+│   └── vendor/javalang/          # Java AST 파서 라이브러리
+│
+├── diagrams/                     # 시각화 생성
+│   └── sequence/
+│       ├── generator.py          # 다이어그램 생성 오케스트레이션
+│       ├── mermaid.py            # Mermaid 형식 생성기
+│       ├── plantuml.py           # PlantUML 형식 생성기
+│       └── repository.py         # 호출 체인 저장소
+│
+├── dbwork/                       # Neo4j 연결풀 관리
+│   └── connection_pool.py        # 커넥션 풀 (스레드 안전, 트랜잭션)
+│
+├── utils/                        # 공용 유틸리티
+│   ├── logger.py                 # 커스텀 로거 (명령별 분리, 7일 자동 정리)
+│   ├── rules_manager.py          # 규칙 매니저
+│   └── class_helpers.py          # 클래스 유틸리티 함수
+│
+├── rules/                        # 논리명/설명 추출 규칙 정의 (Markdown)
+│   ├── rule001_extraction_logical_name.md
+│   ├── rule002_extraction_description.md
+│   └── car_center_devlab_logical_name_rules.md
+│
+└── vendor/                       # 외부 라이브러리
+    └── javalang/                 # Java 파싱 라이브러리 (AST 생성)
 ```
 
 ### 핵심 데이터 플로우
 
-1. **Java 분석**: `java_pipeline.py` → `java_analysis/*` 모듈들 → `neo4j_writer.py` → Neo4j
-2. **DB 분석**: `db_pipeline.py` → `db_parser.py` → `neo4j_writer.py` → Neo4j
-3. **호출 체인 분석**: Neo4j 쿼리 → `db_call_analysis/call_chain.py` → 관계 그래프 생성
-4. **다이어그램 생성**: Neo4j 데이터 → `diagrams/sequence/` → PlantUML/Mermaid 파일
+#### 1. **배치 모드 Java 분석 (기본값)**
+```
+사용자 명령
+    ↓
+analyze.py → analyze_service.py
+    ↓
+handlers.py: validate_analyze_options() & prepare_neo4j()
+    ↓
+java_pipeline.py: parse_java_project_full()
+    │
+    ├─→ java_analysis/project.py: 패키지, 클래스, 메서드, 필드, 내부 클래스 추출
+    ├─→ java_analysis/spring.py: Spring Bean/Endpoint/Config 식별
+    ├─→ java_analysis/jpa.py: JPA 엔티티/레포지토리 분석
+    ├─→ java_analysis/mybatis.py: MyBatis 매퍼/SQL 추출
+    └─→ java_analysis/bean_dependency_resolver.py: Bean 의존성 재구성
+    ↓
+java_analysis/utils.py: 논리명/설명 추출
+    ↓
+neo4j_writer.py: 수집된 모든 데이터를 Neo4j에 저장
+    ↓
+Neo4j 그래프 데이터베이스
+```
+
+#### 2. **스트리밍 모드 Java 분석 (대규모 프로젝트용)**
+```
+java_pipeline.py: parse_java_project_streaming()
+    ↓
+파일 단위 처리 (병렬 워커 활용)
+    ↓
+각 파일마다 Neo4j 즉시 갱신 (메모리 절감)
+    ↓
+Neo4j 그래프 데이터베이스
+```
+**활성화**: `USE_STREAMING_PARSE=true` 환경 변수 설정
+
+#### 3. **DB 분석**
+```
+DBParser.parse_ddl_directory()
+    ↓
+DDL 파일 (CREATE TABLE, ALTER 등) 파싱
+    ↓
+Database, Table, Column, Index, Constraint 객체 생성
+    ↓
+neo4j_writer.py: Database 노드 저장
+    ↓
+Neo4j 그래프 데이터베이스
+```
+
+#### 4. **호출 관계 분석**
+```
+Neo4j 쿼리
+    ↓
+db_call_analysis/call_chain.py: Method → SQL → Table 추적
+    ↓
+관계 그래프 생성 (CALLS, USES_TABLE, MAPS_TO)
+    ↓
+영향도 분석 (impact.py)
+    ↓
+리포트/다이어그램 생성
+```
+
+#### 5. **시각화 생성**
+```
+diagrams/sequence/generator.py
+    ↓
+Neo4j 데이터 쿼리
+    ↓
+├─→ mermaid.py: Mermaid 형식 (.md)
+├─→ plantuml.py: PlantUML 형식 (.puml)
+└─→ (옵션) PlantUML/Mermaid CLI로 이미지 변환
+    ↓
+output/sequence-diagram/ 에 저장
+```
 
 ### Neo4j 그래프 모델
 
@@ -99,15 +229,27 @@ cp env.example .env
 ### 필수 환경 변수
 
 ```
+# Neo4j 연결 설정 (필수)
 NEO4J_URI=neo4j://127.0.0.1:7687
 NEO4J_DATABASE=csadb01
 NEO4J_USER=csauser
 NEO4J_PASSWORD=csauser123
+
+# 분석 대상 경로 (필수)
 JAVA_SOURCE_FOLDER=target_src/car-center-devlab
 DB_SCRIPT_FOLDER=target_src/car-center-devlab/src/main/resources/db/prod
+
+# 출력 디렉터리 (선택사항)
 LOG_LEVEL=INFO
 SEQUENCE_DIAGRAM_OUTPUT_DIR=./output/sequence-diagram
 CRUD_MATRIX_OUTPUT_DIR=./output/crud-matrix
+
+# 성능 최적화 (선택사항)
+USE_STREAMING_PARSE=true                # 스트리밍 모드 활성화 (대규모 프로젝트용)
+JAVA_PARSE_WORKERS=8                    # 병렬 워커 수 (기본값: 8)
+
+# 외부 도구 경로 (선택사항)
+MMDC_PATH=/path/to/mmdc                 # Mermaid CLI 경로
 ```
 
 ## 주요 명령어
@@ -116,23 +258,38 @@ CRUD_MATRIX_OUTPUT_DIR=./output/crud-matrix
 
 ```bash
 # 전체 재분석 (Java + DB, 기존 데이터 삭제)
-python -m csa.cli.main analyze --all-objects --clean --project-name <프로젝트명>
+python -m csa.cli.main analyze --all-objects --clean --project-name myproject
 
-# Java 소스만 재분석
-python -m csa.cli.main analyze --java-object --clean --project-name <프로젝트명>
+# Java 소스만 재분석 (스트리밍 모드)
+python -m csa.cli.main analyze --java-object --clean --project-name myproject --concurrent
 
 # DB 스키마만 재분석
-python -m csa.cli.main analyze --db-object --clean --project-name <프로젝트명>
+python -m csa.cli.main analyze --db-object --clean --project-name myproject
 
 # 특정 클래스만 분석
-python -m csa.cli.main analyze --class-name UserController --project-name <프로젝트명>
+python -m csa.cli.main analyze --java-object --class-name UserController --project-name myproject
 
-# 업데이트 모드 (기존 데이터 유지)
-python -m csa.cli.main analyze --all-objects --update --project-name <프로젝트명>
+# 업데이트 모드 (기존 데이터 유지, 신규 항목만 추가)
+python -m csa.cli.main analyze --all-objects --update --project-name myproject
 
-# 드라이런 (Neo4j 연결 없이 파싱만 수행)
+# 드라이런 (Neo4j 연결 없이 파싱만 수행, 디버깅용)
 python -m csa.cli.main analyze --java-object --dry-run
+
+# 병렬 처리 워커 수 지정
+python -m csa.cli.main analyze --all-objects --concurrent --workers 12 --project-name myproject
 ```
+
+**옵션 설명:**
+- `--all-objects`: Java + DB 모두 분석
+- `--java-object`: Java 소스만 분석
+- `--db-object`: DB 스키마만 분석
+- `--clean`: 기존 프로젝트 노드 삭제 후 재분석
+- `--update`: 기존 데이터 유지하고 새로운 항목만 추가
+- `--concurrent`: 스트리밍/병렬 모드 활성화 (대규모 프로젝트용)
+- `--workers N`: 병렬 워커 수 지정 (기본값: 8)
+- `--class-name <이름>`: 특정 클래스만 분석
+- `--project-name <이름>`: Neo4j에 저장할 프로젝트명
+- `--dry-run`: Neo4j 연결 없이 파싱만 수행
 
 ### 시퀀스 다이어그램 생성
 
@@ -182,21 +339,41 @@ commands\2-2.CRUD-Matrix.bat          # CRUD 매트릭스 생성
 ### 테스트
 
 ```bash
-# 전체 테스트
+# 전체 테스트 실행 (가상환경 활성화 필수)
+.venv\Scripts\activate  # Windows
 pytest
 
-# 단위 테스트만
+# 단위 테스트만 실행
 pytest tests/unit
 
-# 통합 테스트만
+# 통합 테스트만 실행
 pytest tests/integration
 
-# 특정 테스트 파일
+# 계약 테스트만 실행 (CLI 인터페이스 테스트)
+pytest tests/contract
+
+# 특정 테스트 파일 실행
 pytest tests/unit/test_java_parser.py
 
-# 테스트 이름 패턴 매칭
+# 특정 테스트 메서드 실행
+pytest tests/unit/test_java_parser.py::test_parse_simple_class
+
+# 테스트명 패턴 매칭
 pytest tests/integration -k end_to_end
+
+# 상세한 로그 출력
+pytest -v --tb=short
+
+# 테스트 커버리지 확인
+pytest --cov=csa tests/
 ```
+
+**테스트 구조:**
+- `tests/unit/`: 개별 모듈 단위 테스트
+- `tests/integration/`: 엔드-투-엔드 통합 테스트
+- `tests/contract/`: CLI 인터페이스 및 외부 계약 테스트
+- `tests/sample_java_project/`: Java 파싱 테스트용 샘플 코드
+- `tests/sample_jpa_project/`: JPA 분석 테스트용 샘플 코드
 
 ## 코딩 가이드라인
 
@@ -266,6 +443,14 @@ pytest tests/integration -k end_to_end
 - **메서드 논리명**: 주석, 메서드명 패턴 분석
 - **필드 논리명**: 주석, 변수명 분석
 
+## 최근 구현 완료 기능
+
+- **Inner Class 지원** (`csa/services/java_analysis/project.py`): 내부 클래스 중복 제거 및 선언부만 추출
+- **Bean Dependency Resolver** (`csa/services/java_analysis/bean_dependency_resolver.py`): Constructor/Setter/Field Injection 지원
+- **스트리밍 모드** (`USE_STREAMING_PARSE=true`): 대규모 프로젝트 메모리 효율성
+- **로그 파일 분리** (`csa/utils/logger.py`): 명령별 로그 파일 분리 및 7일 자동 정리
+- **병렬 처리** (`JAVA_PARSE_WORKERS`): 멀티코어 활용으로 분석 속도 향상
+
 ## 주의사항
 
 ### 개발 원칙
@@ -274,6 +459,16 @@ pytest tests/integration -k end_to_end
 - **확인 절차**: 수정 전 영향도 분석 후 사용자에게 확인
 - **한국어 소통**: 모든 답변 및 주석은 한국어로 작성
 - **수정 내역 공유**: 수정 후 이유와 내용을 명확히 설명
+
+### 분석 대상 제외 폴더
+
+다음 폴더/파일은 분석 시 반드시 제외합니다:
+- `.`으로 시작하는 폴더 (.git, .venv, .pytest_cache, .vscode 등)
+- `commands/` - Windows Batch 스크립트 디렉터리
+- `logs/` - 분석 로그 디렉터리
+- `neo4j/` - Neo4j 설정 파일
+- `src/` - 기타 소스
+- `target_src/` - 분석 대상 소스 (별도로 구성)
 
 ### 보안
 

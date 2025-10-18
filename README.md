@@ -1,48 +1,84 @@
-# Java 소스 코드 분석기 (CSA - Code Static Analyzer)
+# CSA (Code Static Analyzer) for Spring Boot
 
-## 📋 개요
+> Spring Boot 기반 Java 애플리케이션을 자동으로 정적 분석하여 **코드 구조, 데이터베이스 호출 관계, 시퀀스 다이어그램**을 생성하는 도구입니다.
 
-이 프로젝트는 **Spring Boot 기반 Java 애플리케이션**을 정적 분석하여 코드 구조, 호출 관계, 데이터베이스 상호작용을 분석하고 시각화하는 도구입니다. 
+![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Status](https://img.shields.io/badge/Status-Production-brightgreen.svg)
 
-### 주요 기능
-- 🔍 **Java 소스 코드 파싱**: 클래스, 메서드, 필드, 어노테이션 등 추출
-- 🗄️ **데이터베이스 호출 분석**: Controller → Service → Repository → SQL → Table 호출 체인 분석
-- 📊 **CRUD 매트릭스 생성**: 테이블별 CRUD 작업 매핑
-- 📈 **시퀀스 다이어그램 생성**: PlantUML/Mermaid 형식 지원
-- 🎯 **Neo4j 그래프 데이터베이스**: 분석 결과 저장 및 관계 시각화
-- ⚙️ **Spring Boot 특화 분석**: Bean, Endpoint, JPA, MyBatis 등 프레임워크 요소 분석
+---
 
-## 🏗️ 프로젝트 구조
+## 🎯 주요 기능
 
+### 1. **Java 코드 정적 분석**
+- 패키지, 클래스, 메서드, 필드, 내부 클래스 자동 추출
+- Spring Bean, REST Endpoint, Lombok, Config 클래스 식별
+- 메서드 호출 관계 추적
+
+### 2. **Spring Boot 특화 분석**
+- `@Component`, `@Service`, `@Repository`, `@Controller`, `@RestController` 자동 감지
+- `@Autowired`, Constructor/Setter/Field Injection 의존성 추적
+- `@RequestMapping`, HTTP 메서드 기반 Endpoint 매핑
+
+### 3. **JPA & MyBatis 통합**
+- JPA 엔티티, 레포지토리, 쿼리 자동 추출
+- MyBatis 매퍼 및 SQL 문 파싱
+- SQL-테이블 매핑 관계 추출
+
+### 4. **데이터베이스 분석**
+- DDL (CREATE TABLE, ALTER, CREATE INDEX) 파싱
+- Database, Table, Column, Index, Constraint 메타정보 추출
+- Method → SQL → Table 호출 체인 추적
+
+### 5. **시각화 & 리포트**
+- PlantUML / Mermaid 시퀀스 다이어그램 자동 생성
+- CRUD 매트릭스 (클래스 × 테이블 기준)
+- DB 호출 체인 다이어그램 및 영향도 분석
+- 이미지 변환 (PNG/SVG/PDF) 지원
+
+### 6. **그래프 데이터베이스 저장**
+- Neo4j를 활용한 모든 분석 결과 저장
+- 복잡한 관계 쿼리를 통한 강력한 분석 가능
+- Neo4j 브라우저에서 시각적 탐색 가능
+
+---
+
+## 📊 분석 결과 예시
+
+### 호출 체인 다이어그램
 ```
-lang-parser-springboot/
-|-- csa/                          # Code Static Analyzer 핵심 모듈
-|   |-- cli/
-|   |   \-- main.py              # CLI 엔트리포인트
-|   |-- models/
-|   |   \-- graph_entities.py    # Neo4j 그래프 엔티티 정의
-|   \-- services/
-|       |-- analysis/            # 분석 오케스트레이션 서비스
-|       |-- java_analysis/       # Java 파싱 세부 모듈 (project/spring/mybatis/jpa 등)
-|       |-- java_parser.py       # java_analysis 서브모듈을 재노출하는 퍼사드
-|       |-- java_parser_addon_r001.py  # 논리명 추출 규칙 적용
-|       |-- sql_parser.py        # SQL 문 분석
-|       |-- db_parser.py         # DB 스키마 파싱
-|       |-- db_call_analysis.py  # DB 호출 관계 분석
-|       |-- graph_db.py          # Neo4j 데이터베이스 관리
-|       |-- sequence_diagram_generator.py  # 시퀀스 다이어그램 생성 Facade
-|       |-- plantuml_diagram_generator.py # PlantUML 다이어그램 생성
-|       \-- mermaid_diagram_generator.py  # Mermaid 다이어그램 생성
-|-- commands/                    # 배치 실행 스크립트
-|-- docs/                        # 참고 문서
-|-- libs/                        # 외부 라이브러리 (PlantUML 등)
-|-- output/                      # 생성된 다이어그램 및 산출물
-\-- tests/                       # 테스트 코드
+UserController.getUser()
+  └─→ UserService.findUserById()
+       └─→ UserRepository.findById()
+            └─→ SELECT * FROM users WHERE id = ?
+                 └─→ SQL: users 테이블 조회
 ```
 
-## 🚀 설치 및 설정
+### CRUD 매트릭스
+| 클래스 | users | orders | products |
+|--------|-------|--------|----------|
+| UserController | R | R | R |
+| OrderService | | CRU | RU |
+| ProductService | | | CRUD |
 
-### 1. 환경 설정
+### 시퀀스 다이어그램 (Mermaid 형식)
+```mermaid
+sequenceDiagram
+    Client->>UserController: GET /users/1
+    UserController->>UserService: findUserById(1)
+    UserService->>UserRepository: findById(1)
+    UserRepository->>Database: SELECT * FROM users
+    Database->>UserRepository: User object
+    UserRepository->>UserService: User object
+    UserService->>UserController: User object
+    UserController->>Client: JSON response
+```
+
+---
+
+## 🚀 빠른 시작 (5분)
+
+### 1️⃣ 설치
 
 ```bash
 # 저장소 클론
@@ -51,325 +87,161 @@ cd lang-parser-springboot
 
 # 가상환경 생성 및 활성화
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux/Mac
 
 # 의존성 설치
 pip install -r requirements.txt
 ```
 
-### 2. 환경 변수 설정
-
-`env.example` 파일을 참고하여 `.env` 파일을 생성하세요:
+### 2️⃣ 환경 설정
 
 ```bash
-# Neo4j 데이터베이스 설정
+# env.example을 참고하여 .env 파일 생성
+cp env.example .env
+```
+
+`.env` 파일에 다음을 입력하세요:
+```
 NEO4J_URI=neo4j://127.0.0.1:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=devpass123
+NEO4J_DATABASE=csadb01
+NEO4J_USER=csauser
+NEO4J_PASSWORD=csauser123
 
-# 분석할 프로젝트 경로
-JAVA_SOURCE_FOLDER=D:\workspaces\your-project\src\main\java
-DB_SCRIPT_FOLDER=D:\workspaces\your-project\src\main\resources\db
+JAVA_SOURCE_FOLDER=D:\path\to\your\project\src\main\java
+DB_SCRIPT_FOLDER=D:\path\to\your\project\src\main\resources\db
 
-# 로그 레벨
 LOG_LEVEL=INFO
-
-# 출력 디렉토리
-SEQUENCE_DIAGRAM_OUTPUT_DIR=./output/sequence-diagram
-CRUD_MATRIX_OUTPUT_DIR=./output/crud-matrix
 ```
 
-### 3. Neo4j 데이터베이스 설정
-
-Neo4j 데이터베이스를 설치하고 실행한 후, 다음 스크립트로 스키마를 설정하세요:
+### 3️⃣ 분석 실행
 
 ```bash
-# Neo4j 브라우저에서 실행
-cat docs/db_schema_setup.sql
+# 전체 프로젝트 분석 (Java + DB)
+python -m csa.cli.main analyze --all-objects --clean --project-name myproject
+
+# 결과 확인 (Neo4j 브라우저)
+# http://localhost:7474
 ```
 
-### 4. 외부 도구 설치 (선택사항)
-
-#### PlantUML (이미지 생성용)
-```bash
-# libs 폴더에 plantuml.jar 다운로드
-mkdir -p libs
-curl -L https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar -o libs/plantuml.jar
-```
-
-#### Mermaid CLI (이미지 생성용)
-```bash
-npm install -g @mermaid-js/mermaid-cli
-```
-
-설치 후 `mmdc` 실행 파일이 `PATH`에 없다면 환경 변수 `MMDC_PATH`를 설정해 주세요.
+### 4️⃣ 시각화 생성
 
 ```bash
-# Windows PowerShell
-setx MMDC_PATH "C:\Users\<USER>\AppData\Roaming\npm\mmdc.cmd"
+# 시퀀스 다이어그램 생성
+python -m csa.cli.main sequence --class-name UserController --format mermaid
 
-# macOS / Linux (쉘 세션에 일시 적용)
-export MMDC_PATH=/usr/local/bin/mmdc
-```
-
-`MMDC_PATH`는 프로젝트 실행 시 자동으로 참조되어 Mermaid CLI 위치를 찾습니다.
-
-## 💻 사용법
-
-### CLI 명령어 개요
-
-CSA는 다양한 분석 및 시각화 기능을 제공하는 CLI 도구입니다. 모든 명령어는 `python -m csa.cli.main <command>` 형태로 실행합니다.
-
-#### 🔧 주요 명령어 목록
-
-| 명령어 | 기능 | 주요 옵션 |
-|--------|------|-----------|
-| `analyze` | Java/DB 소스 분석 | `--all-objects`, `--java-object`, `--db-object`, `--clean` |
-| `query` | Neo4j 데이터베이스 쿼리 실행 | `--basic`, `--detailed`, `--inheritance`, `--package` |
-| `sequence` | 시퀀스 다이어그램 생성 | `--class-name`, `--method-name`, `--format` |
-| `list_classes` | 데이터베이스의 클래스 목록 조회 | - |
-| `list_methods` | 특정 클래스의 메서드 목록 조회 | `--class-name` |
-| `crud-matrix` | CRUD 매트릭스 생성 | `--project-name`, `--output-format` |
-| `db_analysis` | DB 호출 관계 분석 | `--project-name` |
-| `table_summary` | 테이블별 CRUD 요약 | `--project-name` |
-| `db_call_chain` | DB 호출 체인 분석 | `--project-name`, `--start-class`, `--start-method` |
-| `crud_analysis` | CRUD 분석 결과 생성 | `--project-name`, `--output-excel` |
-| `db_call_diagram` | DB 호출 체인 다이어그램 생성 | `--project-name`, `--output-image` |
-
-### 📊 명령어별 상세 옵션
-
-#### 1. `analyze` - 소스 코드 분석
-```bash
-# 전체 분석 (Java + DB)
-python -m csa.cli.main analyze --all-objects --clean
-
-# Java 소스만 분석
-python -m csa.cli.main analyze --java-object --clean
-
-# DB 스키마만 분석
-python -m csa.cli.main analyze --db-object --clean
-
-# 특정 클래스만 분석
-python -m csa.cli.main analyze --class-name UserController --clean
-
-# 업데이트 모드 (기존 데이터 유지)
-python -m csa.cli.main analyze --all-objects --update
-
-# 드라이런 (DB 연결 없이 파싱만)
-python -m csa.cli.main analyze --java-object --dry-run
-```
-
-**주요 옵션:**
-- `--java-source-folder`: Java 소스 폴더 경로
-- `--clean`: 분석 전 데이터베이스 초기화
-- `--class-name`: 특정 클래스만 분석
-- `--update`: 기존 데이터 유지하며 업데이트
-- `--db-object`: DB 객체 분석
-- `--java-object`: Java 객체 분석
-- `--all-objects`: Java + DB 모두 분석
-- `--dry-run`: DB 연결 없이 파싱만 수행
-- `--project-name`: 프로젝트 이름 지정
-
-#### 2. `query` - 데이터베이스 쿼리
-```bash
-# 기본 클래스 쿼리
-python -m csa.cli.main query --basic
-
-# 상세 클래스 쿼리 (메서드, 속성 포함)
-python -m csa.cli.main query --detailed
-
-# 상속 관계 쿼리
-python -m csa.cli.main query --inheritance
-
-# 패키지별 클래스 쿼리
-python -m csa.cli.main query --package
-
-# 커스텀 쿼리 실행
-python -m csa.cli.main query --query "MATCH (c:Class) RETURN c.name LIMIT 10"
-```
-
-#### 3. `sequence` - 시퀀스 다이어그램 생성
-```bash
-# 특정 클래스의 시퀀스 다이어그램 (기본: Mermaid)
-python -m csa.cli.main sequence --class-name UserController
-
-# 특정 메서드의 시퀀스 다이어그램 (기본: Mermaid)
-python -m csa.cli.main sequence --class-name UserController --method-name getUser
-
-# PlantUML 형식으로 생성
-python -m csa.cli.main sequence --class-name UserController --format plantuml
-
-# 이미지로 변환 (PNG)
-python -m csa.cli.main sequence --class-name UserController --image-format png
-
-# 출력 디렉토리 지정
-python -m csa.cli.main sequence --class-name UserController --output-dir ./diagrams
-```
-
-**주요 옵션:**
-- `--class-name`: 분석할 클래스명 (필수)
-- `--method-name`: 특정 메서드만 분석
-- `--max-depth`: 호출 체인 최대 깊이 (기본값: 10)
-- `--include-external`: 외부 라이브러리 호출 포함
-- `--format`: 다이어그램 형식 (기본값: mermaid, 선택: plantuml)
-- `--image-format`: 이미지 형식 (none, png, svg, pdf)
-- `--image-width`: 이미지 너비 (기본값: 1200)
-- `--image-height`: 이미지 높이 (기본값: 800)
-
-#### 4. `crud-matrix` - CRUD 매트릭스 생성
-```bash
-# 기본 CRUD 매트릭스 생성
-python -m csa.cli.main crud-matrix
-
-# 특정 프로젝트의 CRUD 매트릭스
+# CRUD 매트릭스 생성
 python -m csa.cli.main crud-matrix --project-name myproject
 
-# Excel 형식으로 출력
-python -m csa.cli.main crud-matrix --output-format excel
-
-# SVG 이미지로 출력
-python -m csa.cli.main crud-matrix --output-format svg
+# 결과 위치: output/sequence-diagram/, output/crud-matrix/
 ```
 
-#### 5. `db_call_chain` - DB 호출 체인 분석
-```bash
-# 전체 프로젝트 호출 체인 분석
-python -m csa.cli.main db_call_chain --project-name myproject
+---
 
-# 특정 클래스부터 시작하는 호출 체인
-python -m csa.cli.main db_call_chain --project-name myproject --start-class UserController
+## 📦 프로젝트 구조
 
-# 특정 메서드부터 시작하는 호출 체인
-python -m csa.cli.main db_call_chain --project-name myproject --start-class UserController --start-method getUser
+```
+csa/
+├── cli/                      # CLI 진입점 및 명령어 핸들러
+│   └── commands/             # analyze, sequence, crud 등 각 명령어
+├── services/
+│   ├── analysis/             # Java/DB 파이프라인 오케스트레이션
+│   ├── java_analysis/        # Spring/JPA/MyBatis 파서
+│   ├── graph_db/             # Neo4j CRUD 및 분석 쿼리
+│   └── db_call_analysis/     # 호출 체인, CRUD 매트릭스, 다이어그램
+├── models/                   # Pydantic 데이터 모델 및 그래프 엔티티
+├── parsers/                  # 저수준 파싱 엔진 (Java/DB/SQL)
+├── diagrams/                 # PlantUML/Mermaid 시퀀스 다이어그램 생성
+├── utils/                    # 로거, 규칙 매니저, 유틸리티
+└── vendor/javalang/          # Java AST 파싱 라이브러리
 
-# 결과를 파일로 저장
-python -m csa.cli.main db_call_chain --project-name myproject --output-file call_chain.json
+tests/
+├── unit/                     # 단위 테스트
+├── integration/              # 통합 테스트 (엔드-투-엔드)
+├── contract/                 # CLI 인터페이스 테스트
+├── sample_java_project/      # 테스트용 Java 샘플
+└── sample_jpa_project/       # JPA 테스트 샘플
+
+rules/                        # 논리명/설명 추출 규칙 (Markdown)
 ```
 
-#### 6. `db_call_diagram` - DB 호출 체인 다이어그램 생성
-```bash
-# 기본 호출 체인 다이어그램 생성
-python -m csa.cli.main db_call_diagram --project-name myproject
+---
 
-# 특정 클래스부터 시작하는 다이어그램
-python -m csa.cli.main db_call_diagram --project-name myproject --start-class UserController
-
-# 이미지로 출력
-python -m csa.cli.main db_call_diagram --project-name myproject --output-image diagram.png --image-format png
-```
-
-### 🔧 공통 옵션
-
-모든 명령어에서 사용 가능한 공통 옵션:
-
-- `--neo4j-uri`: Neo4j 데이터베이스 URI (기본값: bolt://localhost:7687)
-- `--neo4j-user`: Neo4j 사용자명 (기본값: neo4j)
-- `--neo4j-password`: Neo4j 비밀번호 (환경변수에서 자동 읽기)
+## 💻 사용 방법
 
 ### 기본 명령어
 
+#### 분석 (analyze)
 ```bash
-# 가상환경 활성화
-.venv\Scripts\activate
+# 전체 재분석 (Java + DB, 기존 데이터 삭제)
+python -m csa.cli.main analyze --all-objects --clean --project-name myproject
 
-# 전체 분석 (Java + DB)
-python -m csa.cli.main analyze --all-objects --clean
+# Java만 분석 (스트리밍 모드로 대규모 프로젝트 지원)
+python -m csa.cli.main analyze --java-object --concurrent --project-name myproject
 
-# Java 소스만 분석
-python -m csa.cli.main analyze --java-object --clean
+# DB만 분석
+python -m csa.cli.main analyze --db-object --clean --project-name myproject
 
-# DB 스키마만 분석
-python -m csa.cli.main analyze --db-object --clean
+# 특정 클래스만 분석
+python -m csa.cli.main analyze --class-name UserController --project-name myproject
+
+# 업데이트 모드 (기존 데이터 유지, 새로운 항목만 추가)
+python -m csa.cli.main analyze --all-objects --update --project-name myproject
 ```
 
-### 배치 스크립트 사용
-
+#### 시퀀스 다이어그램 (sequence)
 ```bash
-# 전체 재분석
-commands\1-1.전체재분석.bat
+# Mermaid 형식 (기본값)
+python -m csa.cli.main sequence --class-name UserController
 
-# Java 재분석
-commands\1-2.자바재분석.bat
+# PlantUML 형식
+python -m csa.cli.main sequence --class-name UserController --format plantuml
 
-# DB 재분석
-commands\1-3.DB재분석.bat
+# 특정 메서드만
+python -m csa.cli.main sequence --class-name UserController --method-name getUser
 
-# 시퀀스 다이어그램 생성 (PlantUML SVG)
-commands\2-1.시퀀스-PlantUML-SVG.bat
-
-# CRUD 매트릭스 생성
-commands\2-2.CRUD-Matrix.bat
+# 이미지 변환 (PNG/SVG/PDF)
+python -m csa.cli.main sequence --class-name UserController --image-format png
 ```
 
-### 고급 기능
-
-#### 1. 데이터베이스 호출 관계 분석
-
+#### CRUD 매트릭스 (crud-matrix)
 ```bash
-# 전체 프로젝트 호출 체인 분석
+# Excel 형식 출력
+python -m csa.cli.main crud-matrix --project-name myproject --output-format excel
+
+# Markdown 형식 출력
+python -m csa.cli.main crud-matrix --project-name myproject --output-format markdown
+```
+
+#### DB 호출 관계 분석 (db-call-chain)
+```bash
+# 전체 호출 체인 분석
 python -m csa.cli.main db-call-chain --project-name myproject
 
-# 특정 클래스부터 시작하는 호출 체인
+# 특정 클래스부터 시작
 python -m csa.cli.main db-call-chain --project-name myproject --start-class UserController
 
-# 특정 메서드부터 시작하는 호출 체인
-python -m csa.cli.main db-call-chain --project-name myproject --start-class UserController --start-method getUser
+# 다이어그램 생성 (Markdown + 이미지)
+python -m csa.cli.main db-call-diagram --project-name myproject --output-image diagram.png
 ```
 
-#### 2. 시퀀스 다이어그램 생성
+### 고급 옵션
 
 ```bash
-# Mermaid 형식으로 생성
-python -m csa.cli.main sequence --format mermaid --output-dir ./output/sequence-diagram
+# 병렬 처리 워커 수 지정 (기본값: 8)
+python -m csa.cli.main analyze --all-objects --concurrent --workers 12 --project-name myproject
 
-# PlantUML 형식으로 생성
-python -m csa.cli.main sequence --format plantuml --output-dir ./output/sequence-diagram
+# 스트리밍 모드 활성화 (대규모 프로젝트, .env 설정)
+# .env에 USE_STREAMING_PARSE=true 설정
+
+# 드라이런 (Neo4j 연결 없이 파싱만 수행)
+python -m csa.cli.main analyze --java-object --dry-run
+
+# DEBUG 로그 활성화
+LOG_LEVEL=DEBUG python -m csa.cli.main analyze --all-objects --project-name myproject
 ```
 
-#### 3. CRUD 매트릭스 생성
-
-```bash
-# CRUD 매트릭스 생성
-python -m csa.cli.main crud-matrix --output-dir ./output/crud-matrix
-```
-
-## 🔧 주요 모듈 설명
-
-### `csa/cli/main.py`
-- 애플리케이션의 메인 엔트리 포인트
-- Click 기반 CLI 인터페이스 제공
-- 전체 분석 프로세스 조율
-
-### `csa/models/graph_entities.py`
-- Neo4j 그래프 데이터베이스용 Pydantic 모델 정의
-- Project, Class, Method, Field, Annotation, Bean, Endpoint 등
-- Spring Boot 특화 모델들 포함
-
-### `csa/services/java_parser.py`
-- javalang 라이브러리를 사용한 Java 소스 파싱
-- Spring Boot 어노테이션 분석 (@Component, @Service, @RestController 등)
-- JPA 엔티티, MyBatis 매퍼 분석
-
-### `csa/services/db_call_analysis.py`
-- Controller → Service → Repository → SQL → Table 호출 체인 분석
-- CRUD 매트릭스 생성
-- 영향도 분석 및 시각화
-
-### `csa/services/graph_db.py`
-- Neo4j 데이터베이스 CRUD 작업 관리
-- 노드 및 관계 생성, 조회, 업데이트, 삭제
-
-### `csa/services/sequence_diagram_generator.py`
-- PlantUML/Mermaid 시퀀스 다이어그램 생성 Facade
-- 호출 관계를 시각적 다이어그램으로 변환
-
-## 📚 상세 문서
-
-- [DB 호출 관계 분석 사용법](docs/db_call_analysis_usage.md)
-- [Java Parser Addon R001 사용법](docs/java_parser_addon_r001_usage.md)
-- [Spring Boot 분석 계획](docs/springboot_analysis_plan.md)
-- [DB 스키마 설정](docs/db_schema_setup.sql)
+---
 
 ## 🧪 테스트
 
@@ -377,71 +249,227 @@ python -m csa.cli.main crud-matrix --output-dir ./output/crud-matrix
 # 전체 테스트 실행
 pytest
 
-# 특정 테스트 실행
-pytest tests/unit/test_java_parser.py
-pytest tests/integration/test_end_to_end.py
-```
+# 단위 테스트만
+pytest tests/unit
 
-## 📊 출력 결과
+# 통합 테스트만
+pytest tests/integration
 
-### 1. Neo4j 그래프 데이터베이스
-- 분석된 모든 코드 요소와 관계가 그래프로 저장
-- Neo4j 브라우저에서 시각적 탐색 가능
+# 계약 테스트 (CLI)
+pytest tests/contract
 
-### 2. 시퀀스 다이어그램
-- `output/sequence-diagram/` 폴더에 생성
-- PlantUML (.puml) 또는 Mermaid (.md) 형식
+# 특정 테스트 파일
+pytest tests/unit/test_java_parser.py -v
 
-### 3. CRUD 매트릭스
-- `output/crud-matrix/` 폴더에 Excel 파일로 생성
-- 테이블별 CRUD 작업 매핑
-
-## 🔍 분석 대상 요소
-
-### Java 코드 분석
-- **클래스**: 일반 클래스, 인터페이스, 추상 클래스
-- **메서드**: 접근 제어자, 매개변수, 반환 타입
-- **필드**: 변수 타입, 어노테이션
-- **어노테이션**: Spring Boot, JPA, MyBatis 등 프레임워크 어노테이션
-
-### Spring Boot 특화 분석
-- **Bean**: @Component, @Service, @Repository 등
-- **Endpoint**: @RestController, @RequestMapping 등
-- **JPA**: @Entity, @Table, @Column, @OneToMany 등
-- **MyBatis**: @Mapper, XML 매퍼 파일
-
-### 데이터베이스 분석
-- **테이블**: 컬럼, 인덱스, 제약조건
-- **SQL 문**: SELECT, INSERT, UPDATE, DELETE
-- **호출 관계**: Java 코드와 DB 테이블 간의 관계
-
-## 🤝 기여하기
-
-1. 이 저장소를 포크하세요
-2. 새로운 기능 브랜치를 생성하세요 (`git checkout -b feature/amazing-feature`)
-3. 변경사항을 커밋하세요 (`git commit -m 'Add some amazing feature'`)
-4. 브랜치에 푸시하세요 (`git push origin feature/amazing-feature`)
-5. Pull Request를 생성하세요
-
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 배포됩니다.
-
-## 🆘 문제 해결
-
-### 일반적인 문제
-
-1. **Neo4j 연결 오류**: Neo4j가 실행 중인지 확인하고 연결 정보를 확인하세요
-2. **Java 파싱 오류**: javalang 라이브러리 버전을 확인하세요
-3. **PlantUML 이미지 생성 실패**: plantuml.jar 파일이 libs 폴더에 있는지 확인하세요
-
-### 로그 확인
-
-```bash
-# 로그 레벨을 DEBUG로 설정하여 상세 로그 확인
-LOG_LEVEL=DEBUG python -m csa.cli.main analyze --all-objects
+# 커버리지 확인
+pytest --cov=csa tests/
 ```
 
 ---
 
-**문의사항이나 버그 리포트는 이슈 트래커를 통해 제출해 주세요.**
+## 🔧 환경 설정 상세
+
+### 필수 환경 변수
+```env
+# Neo4j 연결
+NEO4J_URI=neo4j://127.0.0.1:7687
+NEO4J_DATABASE=csadb01
+NEO4J_USER=csauser
+NEO4J_PASSWORD=csauser123
+
+# 분석 대상 경로
+JAVA_SOURCE_FOLDER=D:\workspaces\your-project\src\main\java
+DB_SCRIPT_FOLDER=D:\workspaces\your-project\src\main\resources\db
+```
+
+### 선택 환경 변수
+```env
+# 성능 최적화
+USE_STREAMING_PARSE=true        # 스트리밍 모드 (메모리 효율)
+JAVA_PARSE_WORKERS=8            # 병렬 워커 수
+
+# 출력 디렉터리
+LOG_LEVEL=INFO
+SEQUENCE_DIAGRAM_OUTPUT_DIR=./output/sequence-diagram
+CRUD_MATRIX_OUTPUT_DIR=./output/crud-matrix
+
+# 외부 도구
+MMDC_PATH=/usr/local/bin/mmdc   # Mermaid CLI 경로
+```
+
+### Neo4j 준비
+
+#### 로컬 설치 (Docker 권장)
+```bash
+# Docker로 Neo4j 실행
+docker run -d \
+  --name neo4j \
+  -p 7687:7687 \
+  -p 7474:7474 \
+  -e NEO4J_AUTH=neo4j/csauser123 \
+  neo4j:latest
+
+# 브라우저 접속
+# http://localhost:7474
+# 초기 암호: neo4j → csauser123로 변경
+```
+
+---
+
+## 📊 산출물
+
+### Neo4j 그래프 데이터베이스
+- 모든 코드 요소가 노드 및 관계로 저장
+- Neo4j 브라우저에서 시각적 탐색 가능
+- Cypher 쿼리를 통한 고급 분석 가능
+
+### 시퀀스 다이어그램
+- 위치: `output/sequence-diagram/{프로젝트명}/`
+- 형식: PlantUML (`.puml`), Mermaid (`.md`)
+- 이미지: PNG, SVG, PDF (선택적)
+
+### CRUD 매트릭스
+- 위치: `output/crud-matrix/`
+- 형식: Excel (`.xlsx`), Markdown (`.md`)
+- 내용: 클래스별 × 테이블별 CRUD 작업 매핑
+
+### 분석 로그
+- 위치: `logs/{command}-YYYYMMDD.log`
+- 특징: 명령별 분리, 7일 이상 자동 삭제
+
+---
+
+## 🚨 트러블슈팅
+
+### Neo4j 연결 실패
+```
+문제: "Failed to connect to Neo4j"
+해결:
+1. Neo4j 서버 실행 확인 (docker ps)
+2. .env의 NEO4J_* 값 확인
+3. Neo4j 브라우저 (http://localhost:7474) 접속 테스트
+```
+
+### Java 파싱 오류
+```
+문제: "Unexpected token during parsing"
+해결:
+1. Lombok 설치 여부 확인 (@Data, @Builder 등)
+2. --dry-run으로 파싱 테스트
+3. LOG_LEVEL=DEBUG로 상세 로그 확인
+4. 문제 파일을 tests/sample_java_project에 추가해 단위 테스트 작성
+```
+
+### 메모리 부족
+```
+문제: "MemoryError during analysis"
+해결:
+1. USE_STREAMING_PARSE=true로 스트리밍 모드 활성화
+2. JAVA_PARSE_WORKERS를 줄임 (예: 4)
+3. 특정 클래스만 분석 (--class-name 옵션)
+```
+
+### Mermaid 이미지 변환 실패
+```
+문제: "mmdc command not found"
+해결:
+1. Mermaid CLI 설치: npm install -g @mermaid-js/mermaid-cli
+2. MMDC_PATH 환경 변수 설정 (예: /usr/local/bin/mmdc)
+3. Node.js 설치 확인 (node --version)
+```
+
+### 기존 데이터 삭제 안 됨
+```
+문제: --clean 옵션으로도 기존 데이터가 남음
+해결: Neo4j 브라우저에서 수동 삭제
+MATCH (n:Project {project_name: 'myproject'}) DETACH DELETE n
+```
+
+---
+
+## 📚 문서
+
+- **[CLAUDE.md](./CLAUDE.md)** - Claude AI 개발자 가이드
+- **[docs/](./docs/)** - 상세 기술 문서 및 설계 가이드
+- **[rules/](./rules/)** - 논리명 추출 규칙 정의
+
+---
+
+## 🔄 최근 업데이트
+
+### Phase 3 (최신)
+- ✅ **Inner Class 지원**: 내부 클래스 중복 제거 및 최적화
+- ✅ **Bean Dependency Resolver**: Constructor/Setter/Field Injection 자동 추적
+- ✅ **로그 파일 분리**: 명령별 로그 파일 분리 및 7일 자동 정리
+
+### Phase 2
+- ✅ JPA/MyBatis 엔티티 및 매퍼 분석
+- ✅ DDL 파싱 및 Database 노드 생성
+- ✅ Method → SQL → Table 호출 체인 분석
+
+### Phase 1
+- ✅ Java 기본 파싱 (클래스, 메서드, 필드)
+- ✅ Spring Bean/Endpoint 식별
+- ✅ 시퀀스 다이어그램 생성
+
+---
+
+## 📋 시스템 요구사항
+
+- **Python**: 3.8 이상
+- **Neo4j**: 4.0 이상 (Docker 권장)
+- **Java**: 8 이상 (분석 대상 코드용)
+- **메모리**: 최소 2GB (권장 4GB 이상)
+- **디스크**: 분석 대상 크기의 2배 이상
+
+### 선택 도구
+- **PlantUML**: `libs/plantuml.jar` (이미지 변환용)
+- **Mermaid CLI**: `npm install -g @mermaid-js/mermaid-cli` (이미지 변환용)
+
+---
+
+## 🤝 기여 방법
+
+1. 이 저장소를 Fork합니다.
+2. 기능 브랜치를 생성합니다 (`git checkout -b feature/amazing-feature`).
+3. 변경사항을 Commit합니다 (`git commit -m 'Add amazing feature'`).
+4. 브랜치에 Push합니다 (`git push origin feature/amazing-feature`).
+5. Pull Request를 생성합니다.
+
+---
+
+## 📝 라이선스
+
+이 프로젝트는 **MIT 라이선스**로 배포됩니다. 자세한 내용은 [LICENSE](./LICENSE) 파일을 참조하세요.
+
+---
+
+## 👨‍💼 개발자
+
+- **Project Lead**: CSA Development Team
+
+---
+
+## 📧 지원 및 문의
+
+- **이슈 보고**: GitHub Issues
+- **기능 요청**: GitHub Discussions
+- **문서**: [docs/](./docs/) 디렉터리 참조
+
+---
+
+## 🌟 주요 기술 스택
+
+| 계층 | 기술 |
+|------|------|
+| **CLI** | Click (Python) |
+| **파싱** | javalang, YAML, DDL Parser |
+| **모델** | Pydantic |
+| **DB** | Neo4j (그래프 데이터베이스) |
+| **분석** | pandas, numpy |
+| **시각화** | PlantUML, Mermaid |
+| **테스트** | pytest |
+
+---
+
+**Happy Analyzing! 🎉**
