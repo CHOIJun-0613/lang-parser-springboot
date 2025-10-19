@@ -26,7 +26,7 @@ from csa.utils.logger import set_command_context
 )
 @click.option("--image-width", default=1200, help="Image width in pixels (default: 1200)")
 @click.option("--image-height", default=800, help="Image height in pixels (default: 800)")
-@click.option("--format", default="plantuml", type=click.Choice(["mermaid", "plantuml"]), help="Diagram format")
+@click.option("--format", default="mermaid", type=click.Choice(["mermaid", "plantuml"]), help="Diagram format")
 @click.option(
     "--output-dir",
     default=os.getenv("SEQUENCE_DIAGRAM_OUTPUT_DIR", "output/sequence-diagram"),

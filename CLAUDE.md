@@ -261,7 +261,7 @@ MMDC_PATH=/path/to/mmdc                 # Mermaid CLI 경로
 python -m csa.cli.main analyze --all-objects --clean --project-name myproject
 
 # Java 소스만 재분석 (스트리밍 모드)
-python -m csa.cli.main analyze --java-object --clean --project-name myproject --concurrent
+python -m csa.cli.main analyze --java-object --clean --project-name myproject
 
 # DB 스키마만 재분석
 python -m csa.cli.main analyze --db-object --clean --project-name myproject
@@ -276,7 +276,7 @@ python -m csa.cli.main analyze --all-objects --update --project-name myproject
 python -m csa.cli.main analyze --java-object --dry-run
 
 # 병렬 처리 워커 수 지정
-python -m csa.cli.main analyze --all-objects --concurrent --workers 12 --project-name myproject
+python -m csa.cli.main analyze --all-objects --project-name myproject
 ```
 
 **옵션 설명:**
@@ -285,8 +285,7 @@ python -m csa.cli.main analyze --all-objects --concurrent --workers 12 --project
 - `--db-object`: DB 스키마만 분석
 - `--clean`: 기존 프로젝트 노드 삭제 후 재분석
 - `--update`: 기존 데이터 유지하고 새로운 항목만 추가
-- `--concurrent`: 스트리밍/병렬 모드 활성화 (대규모 프로젝트용)
-- `--workers N`: 병렬 워커 수 지정 (기본값: 8)
+- 병렬 처리는 `.env`의 `JAVA_PARSE_WORKERS` 등 환경 변수로 제어합니다.
 - `--class-name <이름>`: 특정 클래스만 분석
 - `--project-name <이름>`: Neo4j에 저장할 프로젝트명
 - `--dry-run`: Neo4j 연결 없이 파싱만 수행

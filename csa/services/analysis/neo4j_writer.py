@@ -516,15 +516,9 @@ def _add_classes(
     classes: Sequence[object],
     class_to_package_map: dict,
     project_name: str,
-    concurrent: bool,
-    workers: Optional[int],
     logger,
 ) -> None:
-    """Persist class nodes, optionally using concurrent helpers on GraphDB."""
-    if concurrent:
-        logger.info("DB 저장 -  %s classes with concurrent processing...", len(classes))
-        db.add_classes_concurrent(classes, class_to_package_map, project_name, workers)
-        return
+    """Persist class nodes into Neo4j."""
 
     total = len(classes)
     logger.info("DB 저장 -  %s classes...", total)
@@ -540,8 +534,6 @@ def save_java_objects_to_neo4j(
     artifacts: JavaAnalysisArtifacts,
     project_name: str,
     clean: bool,
-    concurrent: bool,
-    workers: Optional[int],
     logger,
 ) -> JavaAnalysisStats:
     """Persist Java analysis artifacts to Neo4j and return corresponding stats."""
@@ -590,7 +582,7 @@ def save_java_objects_to_neo4j(
     db.add_project(project)
 
     _add_packages(db, artifacts.packages, project_name, logger)
-    _add_classes(db, artifacts.classes, artifacts.class_to_package_map, project_name, concurrent, workers, logger)
+    _add_classes(db, artifacts.classes, artifacts.class_to_package_map, project_name, logger)
     add_springboot_objects(
         db,
         artifacts.beans,

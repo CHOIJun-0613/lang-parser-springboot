@@ -75,8 +75,6 @@ def analyze_project(
     neo4j_database: str,
     clean: bool,
     dry_run: bool,
-    concurrent: bool,
-    workers: Optional[int],
     java_object: bool,
     db_object: bool,
     all_objects: bool,
@@ -143,8 +141,6 @@ def analyze_project(
                     artifacts,
                     final_project_name,
                     clean,
-                    concurrent,
-                    workers,
                     logger,
                 )
 

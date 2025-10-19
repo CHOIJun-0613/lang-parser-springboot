@@ -23,8 +23,6 @@ from csa.utils.logger import get_logger, set_command_context
 @click.option("--neo4j-database", default=os.getenv("NEO4J_DATABASE", "neo4j"), help="Neo4j database name")
 @click.option("--clean", is_flag=True, help="Clean database before analysis")
 @click.option("--dry-run", is_flag=True, help="Parse without database connection")
-@click.option("--concurrent", is_flag=True, help="Use concurrent processing for Java analysis")
-@click.option("--workers", type=int, help="Number of worker threads for concurrent processing")
 @click.option("--java-object", is_flag=True, help="Analyze Java objects only")
 @click.option("--db-object", is_flag=True, help="Analyze database objects only")
 @click.option("--all-objects", is_flag=True, help="Analyze both Java and database objects")
@@ -40,8 +38,6 @@ def analyze_command(
     neo4j_database,
     clean,
     dry_run,
-    concurrent,
-    workers,
     java_object,
     db_object,
     all_objects,
@@ -94,8 +90,6 @@ def analyze_command(
             neo4j_database=neo4j_database,
             clean=clean,
             dry_run=dry_run,
-            concurrent=concurrent,
-            workers=workers,
             java_object=java_object,
             db_object=db_object,
             all_objects=all_objects,

@@ -35,7 +35,7 @@
 6. **후처리**: `resolve_bean_dependencies_from_neo4j()`가 Bean 의존성을 보강하고, `print_analysis_summary()`가 실행 통계를 출력한다.
 
 ## 4. 주요 CLI 명령
-- `analyze`: Java/DB 전체 혹은 부분 분석. `--java-object`, `--db-object`, `--all-objects`, `--class-name`, `--update`, `--dry-run`, `--concurrent`, `--workers` 옵션 지원.
+- `analyze`: Java/DB 전체 혹은 부분 분석. `--java-object`, `--db-object`, `--all-objects`, `--class-name`, `--update`, `--dry-run` 옵션 지원.
 - `db-analysis`, `db-statistics`, `db-call-chain`, `db-call-diagram`: Method↔SQL 관계를 기반으로 통계, 호출 체인, 다이어그램을 생성한다.
 - `crud matrix` 계열: 테이블/클래스 기준 CRUD 매트릭스와 교차표를 출력한다.
 - `sequence`: PlantUML/Mermaid 시퀀스 다이어그램을 생성하고 필요 시 이미지로 변환한다.

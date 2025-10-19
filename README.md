@@ -127,8 +127,8 @@ python -m csa.cli.main analyze --all-objects --clean --project-name myproject
 ### 4️⃣ 시각화 생성
 
 ```bash
-# 시퀀스 다이어그램 생성
-python -m csa.cli.main sequence --class-name UserController --format mermaid
+# 시퀀스 다이어그램 생성 (기본: mermaid)
+python -m csa.cli.main sequence --class-name UserController
 
 # CRUD 매트릭스 생성
 python -m csa.cli.main crud-matrix --project-name myproject
@@ -177,7 +177,7 @@ rules/                        # 논리명/설명 추출 규칙 (Markdown)
 python -m csa.cli.main analyze --all-objects --clean --project-name myproject
 
 # Java만 분석 (스트리밍 모드로 대규모 프로젝트 지원)
-python -m csa.cli.main analyze --java-object --concurrent --project-name myproject
+python -m csa.cli.main analyze --java-object --project-name myproject
 
 # DB만 분석
 python -m csa.cli.main analyze --db-object --clean --project-name myproject
@@ -229,7 +229,7 @@ python -m csa.cli.main db-call-diagram --project-name myproject --output-image d
 
 ```bash
 # 병렬 처리 워커 수 지정 (기본값: 8)
-python -m csa.cli.main analyze --all-objects --concurrent --workers 12 --project-name myproject
+python -m csa.cli.main analyze --all-objects --project-name myproject
 
 # 스트리밍 모드 활성화 (대규모 프로젝트, .env 설정)
 # .env에 USE_STREAMING_PARSE=true 설정
@@ -240,6 +240,8 @@ python -m csa.cli.main analyze --java-object --dry-run
 # DEBUG 로그 활성화
 LOG_LEVEL=DEBUG python -m csa.cli.main analyze --all-objects --project-name myproject
 ```
+
+병렬 처리는 `.env`(예: `JAVA_PARSE_WORKERS`) 설정으로 제어합니다.
 
 ---
 
