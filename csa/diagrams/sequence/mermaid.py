@@ -349,6 +349,18 @@ class MermaidDiagramGenerator:
             
             # Build properly ordered flow with activation stack management
             activation_events = self._build_activation_aware_flow(calls, main_class_name, top_method)
+
+            # Normalize event payloads so downstream rendering can assume keys exist
+            for event in activation_events:
+                if event.get('type') == 'call':
+                    call_details = event.get('call', {}) or {}
+                    event.setdefault('source', call_details.get('source_class', main_class_name))
+                    event.setdefault('target', call_details.get('target_class'))
+                    event.setdefault('method', call_details.get('target_method'))
+                    event.setdefault('return_type', call_details.get('return_type', 'void'))
+                    event.setdefault('source_package', call_details.get('source_package'))
+                    event.setdefault('target_package', call_details.get('target_package'))
+                    event.setdefault('call', call_details)
             
             # Render the events with proper activation lifecycle
             activation_stack = []  # Track activation stack for proper lifecycle
