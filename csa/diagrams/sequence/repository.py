@@ -99,6 +99,7 @@ def fetch_call_chain(
 
     sql_call_query = """
     MATCH (source:Method {name: $method_name, class_name: $class_name})-[rel:CALLS]->(sql:SqlStatement)
+    OPTIONAL MATCH (mapper:MyBatisMapper)-[:HAS_SQL]->(sql)
     RETURN
         COALESCE(rel.call_order, rel.line_number, 0) AS call_order,
         rel.line_number AS line_number,
@@ -107,8 +108,8 @@ def fetch_call_chain(
         sql.sql_type AS sql_type,
         sql.tables AS sql_tables,
         sql.columns AS sql_columns,
-        sql.mapper_name AS mapper_name,
-        sql.namespace AS mapper_namespace,
+        COALESCE(sql.mapper_name, mapper.name) AS mapper_name,
+        COALESCE(sql.namespace, mapper.namespace) AS mapper_namespace,
         sql.project_name AS sql_project
     ORDER BY call_order, line_number, sql_id
     """
@@ -116,6 +117,7 @@ def fetch_call_chain(
     fallback_sql_query = """
     MATCH (sql:SqlStatement)
     WHERE sql.id = $sql_id AND sql.mapper_name IN $mapper_names
+    OPTIONAL MATCH (mapper:MyBatisMapper)-[:HAS_SQL]->(sql)
     RETURN
         0 AS call_order,
         0 AS line_number,
@@ -124,8 +126,8 @@ def fetch_call_chain(
         sql.sql_type AS sql_type,
         sql.tables AS sql_tables,
         sql.columns AS sql_columns,
-        sql.mapper_name AS mapper_name,
-        sql.namespace AS mapper_namespace,
+        COALESCE(sql.mapper_name, mapper.name) AS mapper_name,
+        COALESCE(sql.namespace, mapper.namespace) AS mapper_namespace,
         sql.project_name AS sql_project
     ORDER BY sql.mapper_name
     """
@@ -158,10 +160,34 @@ def fetch_call_chain(
         return project == project_name
 
     def _sql_tables_or_empty(raw_tables):
+        """SqlStatement.tables 속성을 파싱하여 테이블 목록을 반환합니다.
+
+        Args:
+            raw_tables: SqlStatement.tables 값 (list, str, 또는 None)
+
+        Returns:
+            테이블 목록. 각 항목은 dict 형태: {"name": "table_name", "schema": "schema_name"}
+        """
         if not raw_tables:
             return []
+
+        # 이미 리스트인 경우
         if isinstance(raw_tables, list):
-            return raw_tables
+            result = []
+            for item in raw_tables:
+                if isinstance(item, dict):
+                    # 이미 dict 형태인 경우
+                    result.append(item)
+                elif isinstance(item, str):
+                    # 문자열인 경우, name만 설정
+                    result.append({"name": item, "schema": ""})
+            return result
+
+        # 문자열인 경우 (예: "users,roles" 또는 "users")
+        if isinstance(raw_tables, str):
+            table_names = [t.strip() for t in raw_tables.split(",") if t.strip()]
+            return [{"name": name, "schema": ""} for name in table_names]
+
         return []
 
     def _extract_tables_from_columns(raw_columns):
@@ -307,8 +333,13 @@ def fetch_call_chain(
             tables = _sql_tables_or_empty(record["sql_tables"])
             if not tables:
                 tables = _extract_tables_from_columns(record["sql_columns"])
-            if tables:
+
+            if not tables:
+                LOGGER.debug("No tables found for SQL %s (sql_tables=%s, sql_columns=%s)",
+                            sql_id, record["sql_tables"], record["sql_columns"])
+            else:
                 LOGGER.debug("Tables referenced by SQL %s: %s", sql_id, tables)
+
             for table_data in tables:
                 table_name = table_data.get("name") or table_data.get("table") or table_data.get("table_name")
                 if not table_name:
