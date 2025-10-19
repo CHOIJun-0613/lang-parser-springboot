@@ -66,51 +66,297 @@ def fetch_call_chain(
     max_depth: int,
     project_name: Optional[str],
 ) -> List[Dict]:
-    """Retrieve call chain from Neo4j."""
+    """Retrieve call chain from Neo4j with ordered method/SQL/table calls."""
     depth_limit = max(0, int(max_depth))
-    query = f"""
-    MATCH (source_class:Class {{name: $class_name}})-[:HAS_METHOD]->(source_method:Method)
-    WHERE ($method_name IS NULL OR source_method.name = $method_name)
-      AND ($project_name IS NULL OR source_class.project_name = $project_name)
-    OPTIONAL MATCH path = (source_method)-[:CALLS*0..{depth_limit}]->(target_method:Method)
-    WITH source_class, source_method, target_method, path
-    OPTIONAL MATCH (target_class:Class)-[:HAS_METHOD]->(target_method)
-    OPTIONAL MATCH (target_method)-[:CALLS]->(sql:SqlStatement)
-    RETURN
-        source_method.name as source_method,
-        source_class.name as source_class,
-        source_class.package_name as source_package,
-        target_method.name as target_method,
-        target_class.name as target_class,
-        target_class.package_name as target_package,
-        sql.id as sql_id,
-        sql.sql_type as sql_type,
-        sql.tables as sql_tables,
-        sql.columns as sql_columns,
-        LENGTH(path) as depth
-    ORDER BY depth, source_method
+    if depth_limit <= 0:
+        return []
+
+    top_method_query = """
+    MATCH (c:Class {name: $class_name})
+    WHERE ($project_name IS NULL OR c.project_name = $project_name)
+    MATCH (c)-[:HAS_METHOD]->(m:Method)
+    WHERE ($method_name IS NULL OR m.name = $method_name)
+    RETURN m.name AS method_name,
+           c.name AS class_name,
+           c.package_name AS package_name,
+           c.project_name AS project_name
+    ORDER BY method_name
     """
-    result = session.run(
-        query,
+
+    method_call_query = """
+    MATCH (source:Method {name: $method_name, class_name: $class_name})-[rel:CALLS]->(target:Method)
+    OPTIONAL MATCH (target_class_node:Class)-[:HAS_METHOD]->(target)
+    RETURN
+        COALESCE(rel.call_order, rel.line_number, 0) AS call_order,
+        rel.line_number AS line_number,
+        target.name AS target_method,
+        COALESCE(target_class_node.name, rel.target_class) AS target_class,
+        COALESCE(target_class_node.package_name, rel.target_package) AS target_package,
+        target_class_node.project_name AS target_project
+    ORDER BY call_order, line_number, target_method
+    """
+
+    sql_call_query = """
+    MATCH (source:Method {name: $method_name, class_name: $class_name})-[rel:CALLS]->(sql:SqlStatement)
+    RETURN
+        COALESCE(rel.call_order, rel.line_number, 0) AS call_order,
+        rel.line_number AS line_number,
+        sql.id AS sql_id,
+        sql.logical_name AS sql_logical_name,
+        sql.sql_type AS sql_type,
+        sql.tables AS sql_tables,
+        sql.columns AS sql_columns,
+        sql.mapper_name AS mapper_name,
+        sql.project_name AS sql_project
+    ORDER BY call_order, line_number, sql_id
+    """
+
+    fallback_sql_query = """
+    MATCH (sql:SqlStatement)
+    WHERE sql.id = $sql_id AND sql.mapper_name IN $mapper_names
+    RETURN
+        0 AS call_order,
+        0 AS line_number,
+        sql.id AS sql_id,
+        sql.logical_name AS sql_logical_name,
+        sql.sql_type AS sql_type,
+        sql.tables AS sql_tables,
+        sql.columns AS sql_columns,
+        sql.mapper_name AS mapper_name,
+        sql.project_name AS sql_project
+    ORDER BY sql.mapper_name
+    """
+
+    def _safe_project(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        lowered = value.strip()
+        if not lowered or lowered.lower() == "null":
+            return None
+        return lowered
+
+    def _should_include_method(target_project: Optional[str]) -> bool:
+        project = _safe_project(target_project)
+        if project is None:
+            return False
+        if project_name is None:
+            return True
+        return project == project_name
+
+    def _sql_tables_or_empty(raw_tables):
+        if not raw_tables:
+            return []
+        if isinstance(raw_tables, list):
+            return raw_tables
+        return []
+
+    def _extract_tables_from_columns(raw_columns):
+        if not raw_columns:
+            return []
+        tables: List[Dict[str, str]] = []
+        seen: set[str] = set()
+        if isinstance(raw_columns, list):
+            for column in raw_columns:
+                if not isinstance(column, dict):
+                    continue
+                table_name = column.get("table") or column.get("table_name")
+                if not table_name or table_name in seen:
+                    continue
+                seen.add(table_name)
+                schema_value = column.get("schema") or column.get("schema_name") or ""
+                tables.append({"name": table_name, "schema": schema_value})
+        return tables
+    table_schema_cache: Dict[str, str] = {}
+    events: List[Dict] = []
+
+    top_methods = session.run(
+        top_method_query,
         class_name=class_name,
         method_name=method_name,
         project_name=project_name,
     )
-    return [dict(record) for record in result]
+
+    visited_methods: Dict[Tuple[str, str, str], int] = {}
+    visited_sql: Dict[Tuple[str, str, str], bool] = {}
+
+    def traverse_method(method_info: Dict[str, str], depth: int, top_method_name: str) -> None:
+        if depth >= depth_limit:
+            return
+
+        method_params = {
+            "method_name": method_info["method_name"],
+            "class_name": method_info["class_name"],
+        }
+
+        method_records = list(session.run(method_call_query, **method_params))
+        for record in method_records:
+            target_class = record["target_class"]
+            target_method = record["target_method"]
+            target_project = _safe_project(record["target_project"])
+            if not target_class or not target_method:
+                continue
+            if not _should_include_method(target_project):
+                continue
+
+            call_event = {
+                "call_type": "method",
+                "top_method": top_method_name,
+                "source_class": method_info["class_name"],
+                "source_package": method_info["package_name"],
+                "source_method": method_info["method_name"],
+                "source_project": method_info["project_name"],
+                "target_class": target_class,
+                "target_package": record["target_package"] or "",
+                "target_method": target_method,
+                "target_project": target_project,
+                "call_order": record["call_order"],
+                "line_number": record["line_number"],
+                "depth": depth + 1,
+            }
+            events.append(call_event)
+
+            if depth + 1 < depth_limit:
+                visit_key = (top_method_name, target_class, target_method)
+                previous_depth = visited_methods.get(visit_key)
+                if previous_depth is not None and previous_depth <= depth + 1:
+                    continue
+                visited_methods[visit_key] = depth + 1
+                traverse_method(
+                    {
+                        "method_name": target_method,
+                        "class_name": target_class,
+                        "package_name": record["target_package"] or "",
+                        "project_name": target_project,
+                    },
+                    depth + 1,
+                    top_method_name,
+                )
+
+        sql_records = list(session.run(sql_call_query, **method_params))
+        if not sql_records:
+            mapper_names: List[str] = []
+            class_name_value = method_info.get("class_name") or ""
+            if class_name_value:
+                mapper_names.append(class_name_value)
+                simple_name = class_name_value.split(".")[-1]
+                if simple_name not in mapper_names:
+                    mapper_names.append(simple_name)
+            if mapper_names:
+                sql_records = list(
+                    session.run(
+                        fallback_sql_query,
+                        sql_id=method_info["method_name"],
+                        mapper_names=mapper_names,
+                    )
+                )
+        if sql_records:
+            LOGGER.debug(
+                "SQL calls for %s.%s (top: %s): %s",
+                method_info["class_name"],
+                method_info["method_name"],
+                top_method_name,
+                [record["sql_id"] for record in sql_records],
+            )
+        for record in sql_records:
+            sql_id = record["sql_id"]
+            if not sql_id:
+                continue
+
+            sql_event = {
+                "call_type": "sql",
+                "top_method": top_method_name,
+                "source_class": method_info["class_name"],
+                "source_package": method_info["package_name"],
+                "source_method": method_info["method_name"],
+                "source_project": method_info["project_name"],
+                "target_class": "SQL",
+                "target_method": sql_id,
+                "target_package": record["mapper_name"] or "",
+                "target_project": _safe_project(record["sql_project"]),
+                "sql_type": record["sql_type"],
+                "sql_tables": record["sql_tables"],
+                "sql_columns": record["sql_columns"],
+                "mapper_name": record["mapper_name"],
+                "sql_logical_name": record["sql_logical_name"],
+                "sql_display": record["mapper_name"] or sql_id,
+                "call_order": record["call_order"],
+                "line_number": record["line_number"],
+                "depth": depth + 1,
+            }
+            sql_visit_key = (top_method_name, method_info["method_name"], sql_id)
+            if not visited_sql.get(sql_visit_key):
+                events.append(sql_event)
+                visited_sql[sql_visit_key] = True
+
+            tables = _sql_tables_or_empty(record["sql_tables"])
+            if not tables:
+                tables = _extract_tables_from_columns(record["sql_columns"])
+            if tables:
+                LOGGER.debug("Tables referenced by SQL %s: %s", sql_id, tables)
+            for table_data in tables:
+                table_name = table_data.get("name") or table_data.get("table") or table_data.get("table_name")
+                if not table_name:
+                    continue
+
+                cache_key = f"{table_name.lower()}"
+                cached_schema = table_schema_cache.get(cache_key)
+                if cached_schema is None:
+                    schema_value = table_data.get("schema") or table_data.get("schema_name") or ""
+                    graph_schema = get_table_schema(session, table_name, None)
+                    cached_schema = graph_schema or schema_value or ""
+                    table_schema_cache[cache_key] = cached_schema
+
+                table_event = {
+                    "call_type": "table",
+                    "top_method": top_method_name,
+                    "source_class": "SQL",
+                    "source_package": record["mapper_name"] or "",
+                    "source_method": sql_id,
+                    "source_project": _safe_project(record["sql_project"]),
+                    "target_class": table_name,
+                    "target_method": table_name,
+                    "target_package": cached_schema,
+                    "target_project": None,
+                    "table_schema": cached_schema,
+                    "table_display": f"{cached_schema}.{table_name}" if cached_schema else table_name,
+                    "sql_type": record["sql_type"],
+                    "call_order": record["call_order"],
+                    "line_number": record["line_number"],
+                    "depth": depth + 2,
+                }
+                LOGGER.debug(
+                    "Table event registered for SQL %s -> %s (schema=%s)",
+                    sql_id,
+                    table_name,
+                    cached_schema,
+                )
+                events.append(table_event)
+
+    for top_method in top_methods:
+        method_info = {
+            "method_name": top_method["method_name"],
+            "class_name": top_method["class_name"],
+            "package_name": top_method["package_name"] or "",
+            "project_name": _safe_project(top_method["project_name"]),
+        }
+        traverse_method(method_info, depth=0, top_method_name=top_method["method_name"])
+
+    return events
 
 
 def build_flows(call_chain: List[Dict], start_method: Optional[str] = None) -> Dict[str, List[Dict]]:
     """Organize call chain data by top-level method."""
     flows: Dict[str, List[Dict]] = {}
     for call in call_chain:
-        top_method = call.get("source_method")
+        top_method = call.get("top_method") or call.get("source_method")
         if not top_method:
             continue
 
         if start_method and top_method != start_method:
             continue
 
-        if should_filter_call(call):
+        call_type = call.get("call_type", "method")
+        if call_type == "method" and should_filter_call(call):
             continue
 
         flows.setdefault(top_method, []).append(call)

@@ -214,145 +214,101 @@ class PlantUMLDiagramGenerator:
         main_class_package = class_info.get('package_name', '')
         all_calls = [call for flow in flows.values() for call in flow]
 
-        # 디버깅 로그 추가
-        sql_calls = [call for call in all_calls if call.get('target_class') == 'SQL']
-        table_calls = [call for call in all_calls if call.get('source_class') == 'SQL']
-        logger.info(f"_generate_plantuml_diagram: 총 {len(all_calls)}개 호출, SQL 호출: {len(sql_calls)}개, Table 호출: {len(table_calls)}개")
+        sql_calls = [call for call in all_calls if call.get('call_type') == 'sql']
+        table_calls = [call for call in all_calls if call.get('call_type') == 'table']
+        logger.info(f"_generate_plantuml_diagram: total={len(all_calls)}, sql_calls={len(sql_calls)}, table_calls={len(table_calls)}")
 
-        # Participant별 package 정보 수집
-        participant_packages = {}
-        
-        # 메인 클래스의 패키지 정보 추가
+        participant_packages: Dict[str, str] = {}
         if main_class_package:
             participant_packages[main_class_name] = main_class_package
-        
-        # SQL participant의 mapper 정보 수집
-        sql_mapper_info = {}
-        
-        # 모든 호출에서 participant의 package 정보 및 mapper 정보 수집
+
+        sql_participant_required = False
+        sql_display_label: Optional[str] = None
+        table_participants: Dict[str, Dict[str, str]] = {}
+
         for call in all_calls:
+            call_type = call.get('call_type', 'method')
             source_class = call.get('source_class', '')
-            target_class = call.get('target_class', '')
             source_package = call.get('source_package', '')
+            target_class = call.get('target_class', '')
             target_package = call.get('target_package', '')
-            mapper_name = call.get('mapper_name', '')
-            mapper_namespace = call.get('mapper_namespace', '')
-            mapper_file_path = call.get('mapper_file_path', '')
-            
-            if source_class and source_package and source_class not in ['Client', 'SQL']:
-                participant_packages[source_class] = source_package
-            if target_class and target_package and target_class not in ['Client', 'SQL']:
-                participant_packages[target_class] = target_package
-            
-            # SQL과 관련된 호출에서 mapper 정보 수집
-            if (target_class == 'SQL' or source_class == 'SQL') and mapper_file_path:
-                # 파일명 추출: 마지막 / 또는 \ 뒤의 문자열
-                file_name = os.path.basename(mapper_file_path)
-                
-                sql_mapper_info['SQL'] = {
-                    'file_name': file_name,
-                    'namespace': mapper_namespace
-                }
 
-        # Participant ordering logic - SQL and Tables at the end
-        table_participants = {p['target_class'] for p in all_calls if p['source_class'] == 'SQL'}
+            if source_class and source_class not in {'Client', 'SQL'} and call_type != 'table':
+                if source_package:
+                    participant_packages.setdefault(source_class, source_package)
+
+            if call_type == 'sql':
+                sql_participant_required = True
+                sql_display_label = call.get('sql_display') or call.get('mapper_name') or target_package or 'SQL statement'
+            elif call_type == 'table':
+                if target_class:
+                    schema_value = call.get('table_schema') or target_package or ''
+                    display_value = call.get('table_display') or (f"{schema_value}.{target_class}" if schema_value else target_class)
+                    table_participants.setdefault(target_class, {'schema': schema_value, 'display': display_value})
+            else:
+                if target_class and target_class not in {'Client', 'SQL'}:
+                    if target_package:
+                        participant_packages.setdefault(target_class, target_package)
+
         ordered_participants = ['Client', main_class_name]
-        seen_participants = {'Client', main_class_name}
-        sql_participant = None
+        seen_participants = set(ordered_participants)
 
-        # all_calls는 이미 _build_flows에서 정렬되었으므로 다시 정렬하지 않음
-        # all_calls.sort(key=lambda x: x.get('depth') or 0)  # 제거
+        for participant, package_name in participant_packages.items():
+            if participant and participant not in seen_participants:
+                ordered_participants.append(participant)
+                seen_participants.add(participant)
 
-        # Collect table schema information
-        table_schemas = {}
+        if sql_participant_required and 'SQL' not in seen_participants:
+            ordered_participants.append('SQL')
+            seen_participants.add('SQL')
+
         for table_name in table_participants:
-            schema = get_table_schema(session, table_name, project_name)
-            if schema:
-                table_schemas[table_name] = schema
+            if table_name and table_name not in seen_participants:
+                ordered_participants.append(table_name)
+                seen_participants.add(table_name)
 
-        # First, collect all non-SQL/Table participants
-        for call in all_calls:
-            for participant in [call['source_class'], call['target_class']]:
-                if participant == 'SQL':
-                    sql_participant = 'SQL'
-                elif participant in table_participants:
-                    continue
-                elif participant not in seen_participants:
-                    ordered_participants.append(participant)
-                    seen_participants.add(participant)
-        
-        # Add SQL and Tables at the end
-        final_participants = list(dict.fromkeys(ordered_participants))
-        if sql_participant:
-            final_participants.append(sql_participant)
-        if table_participants:
-            final_participants.extend(sorted(list(table_participants)))
-        
-        final_participants_unique = [p for p in final_participants if p and p != 'Unknown']
+        final_participants = [p for p in ordered_participants if p and p != 'Unknown']
 
-        diagram_lines = ["@startuml"]
-        
-        # Add title based on method name
         if start_method:
-            # Method-level diagram: show specific method
             title = f"{main_class_name}.{start_method}()"
         else:
-            # Class-level diagram: show class name
             title = f"{main_class_name} Class Methods"
-        
-        diagram_lines.append(f"title {title}")
-        diagram_lines.append("")
-        
-        # Add participants with package information
-        for p in final_participants_unique:
-            if p == 'Client':
-                diagram_lines.append(f"actor {p} as \"Client\"")
-            elif p == 'SQL':
-                # Add mapper file name and namespace to SQL participant if available
-                mapper_info = sql_mapper_info.get('SQL', {})
-                file_name = mapper_info.get('file_name', '')
-                namespace = mapper_info.get('namespace', '')
-                
-                if file_name and namespace:
-                    diagram_lines.append(f"participant SQL as \"{file_name}\" << {namespace} >>")
-                elif file_name:
-                    diagram_lines.append(f"participant SQL as \"{file_name}\"")
-                else:
-                    diagram_lines.append(f"participant SQL as \"SQL statement\"")
-            elif p in table_participants:
-                schema = table_schemas.get(p, None)
-                if schema:
-                    diagram_lines.append(f'participant {p} as "Table : {p}" << Schema : {schema} >>')
-                else:
-                    diagram_lines.append(f'participant {p} as "Table : {p}"')
+
+        diagram_lines = ["@startuml", f"title {title}", ""]
+
+        for participant in final_participants:
+            if participant == 'Client':
+                diagram_lines.append(f'actor {participant} as "Client"')
+            elif participant == 'SQL':
+                label = sql_display_label or 'SQL statement'
+                diagram_lines.append(f'participant {participant} as "{label}"')
+            elif participant in table_participants:
+                display_value = table_participants[participant]['display']
+                diagram_lines.append(f'participant {participant} as "{display_value}"')
             else:
-                # Add package information as stereotype if available
-                package_info = participant_packages.get(p, '')
-                if package_info and package_info.strip():
-                    diagram_lines.append(f"participant {p} << {package_info} >>")
+                package_info = participant_packages.get(participant, '')
+                if package_info:
+                    diagram_lines.append(f"participant {participant} << {package_info} >>")
                 else:
-                    diagram_lines.append(f"participant {p}")
-        
+                    diagram_lines.append(f"participant {participant}")
+
         diagram_lines.append("")
 
-        # Generate flows with proper activation lifecycle management
-        is_single_method_flow = (len(flows) == 1)
-        is_focused_method = (start_method is not None)
+        is_single_method_flow = len(flows) == 1
+        is_focused_method = start_method is not None
 
         for top_method, calls in flows.items():
-            # Top-level 메서드의 실제 return type 조회
             top_method_return_type = get_method_return_type(session, main_class_name, top_method, project_name)
-            
+
             if not is_single_method_flow and not is_focused_method:
                 diagram_lines.append(f"group flow for {top_method}")
 
-            # Client call
             diagram_lines.append(f"Client -> {main_class_name} : {top_method}()")
-            diagram_lines.append(f"activate Client")
+            diagram_lines.append("activate Client")
             diagram_lines.append(f"activate {main_class_name}")
-            
-            # Build properly ordered flow with activation stack management
+
             activation_events = build_activation_aware_flow(calls, main_class_name, top_method)
+
             for event in activation_events:
                 if event.get('type') == 'call':
                     call_details = event.get('call', {}) or {}
@@ -360,106 +316,115 @@ class PlantUMLDiagramGenerator:
                     event.setdefault('target', call_details.get('target_class'))
                     event.setdefault('method', call_details.get('target_method'))
                     event.setdefault('return_type', call_details.get('return_type', 'void'))
-                    event.setdefault('source_package', call_details.get('source_package'))
-                    event.setdefault('target_package', call_details.get('target_package'))
-                    event.setdefault('call', call_details)
-            
-            # Render the events with proper activation lifecycle
-            activation_stack = []  # Track activation stack for proper lifecycle
-            active_participants = {'Client', main_class_name}  # Keep track of active participants
-            
+                    event.setdefault('call_type', call_details.get('call_type', 'method'))
+                    event.setdefault('table_display', call_details.get('table_display'))
+                    event.setdefault('sql_type', call_details.get('sql_type'))
+                    event.setdefault('sql_logical_name', call_details.get('sql_logical_name'))
+                    event.setdefault('sql_display', call_details.get('sql_display'))
+
+            activation_stack: List[Dict[str, str]] = []
+            active_participants = {'Client', main_class_name}
+
             for event in activation_events:
                 if event['type'] == 'call':
+                    call_details = event['call']
                     source = event['source']
                     target = event['target']
                     method = event['method']
                     return_type = event.get('return_type', 'void')
-                    
-                    # Determine if this is an external library call
-                    is_external_library = is_external_library_call(event)
-                    
-                    # Generate method call
-                    if source == 'SQL':
-                        call_str = f"{source} -> {target} : 🔍 {method}"
-                    elif target in table_participants:
-                        call_str = f"{source} -> {target} : 📊 {method}"
-                    elif target == 'SQL':
-                        call_str = f"{source} -> {target} : {method}"
-                    elif is_external_library:
-                        call_str = f"{source} -> {target} : {method}()"
+                    call_type = event.get('call_type', 'method')
+
+                    if not target or not method:
+                        continue
+
+                    if call_type == 'sql':
+                        sql_type = (call_details.get('sql_type') or '').upper()
+                        if sql_type == 'SELECT':
+                            icon = '??'
+                        elif sql_type in {'INSERT', 'UPDATE', 'DELETE'}:
+                            icon = '??'
+                        else:
+                            icon = '???'
+                        label = call_details.get('sql_logical_name') or method
+                        call_str = f"{source} -> {target} : {icon} {label}"
+                        activate_target = True
+                    elif call_type == 'table':
+                        table_display = call_details.get('table_display') or target
+                        call_str = f"{source} -> {target} : ?? {table_display}"
+                        activate_target = True
                     else:
-                        call_str = f"{source} -> {target} : {method}()"
-                    
+                        is_external_library = is_external_library_call(call_details)
+                        if is_external_library:
+                            call_str = f"{source} -> {target} : {method}()"
+                        else:
+                            call_str = f"{source} -> {target} : {method}()"
+                        activate_target = not (is_external_library and target in {'String', 'Logger', 'System'})
+
                     diagram_lines.append(call_str)
-                    
-                    # Activate target if it's not an external library call
-                    if not is_external_library or target not in ['String', 'Logger', 'System']:
+
+                    if activate_target:
                         diagram_lines.append(f"activate {target}")
-                        activation_stack.append({
-                            'participant': target,
-                            'method': method,
-                            'source': source,
-                            'return_type': return_type
-                        })
+                        activation_stack.append({'participant': target, 'method': method, 'source': source, 'return_type': return_type})
                         active_participants.add(target)
-                
+
                 elif event['type'] == 'return':
                     source = event['source']
                     target = event['target']
                     return_type = event.get('return_type', 'void')
-                    
-                    # Find and remove from activation stack (LIFO - Last In First Out)
+
                     activation_entry = None
-                    for i in range(len(activation_stack) - 1, -1, -1):
-                        if activation_stack[i]['participant'] == source:
-                            activation_entry = activation_stack.pop(i)
+                    for idx in range(len(activation_stack) - 1, -1, -1):
+                        if activation_stack[idx]['participant'] == source:
+                            activation_entry = activation_stack.pop(idx)
                             break
-                    
+
                     if activation_entry:
-                        # Show return message
                         diagram_lines.append(f"{source} --> {target} : return ({return_type})")
                         diagram_lines.append(f"deactivate {source}")
                         active_participants.discard(source)
-                
+
                 elif event['type'] == 'self_return':
-                    # Internal void returns - show return message before deactivate
                     source = event['source']
                     target = event['target']
-                    
-                    # Find and remove from activation stack (LIFO - Last In First Out)
+
                     activation_entry = None
-                    for i in range(len(activation_stack) - 1, -1, -1):
-                        if activation_stack[i]['participant'] == source:
-                            activation_entry = activation_stack.pop(i)
+                    for idx in range(len(activation_stack) - 1, -1, -1):
+                        if activation_stack[idx]['participant'] == source:
+                            activation_entry = activation_stack.pop(idx)
                             break
-                    
+
                     if activation_entry:
                         diagram_lines.append(f"{source} --> {target} : return (void)")
                         diagram_lines.append(f"deactivate {source}")
                         active_participants.discard(source)
 
-            # Final cleanup - return and deactivate any remaining active participants in reverse order
-            # Exclude Client and main_class_name from cleanup (they will be handled separately)
-            remaining_active = list(active_participants - {'Client', main_class_name})
-            remaining_active.sort(key=lambda x: final_participants_unique.index(x) if x in final_participants_unique else 999)
-            
+                elif event['type'] == 'deactivate':
+                    ended_class = event.get('class')
+                    if ended_class:
+                        for idx in range(len(activation_stack) - 1, -1, -1):
+                            if activation_stack[idx]['participant'] == ended_class:
+                                activation_stack.pop(idx)
+                                break
+                        diagram_lines.append(f"deactivate {ended_class}")
+                        active_participants.discard(ended_class)
+
+            remaining_active = [p for p in active_participants if p not in {'Client', main_class_name}]
+            remaining_active.sort(key=lambda x: final_participants.index(x) if x in final_participants else 999)
+
             for participant in remaining_active:
-                # Return to caller before deactivating
                 diagram_lines.append(f"{participant} --> {main_class_name} : return (void)")
                 diagram_lines.append(f"deactivate {participant}")
-            
-            # Client final return with actual return type
-            final_return_type = top_method_return_type if top_method_return_type else "void"
+
+            final_return_type = top_method_return_type or 'void'
             diagram_lines.append(f"{main_class_name} --> Client : return ({final_return_type})")
             diagram_lines.append(f"deactivate {main_class_name}")
-            diagram_lines.append(f"deactivate Client")
+            diagram_lines.append("deactivate Client")
 
             if not is_single_method_flow and not is_focused_method:
                 diagram_lines.append("end")
 
         diagram_lines.append("@enduml")
         return "\n".join(diagram_lines)
-
     def _build_activation_aware_flow(self, calls: List[Dict], main_class_name: str, top_method: str) -> List[Dict]:
         return build_activation_aware_flow(calls, main_class_name, top_method)
 
