@@ -52,17 +52,41 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
                 result_type=sql_dict.get('result_type', ''),
                 result_map=sql_dict.get('result_map', ''),
                 mapper_name=mapper.name,
+                namespace=mapper.namespace,  # namespace 추가
                 annotations=[],
                 project_name=project_name
             )
-            
+
             if sql_analysis:
                 sql_analysis_dict = asdict(sql_analysis)
                 sql_statement.sql_analysis = sql_analysis_dict
                 sql_statement.tables = sql_analysis_dict.get('tables', [])
                 sql_statement.columns = sql_analysis_dict.get('columns', [])
                 sql_statement.complexity_score = sql_analysis_dict.get('complexity_score', 0)
-            
+
+                # 디버깅 로그: tables가 비어있는 경우 (DEBUG 레벨에서만 출력)
+                if not sql_statement.tables:
+                    from csa.utils.logger import get_logger
+                    logger = get_logger(__name__)
+                    logger.debug(
+                        "SQL %s (%s) has no tables extracted. SQL content: %s",
+                        sql_statement.id,
+                        mapper.name,
+                        sql_content[:200]
+                    )
+            elif sql_content and sql_type:
+                # SQL content와 type이 있는데 파싱 실패한 경우만 경고
+                from csa.utils.logger import get_logger
+                logger = get_logger(__name__)
+                logger.warning(
+                    "Failed to parse SQL %s (%s, type=%s). SQL content: %s",
+                    sql_dict.get('id', ''),
+                    mapper.name,
+                    sql_type,
+                    sql_content[:200]
+                )
+            # SQL content가 비어있는 경우는 로그를 출력하지 않음 (정상 케이스)
+
             sql_statements.append(sql_statement)
     
     return sql_statements

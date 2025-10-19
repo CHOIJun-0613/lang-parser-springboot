@@ -240,13 +240,13 @@ class MermaidDiagramGenerator:
 
             if call_type == 'sql':
                 sql_participant_required = True
-                # Mapper participant 표시: 'Mapper name' <br/>({namespace})
+                # Mapper participant 표시: <<namespace>><br/>MapperName.xml
                 mapper_name = call.get('mapper_name') or 'SQL'
                 mapper_namespace = call.get('mapper_namespace') or ''
                 if mapper_namespace:
-                    sql_display_label = f"{mapper_name}<br/>({mapper_namespace})"
+                    sql_display_label = f"<<{mapper_namespace}>><br/>{mapper_name}.xml"
                 else:
-                    sql_display_label = mapper_name
+                    sql_display_label = f"{mapper_name}.xml"
             elif call_type == 'table':
                 if target_class:
                     schema_value = call.get('table_schema') or target_package or ''
@@ -298,11 +298,13 @@ class MermaidDiagramGenerator:
                 diagram_lines.append(f"    participant {participant} as {label}")
             elif participant in table_participants:
                 display_value = table_participants[participant]['display']
-                diagram_lines.append(f"    participant {participant} as {display_value}")
+                # Database Table 스테레오타입 표시: <<Data Base>>
+                diagram_lines.append(f"    participant {participant} as <<Data Base>><br/>{display_value}")
             else:
                 package_info = participant_packages.get(participant, '')
                 if package_info:
-                    diagram_lines.append(f"    participant {participant} as {participant}<br/>({package_info})")
+                    # 패키지명 위, 클래스명 아래 표시
+                    diagram_lines.append(f"    participant {participant} as <<{package_info}>><br/>{participant}")
                 else:
                     diagram_lines.append(f"    participant {participant}")
 
@@ -320,7 +322,7 @@ class MermaidDiagramGenerator:
             diagram_lines.append(f"    Client->>{main_class_name}: {top_method}()")
             diagram_lines.append(f"    activate {main_class_name}")
 
-            activation_events = self._build_activation_aware_flow(calls, main_class_name, top_method)
+            activation_events = self._build_activation_aware_flow(calls, main_class_name, top_method, top_method_return_type)
 
             for event in activation_events:
                 if event.get('type') == 'call':
@@ -368,8 +370,10 @@ class MermaidDiagramGenerator:
                         call_str = f"    {source}->>{target}: {icon} {label}"
                         activate_target = True
                     elif call_type == 'table':
-                        table_display = call_details.get('table_display') or target
-                        call_str = f"    {source}->>{target}: 📦 {table_display}"
+                        # SQL -> Table 호출 표시: sql_id<<sql_type>>
+                        sql_id = call_details.get('source_method') or 'SQL'
+                        sql_type = (call_details.get('sql_type') or 'QUERY').upper()
+                        call_str = f"    {source}->>{target}: {sql_id}<<{sql_type}>>"
                         activate_target = True
                     else:
                         is_external_library = self._is_external_library_call(call_details)
@@ -431,8 +435,8 @@ class MermaidDiagramGenerator:
 
         diagram_lines.append("```")
         return "\n".join(diagram_lines)
-    def _build_activation_aware_flow(self, calls: List[Dict], main_class_name: str, top_method: str) -> List[Dict]:
-        return build_activation_aware_flow(calls, main_class_name, top_method)
+    def _build_activation_aware_flow(self, calls: List[Dict], main_class_name: str, top_method: str, top_method_return_type: str = "void") -> List[Dict]:
+        return build_activation_aware_flow(calls, main_class_name, top_method, top_method_return_type)
 
     def _is_external_library_call(self, call: Dict) -> bool:
         return is_external_library_call(call)

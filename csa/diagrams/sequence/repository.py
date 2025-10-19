@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from csa.utils.logger import get_logger
@@ -77,6 +78,7 @@ def fetch_call_chain(
     MATCH (c)-[:HAS_METHOD]->(m:Method)
     WHERE ($method_name IS NULL OR m.name = $method_name)
     RETURN m.name AS method_name,
+           m.return_type AS method_return_type,
            c.name AS class_name,
            c.package_name AS package_name,
            c.project_name AS project_name
@@ -91,6 +93,7 @@ def fetch_call_chain(
         rel.line_number AS line_number,
         target.name AS target_method,
         target.logical_name AS target_method_logical_name,
+        target.return_type AS target_return_type,
         COALESCE(target_class_node.name, rel.target_class) AS target_class,
         COALESCE(target_class_node.package_name, rel.target_package) AS target_package,
         target_class_node.project_name AS target_project
@@ -99,7 +102,8 @@ def fetch_call_chain(
 
     sql_call_query = """
     MATCH (source:Method {name: $method_name, class_name: $class_name})-[rel:CALLS]->(sql:SqlStatement)
-    OPTIONAL MATCH (mapper:MyBatisMapper)-[:HAS_SQL]->(sql)
+    OPTIONAL MATCH (mapper:MyBatisMapper)-[]-(sql)
+    WHERE mapper.name = sql.mapper_name
     RETURN
         COALESCE(rel.call_order, rel.line_number, 0) AS call_order,
         rel.line_number AS line_number,
@@ -108,6 +112,8 @@ def fetch_call_chain(
         sql.sql_type AS sql_type,
         sql.tables AS sql_tables,
         sql.columns AS sql_columns,
+        sql.result_map AS sql_result_map,
+        sql.result_type AS sql_result_type,
         COALESCE(sql.mapper_name, mapper.name) AS mapper_name,
         COALESCE(sql.namespace, mapper.namespace) AS mapper_namespace,
         sql.project_name AS sql_project
@@ -117,7 +123,8 @@ def fetch_call_chain(
     fallback_sql_query = """
     MATCH (sql:SqlStatement)
     WHERE sql.id = $sql_id AND sql.mapper_name IN $mapper_names
-    OPTIONAL MATCH (mapper:MyBatisMapper)-[:HAS_SQL]->(sql)
+    OPTIONAL MATCH (mapper:MyBatisMapper)-[]-(sql)
+    WHERE mapper.name = sql.mapper_name
     RETURN
         0 AS call_order,
         0 AS line_number,
@@ -126,6 +133,8 @@ def fetch_call_chain(
         sql.sql_type AS sql_type,
         sql.tables AS sql_tables,
         sql.columns AS sql_columns,
+        sql.result_map AS sql_result_map,
+        sql.result_type AS sql_result_type,
         COALESCE(sql.mapper_name, mapper.name) AS mapper_name,
         COALESCE(sql.namespace, mapper.namespace) AS mapper_namespace,
         sql.project_name AS sql_project
@@ -140,6 +149,32 @@ def fetch_call_chain(
         if not lowered or lowered.lower() == "null":
             return None
         return lowered
+
+    def _combine_sql_return_type(result_map: Optional[str], result_type: Optional[str]) -> str:
+        """SqlStatement의 result_map과 result_type을 조합하여 return_type을 생성합니다.
+
+        우선순위:
+        1. result_map과 result_type 모두 있으면 병합 (result_map + result_type)
+        2. result_map만 있으면 result_map 사용
+        3. result_type만 있으면 result_type 사용
+        4. 둘 다 없으면 "void" 반환
+        """
+        # 빈 문자열도 None으로 처리
+        result_map_clean = result_map.strip() if result_map and result_map.strip() else None
+        result_type_clean = result_type.strip() if result_type and result_type.strip() else None
+
+        if result_map_clean and result_type_clean:
+            # 둘 다 있으면 병합
+            return f"{result_map_clean} | {result_type_clean}"
+        elif result_map_clean:
+            # result_map만 있으면
+            return result_map_clean
+        elif result_type_clean:
+            # result_type만 있으면
+            return result_type_clean
+        else:
+            # 둘 다 없으면
+            return "void"
 
     def _should_include_method(target_project: Optional[str]) -> bool:
         """메서드 호출을 포함할지 결정합니다.
@@ -183,16 +218,49 @@ def fetch_call_chain(
                     result.append({"name": item, "schema": ""})
             return result
 
-        # 문자열인 경우 (예: "users,roles" 또는 "users")
+        # 문자열인 경우
         if isinstance(raw_tables, str):
-            table_names = [t.strip() for t in raw_tables.split(",") if t.strip()]
+            # 빈 리스트/None의 문자열 표현 제거
+            stripped = raw_tables.strip()
+            if stripped in ('[]', 'null', 'None', '""', "''"):
+                return []
+
+            # JSON 문자열 파싱 시도 (예: '[{"name": "users", "alias": null}]')
+            if stripped.startswith('[') and stripped.endswith(']'):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        # 재귀 호출로 리스트를 다시 처리
+                        return _sql_tables_or_empty(parsed)
+                except (json.JSONDecodeError, ValueError) as e:
+                    LOGGER.debug("Failed to parse tables as JSON: %s", e)
+                    # JSON 파싱 실패 시 아래 로직으로 폴백
+
+            # 쉼표로 구분된 테이블명 파싱 (예: "users,roles" 또는 "users")
+            table_names = [t.strip() for t in stripped.split(",") if t.strip()]
             return [{"name": name, "schema": ""} for name in table_names]
 
         return []
 
     def _extract_tables_from_columns(raw_columns):
+        """columns 속성에서 테이블 정보를 추출합니다."""
         if not raw_columns:
             return []
+
+        # 문자열인 경우 JSON 파싱 시도
+        if isinstance(raw_columns, str):
+            stripped = raw_columns.strip()
+            if stripped in ('[]', 'null', 'None', '""', "''"):
+                return []
+
+            # JSON 문자열 파싱
+            if stripped.startswith('[') and stripped.endswith(']'):
+                try:
+                    raw_columns = json.loads(stripped)
+                except (json.JSONDecodeError, ValueError) as e:
+                    LOGGER.debug("Failed to parse columns as JSON: %s", e)
+                    return []
+
         tables: List[Dict[str, str]] = []
         seen: set[str] = set()
         if isinstance(raw_columns, list):
@@ -249,6 +317,7 @@ def fetch_call_chain(
                 "target_package": record["target_package"] or "",
                 "target_method": target_method,
                 "target_method_logical_name": record["target_method_logical_name"],
+                "target_return_type": record["target_return_type"] or "void",
                 "target_project": target_project,
                 "call_order": record["call_order"],
                 "line_number": record["line_number"],
@@ -303,6 +372,16 @@ def fetch_call_chain(
             if not sql_id:
                 continue
 
+            # 디버깅: mapper_name과 mapper_namespace 로깅
+            LOGGER.debug("SQL %s - mapper_name=%s, mapper_namespace=%s",
+                        sql_id, record["mapper_name"], record["mapper_namespace"])
+
+            # SqlStatement의 return_type 생성 (result_map + result_type 조합)
+            sql_return_type = _combine_sql_return_type(
+                record["sql_result_map"],
+                record["sql_result_type"]
+            )
+
             sql_event = {
                 "call_type": "sql",
                 "top_method": top_method_name,
@@ -314,6 +393,7 @@ def fetch_call_chain(
                 "target_method": sql_id,
                 "target_package": record["mapper_name"] or "",
                 "target_project": _safe_project(record["sql_project"]),
+                "target_return_type": sql_return_type,
                 "sql_type": record["sql_type"],
                 "sql_tables": record["sql_tables"],
                 "sql_columns": record["sql_columns"],
@@ -330,7 +410,12 @@ def fetch_call_chain(
                 events.append(sql_event)
                 visited_sql[sql_visit_key] = True
 
-            tables = _sql_tables_or_empty(record["sql_tables"])
+            # 디버깅: sql_tables의 실제 타입과 값 로깅
+            raw_tables = record["sql_tables"]
+            LOGGER.debug("SQL %s - raw sql_tables type=%s, value=%s",
+                        sql_id, type(raw_tables).__name__, raw_tables)
+
+            tables = _sql_tables_or_empty(raw_tables)
             if not tables:
                 tables = _extract_tables_from_columns(record["sql_columns"])
 
@@ -338,17 +423,37 @@ def fetch_call_chain(
                 LOGGER.debug("No tables found for SQL %s (sql_tables=%s, sql_columns=%s)",
                             sql_id, record["sql_tables"], record["sql_columns"])
             else:
-                LOGGER.debug("Tables referenced by SQL %s: %s", sql_id, tables)
+                LOGGER.debug("Tables referenced by SQL %s: %s (type of first item: %s)",
+                            sql_id, tables, type(tables[0]).__name__ if tables else "N/A")
 
             for table_data in tables:
-                table_name = table_data.get("name") or table_data.get("table") or table_data.get("table_name")
+                # 디버깅: table_data의 타입 확인
+                LOGGER.debug("Processing table_data: type=%s, value=%s",
+                            type(table_data).__name__, table_data)
+
+                # table_data가 dict가 아닌 경우 처리
+                if not isinstance(table_data, dict):
+                    if isinstance(table_data, str):
+                        # 문자열인 경우
+                        table_name = table_data
+                        schema_value = ""
+                    else:
+                        LOGGER.warning("Unexpected table_data type: %s, value=%s",
+                                     type(table_data).__name__, table_data)
+                        continue
+                else:
+                    # dict인 경우
+                    table_name = table_data.get("name") or table_data.get("table") or table_data.get("table_name")
+                    schema_value = table_data.get("schema") or table_data.get("schema_name") or ""
+
                 if not table_name:
+                    LOGGER.warning("No table_name extracted from table_data: %s", table_data)
                     continue
 
                 cache_key = f"{table_name.lower()}"
                 cached_schema = table_schema_cache.get(cache_key)
                 if cached_schema is None:
-                    schema_value = table_data.get("schema") or table_data.get("schema_name") or ""
+                    # schema_value는 위에서 이미 추출됨
                     graph_schema = get_table_schema(session, table_name, None)
                     cached_schema = graph_schema or schema_value or ""
                     table_schema_cache[cache_key] = cached_schema
@@ -364,6 +469,7 @@ def fetch_call_chain(
                     "target_method": table_name,
                     "target_package": cached_schema,
                     "target_project": None,
+                    "target_return_type": sql_return_type,  # SQL의 return_type 사용
                     "table_schema": cached_schema,
                     "table_display": f"{cached_schema}.{table_name}" if cached_schema else table_name,
                     "sql_type": record["sql_type"],
@@ -385,6 +491,7 @@ def fetch_call_chain(
             "class_name": top_method["class_name"],
             "package_name": top_method["package_name"] or "",
             "project_name": _safe_project(top_method["project_name"]),
+            "return_type": top_method["method_return_type"] or "void",
         }
         traverse_method(method_info, depth=0, top_method_name=top_method["method_name"])
 
@@ -419,6 +526,7 @@ def build_activation_aware_flow(
     calls: Sequence[Dict],
     main_class_name: str,
     top_method: str,
+    top_method_return_type: str = "void",
 ) -> List[Dict]:
     """Transform raw call list into activation-aware flow with proper return handling.
 
@@ -429,6 +537,7 @@ def build_activation_aware_flow(
         calls: 호출 체인 리스트 (call_order로 정렬되어 있어야 함)
         main_class_name: 메인 클래스 이름
         top_method: 시작 메서드 이름
+        top_method_return_type: 시작 메서드의 리턴 타입
 
     Returns:
         activation-aware flow 이벤트 리스트
@@ -436,7 +545,8 @@ def build_activation_aware_flow(
         - type: "return" - 메서드 리턴
         - type: "deactivate" - 참여자 비활성화
     """
-    activation_stack: List[Tuple[str, str, str]] = [(main_class_name, top_method, "method")]
+    # activation_stack: (class_name, method_name, call_type, return_type)
+    activation_stack: List[Tuple[str, str, str, str]] = [(main_class_name, top_method, "method", top_method_return_type)]
     activation_flow: List[Dict] = []
 
     for idx, call in enumerate(calls):
@@ -445,6 +555,7 @@ def build_activation_aware_flow(
         target_class = call.get("target_class")
         target_method = call.get("target_method")
         call_type = call.get("call_type", "method")
+        target_return_type = call.get("target_return_type", "void")
 
         if not target_class or not target_method:
             continue
@@ -453,7 +564,7 @@ def build_activation_aware_flow(
         # stack의 마지막부터 역순으로 탐색하여 source를 찾음
         source_found_at = -1
         for i in range(len(activation_stack) - 1, -1, -1):
-            stack_class, stack_method, stack_type = activation_stack[i]
+            stack_class, stack_method, stack_type, stack_return_type = activation_stack[i]
             if stack_class == source_class and stack_method == source_method:
                 source_found_at = i
                 break
@@ -467,7 +578,7 @@ def build_activation_aware_flow(
                     "type": "return",
                     "source": ended[0],
                     "target": activation_stack[-1][0] if activation_stack else main_class_name,
-                    "return_type": call.get("return_type", "void"),
+                    "return_type": ended[3],  # stack에 저장된 return_type 사용
                 })
         else:
             # source 이후의 모든 stack을 pop (return 처리)
@@ -477,12 +588,12 @@ def build_activation_aware_flow(
                     "type": "return",
                     "source": ended[0],
                     "target": activation_stack[-1][0] if activation_stack else main_class_name,
-                    "return_type": call.get("return_type", "void"),
+                    "return_type": ended[3],  # stack에 저장된 return_type 사용
                 })
 
         # 새로운 호출 추가
         activation_flow.append({"type": "call", "call": call})
-        activation_stack.append((target_class, target_method, call_type))
+        activation_stack.append((target_class, target_method, call_type, target_return_type))
 
     # 남은 모든 activation을 종료 (return 처리)
     while len(activation_stack) > 1:
@@ -491,7 +602,7 @@ def build_activation_aware_flow(
             "type": "return",
             "source": ended[0],
             "target": activation_stack[-1][0] if activation_stack else main_class_name,
-            "return_type": "void",
+            "return_type": ended[3],  # stack에 저장된 return_type 사용
         })
 
     return activation_flow

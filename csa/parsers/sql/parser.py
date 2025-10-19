@@ -71,7 +71,8 @@ class SQLParser:
             result.complexity_score = self._calculate_complexity_score(result)
             return result
         except Exception as exc:  # pylint: disable=broad-except
-            LOGGER.error("Failed to parse SQL statement: %s", exc)
+            # SQL 파싱 실패는 일반적으로 발생할 수 있으므로 DEBUG 레벨로 로깅
+            LOGGER.debug("Failed to parse SQL statement (type=%s): %s", sql_type, exc)
             return SQLAnalysisResult(sql_type=sql_type)
 
     def extract_table_column_mapping(self, sql_analysis: SQLAnalysisResult) -> Dict[str, List[str]]:
@@ -140,6 +141,14 @@ class SQLParser:
         result.tables = self._extract_tables(sql)
         result.columns = self._extract_select_columns(sql)
         result.joins = self._extract_joins(sql)
+
+        # JOIN 절의 테이블도 tables 리스트에 추가
+        for join in result.joins:
+            join_table = {"name": join["table"], "alias": join.get("alias")}
+            # 중복 체크: 이미 같은 이름의 테이블이 있으면 추가하지 않음
+            if not any(t["name"] == join_table["name"] for t in result.tables):
+                result.tables.append(join_table)
+
         result.where_conditions = self._extract_clause(sql, "WHERE")
         result.order_by_columns = self._extract_columns_in_clause(sql, "ORDER BY")
         result.group_by_columns = self._extract_columns_in_clause(sql, "GROUP BY")
@@ -184,22 +193,62 @@ class SQLParser:
 
     def _extract_tables(self, sql: str) -> List[Dict[str, Optional[str]]]:
         tables: List[Dict[str, Optional[str]]] = []
-        remaining = sql.upper()
-        from_index = remaining.find(" FROM ")
-        if from_index == -1:
+        sql_upper = sql.upper()
+
+        # FROM 찾기 (공백이 있거나 없어도 동작)
+        from_pattern = r'\bFROM\s+'
+        from_match = re.search(from_pattern, sql_upper)
+        if not from_match:
+            LOGGER.debug("No FROM clause found in SQL: %s", sql[:100])
             return tables
-        after_from = sql[from_index + len(" FROM ") :]
-        stop_keywords = [" WHERE ", " ORDER BY ", " GROUP BY ", " HAVING ", " LIMIT ", " OFFSET "]
-        stop_positions = [after_from.upper().find(keyword) for keyword in stop_keywords if keyword in after_from.upper()]
-        stop_position = min([pos for pos in stop_positions if pos >= 0], default=len(after_from))
-        table_section = after_from[:stop_position]
+
+        from_index = from_match.start()
+        after_from = sql[from_match.end():]
+
+        # JOIN 키워드 전까지만 추출 (JOIN은 별도 처리)
+        stop_keywords = [
+            r'\bWHERE\b', r'\bORDER\s+BY\b', r'\bGROUP\s+BY\b',
+            r'\bHAVING\b', r'\bLIMIT\b', r'\bOFFSET\b',
+            r'\bINNER\s+JOIN\b', r'\bLEFT\s+JOIN\b', r'\bRIGHT\s+JOIN\b',
+            r'\bOUTER\s+JOIN\b', r'\bFULL\s+JOIN\b', r'\bJOIN\b'
+        ]
+
+        stop_position = len(after_from)
+        for keyword_pattern in stop_keywords:
+            match = re.search(keyword_pattern, after_from.upper())
+            if match and match.start() < stop_position:
+                stop_position = match.start()
+
+        table_section = after_from[:stop_position].strip()
+
+        # 쉼표로 구분된 테이블 파싱
         parts = [part.strip() for part in table_section.split(",")]
         for part in parts:
             if not part:
                 continue
-            match = re.match(r"([\w.]+)(?:\s+AS\s+|\s+)(\w+)?", part, re.IGNORECASE)
+            # 테이블명과 alias 추출 (schema.table 지원)
+            match = re.match(r'([\w.]+)(?:\s+(?:AS\s+)?(\w+))?', part, re.IGNORECASE)
             if match:
-                tables.append({"name": match.group(1), "alias": match.group(2)})
+                table_name = match.group(1)
+                alias = match.group(2)
+
+                # schema.table 형식 파싱
+                if '.' in table_name:
+                    parts_split = table_name.split('.')
+                    if len(parts_split) == 2:
+                        tables.append({
+                            "name": parts_split[1],
+                            "alias": alias,
+                            "schema": parts_split[0]
+                        })
+                    else:
+                        tables.append({"name": table_name, "alias": alias})
+                else:
+                    tables.append({"name": table_name, "alias": alias})
+
+        if not tables:
+            LOGGER.debug("No tables extracted from FROM clause: %s", table_section[:100])
+
         return tables
 
     def _extract_select_columns(self, sql: str) -> List[Dict[str, Optional[str]]]:

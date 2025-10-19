@@ -178,7 +178,7 @@ class MyBatisSqlStatement(BaseModel):
 
 class SqlStatement(BaseModel):
     """Represents a SQL statement node in the graph database."""
-    
+
     id: str  # Statement ID
     logical_name: str = ""
     sql_type: str  # "SELECT", "INSERT", "UPDATE", "DELETE"
@@ -187,11 +187,12 @@ class SqlStatement(BaseModel):
     result_type: str = ""
     result_map: str = ""
     mapper_name: str = ""
+    namespace: str = ""  # MyBatis Mapper namespace
     annotations: list[Annotation] = []  # MyBatis annotations as Annotation objects
     project_name: str = ""
     description: str = ""  # Brief description of the SQL statement
     ai_description: str = ""  # AI-generated description of the SQL statement
-    
+
     # SQL 분석 결과 추가 속성들
     sql_analysis: dict[str, Any] = {}  # SQL 파서 분석 결과
     tables: list[dict[str, str]] = []  # 테이블 정보
