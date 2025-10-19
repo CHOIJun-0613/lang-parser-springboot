@@ -90,6 +90,7 @@ def fetch_call_chain(
         COALESCE(rel.call_order, rel.line_number, 0) AS call_order,
         rel.line_number AS line_number,
         target.name AS target_method,
+        target.logical_name AS target_method_logical_name,
         COALESCE(target_class_node.name, rel.target_class) AS target_class,
         COALESCE(target_class_node.package_name, rel.target_package) AS target_package,
         target_class_node.project_name AS target_project
@@ -107,6 +108,7 @@ def fetch_call_chain(
         sql.tables AS sql_tables,
         sql.columns AS sql_columns,
         sql.mapper_name AS mapper_name,
+        sql.namespace AS mapper_namespace,
         sql.project_name AS sql_project
     ORDER BY call_order, line_number, sql_id
     """
@@ -123,11 +125,13 @@ def fetch_call_chain(
         sql.tables AS sql_tables,
         sql.columns AS sql_columns,
         sql.mapper_name AS mapper_name,
+        sql.namespace AS mapper_namespace,
         sql.project_name AS sql_project
     ORDER BY sql.mapper_name
     """
 
     def _safe_project(value: Optional[str]) -> Optional[str]:
+        """프로젝트명을 안전하게 처리합니다. 빈 문자열, None, 'null' 문자열은 None으로 반환합니다."""
         if value is None:
             return None
         lowered = value.strip()
@@ -136,11 +140,21 @@ def fetch_call_chain(
         return lowered
 
     def _should_include_method(target_project: Optional[str]) -> bool:
+        """메서드 호출을 포함할지 결정합니다.
+
+        외부 클래스 제외 규칙:
+        - target_project가 빈 문자열(""), None, "null"인 경우 제외 (False 반환)
+        - project_name이 지정되지 않은 경우 모든 프로젝트 포함 (True 반환)
+        - target_project와 project_name이 일치하는 경우만 포함 (True 반환)
+        """
         project = _safe_project(target_project)
+        # 프로젝트명이 없는 외부 클래스는 제외
         if project is None:
             return False
+        # 필터링할 project_name이 없으면 모든 프로젝트 포함
         if project_name is None:
             return True
+        # 프로젝트명이 일치하는 경우만 포함
         return project == project_name
 
     def _sql_tables_or_empty(raw_tables):
@@ -208,6 +222,7 @@ def fetch_call_chain(
                 "target_class": target_class,
                 "target_package": record["target_package"] or "",
                 "target_method": target_method,
+                "target_method_logical_name": record["target_method_logical_name"],
                 "target_project": target_project,
                 "call_order": record["call_order"],
                 "line_number": record["line_number"],
@@ -277,6 +292,7 @@ def fetch_call_chain(
                 "sql_tables": record["sql_tables"],
                 "sql_columns": record["sql_columns"],
                 "mapper_name": record["mapper_name"],
+                "mapper_namespace": record["mapper_namespace"],
                 "sql_logical_name": record["sql_logical_name"],
                 "sql_display": record["mapper_name"] or sql_id,
                 "call_order": record["call_order"],
@@ -373,38 +389,79 @@ def build_activation_aware_flow(
     main_class_name: str,
     top_method: str,
 ) -> List[Dict]:
-    """Transform raw call list into activation-aware flow."""
-    activation_stack: List[Tuple[str, str]] = [(main_class_name, top_method)]
+    """Transform raw call list into activation-aware flow with proper return handling.
+
+    이 함수는 호출 체인을 activation-aware flow로 변환합니다.
+    각 메서드 호출과 리턴을 추적하여 올바른 순서로 activation/deactivation 이벤트를 생성합니다.
+
+    Args:
+        calls: 호출 체인 리스트 (call_order로 정렬되어 있어야 함)
+        main_class_name: 메인 클래스 이름
+        top_method: 시작 메서드 이름
+
+    Returns:
+        activation-aware flow 이벤트 리스트
+        - type: "call" - 메서드 호출
+        - type: "return" - 메서드 리턴
+        - type: "deactivate" - 참여자 비활성화
+    """
+    activation_stack: List[Tuple[str, str, str]] = [(main_class_name, top_method, "method")]
     activation_flow: List[Dict] = []
 
-    for call in calls:
+    for idx, call in enumerate(calls):
+        source_class = call.get("source_class", "")
+        source_method = call.get("source_method", "")
         target_class = call.get("target_class")
         target_method = call.get("target_method")
+        call_type = call.get("call_type", "method")
+
         if not target_class or not target_method:
             continue
 
-        while activation_stack and not is_call_from_method(call, activation_stack[-1][1]):
-            ended = activation_stack.pop()
-            activation_flow.append(
-                {
-                    "type": "deactivate",
-                    "class": ended[0],
-                    "method": ended[1],
-                }
-            )
+        # 현재 호출의 source가 activation stack에 있는지 확인
+        # stack의 마지막부터 역순으로 탐색하여 source를 찾음
+        source_found_at = -1
+        for i in range(len(activation_stack) - 1, -1, -1):
+            stack_class, stack_method, stack_type = activation_stack[i]
+            if stack_class == source_class and stack_method == source_method:
+                source_found_at = i
+                break
 
+        # source를 찾지 못한 경우, main_class에서 호출한 것으로 간주
+        if source_found_at == -1:
+            # stack을 main_class까지만 남기고 모두 pop
+            while len(activation_stack) > 1:
+                ended = activation_stack.pop()
+                activation_flow.append({
+                    "type": "return",
+                    "source": ended[0],
+                    "target": activation_stack[-1][0] if activation_stack else main_class_name,
+                    "return_type": call.get("return_type", "void"),
+                })
+        else:
+            # source 이후의 모든 stack을 pop (return 처리)
+            while len(activation_stack) > source_found_at + 1:
+                ended = activation_stack.pop()
+                activation_flow.append({
+                    "type": "return",
+                    "source": ended[0],
+                    "target": activation_stack[-1][0] if activation_stack else main_class_name,
+                    "return_type": call.get("return_type", "void"),
+                })
+
+        # 새로운 호출 추가
         activation_flow.append({"type": "call", "call": call})
-        activation_stack.append((target_class, target_method))
+        activation_stack.append((target_class, target_method, call_type))
 
-    while activation_stack:
+    # 남은 모든 activation을 종료 (return 처리)
+    while len(activation_stack) > 1:
         ended = activation_stack.pop()
-        activation_flow.append(
-            {
-                "type": "deactivate",
-                "class": ended[0],
-                "method": ended[1],
-            }
-        )
+        activation_flow.append({
+            "type": "return",
+            "source": ended[0],
+            "target": activation_stack[-1][0] if activation_stack else main_class_name,
+            "return_type": "void",
+        })
 
     return activation_flow
 
@@ -425,22 +482,29 @@ def get_table_schema(session, table_name: str, project_name: Optional[str]) -> s
     """Resolve table schema information.
 
     Returns:
-        Schema string in format "database.schema" if Table node exists.
-        Empty string ("") if Table node does not exist.
+        Schema string (e.g., "public", "dbo") if Table node exists.
+        Empty string ("") if Table node does not exist or schema is empty.
+
+    Note:
+        - Table 노드가 Neo4j에 존재하지 않으면 빈 문자열 반환
+        - Table 노드가 존재하지만 schema 값이 없으면 빈 문자열 반환
+        - Table은 여러 프로젝트에서 공유될 수 있으므로 project_name 필터링 안 함
     """
     query = """
     MATCH (t:Table {name: $table_name})
-    WHERE ($project_name IS NULL OR t.project_name = $project_name)
-    RETURN t.schema as schema, t.database_name as database_name
+    RETURN t.schema as schema
+    LIMIT 1
     """
-    result = session.run(query, table_name=table_name, project_name=project_name)
+    result = session.run(query, table_name=table_name)
     record = result.single()
     if not record:
         return ""
 
-    schema = record["schema"] or "public"
-    database = record["database_name"] or "default"
-    return f"{database}.{schema}"
+    schema = record["schema"]
+    if not schema or schema.strip() == "":
+        return ""
+
+    return schema.strip()
 
 
 def should_filter_call(call: Dict) -> bool:

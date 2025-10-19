@@ -240,7 +240,13 @@ class MermaidDiagramGenerator:
 
             if call_type == 'sql':
                 sql_participant_required = True
-                sql_display_label = call.get('sql_display') or call.get('mapper_name') or target_package or 'SQL statement'
+                # Mapper participant 표시: 'Mapper name' <br/>({namespace})
+                mapper_name = call.get('mapper_name') or 'SQL'
+                mapper_namespace = call.get('mapper_namespace') or ''
+                if mapper_namespace:
+                    sql_display_label = f"{mapper_name}<br/>({mapper_namespace})"
+                else:
+                    sql_display_label = mapper_name
             elif call_type == 'table':
                 if target_class:
                     schema_value = call.get('table_schema') or target_package or ''
@@ -352,7 +358,13 @@ class MermaidDiagramGenerator:
                             icon = '📊'
                         else:
                             icon = '🛠️'
-                        label = call_details.get('sql_logical_name') or method
+                        # SQL 호출 표시: sql_id<<logical_name>>
+                        sql_id = method
+                        sql_logical_name = call_details.get('sql_logical_name') or ''
+                        if sql_logical_name:
+                            label = f"{sql_id}<<{sql_logical_name}>>"
+                        else:
+                            label = sql_id
                         call_str = f"    {source}->>{target}: {icon} {label}"
                         activate_target = True
                     elif call_type == 'table':
@@ -361,10 +373,17 @@ class MermaidDiagramGenerator:
                         activate_target = True
                     else:
                         is_external_library = self._is_external_library_call(call_details)
-                        if is_external_library:
-                            call_str = f"    {source}->>{target}: {method}()"
+                        # 메서드 호출 표시: method_name()<<logical_name>>
+                        method_logical_name = call_details.get('target_method_logical_name') or ''
+                        if method_logical_name:
+                            method_display = f"{method}()<<{method_logical_name}>>"
                         else:
-                            call_str = f"    {source}->>{target}: {method}()"
+                            method_display = f"{method}()"
+
+                        if is_external_library:
+                            call_str = f"    {source}->>{target}: {method_display}"
+                        else:
+                            call_str = f"    {source}->>{target}: {method_display}"
                         activate_target = not (is_external_library and target in {'String', 'Logger', 'System'})
 
                     diagram_lines.append(call_str)
@@ -379,54 +398,33 @@ class MermaidDiagramGenerator:
                     target = event['target']
                     return_type = event.get('return_type', 'void')
 
+                    # activation_stack에서 source를 찾아서 제거
                     activation_entry = None
                     for idx in range(len(activation_stack) - 1, -1, -1):
                         if activation_stack[idx]['participant'] == source:
                             activation_entry = activation_stack.pop(idx)
                             break
 
-                    if activation_entry:
+                    # return 명령과 deactivate 명령 생성
+                    if source in active_participants:
                         diagram_lines.append(f"    {source}-->>{target}: return ({return_type})")
                         diagram_lines.append(f"    deactivate {source}")
                         active_participants.discard(source)
 
-                elif event['type'] == 'self_return':
-                    source = event['source']
-                    target = event['target']
-
-                    activation_entry = None
-                    for idx in range(len(activation_stack) - 1, -1, -1):
-                        if activation_stack[idx]['participant'] == source:
-                            activation_entry = activation_stack.pop(idx)
-                            break
-
-                    if activation_entry:
-                        diagram_lines.append(f"    {source}-->>{target}: return (void)")
-                        diagram_lines.append(f"    deactivate {source}")
-                        active_participants.discard(source)
-
-                elif event['type'] == 'deactivate':
-                    ended_class = event.get('class')
-                    if ended_class:
-                        for idx in range(len(activation_stack) - 1, -1, -1):
-                            if activation_stack[idx]['participant'] == ended_class:
-                                activation_stack.pop(idx)
-                                break
-                        diagram_lines.append(f"    deactivate {ended_class}")
-                        active_participants.discard(ended_class)
-
+            # 남은 활성 참여자들을 모두 반환 처리
             remaining_active = [p for p in active_participants if p != main_class_name]
             remaining_active.sort(key=lambda x: final_participants.index(x) if x in final_participants else 999)
 
             for participant in remaining_active:
                 diagram_lines.append(f"    {participant}-->>{main_class_name}: return (void)")
                 diagram_lines.append(f"    deactivate {participant}")
+                active_participants.discard(participant)
 
+            # 메인 클래스의 리턴은 항상 표시
             final_return_type = top_method_return_type or 'void'
-            if main_class_name in active_participants:
-                diagram_lines.append(f"    {main_class_name}-->>Client: return ({final_return_type})")
-                diagram_lines.append(f"    deactivate {main_class_name}")
-                active_participants.discard(main_class_name)
+            diagram_lines.append(f"    {main_class_name}-->>Client: return ({final_return_type})")
+            diagram_lines.append(f"    deactivate {main_class_name}")
+            active_participants.discard(main_class_name)
 
             if not is_single_method_flow and not is_focused_method:
                 diagram_lines.append("    end")
