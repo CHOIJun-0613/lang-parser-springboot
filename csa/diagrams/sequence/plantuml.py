@@ -276,9 +276,9 @@ class PlantUMLDiagramGenerator:
         final_participants = [p for p in ordered_participants if p and p != 'Unknown']
 
         if start_method:
-            title = f"{main_class_name}.{start_method}()"
+            title = f"<size:20><b>{main_class_name}.{start_method}()</b></size>"
         else:
-            title = f"{main_class_name} Class Methods"
+            title = f"<size:20><b>{main_class_name} Class Methods</b></size>"
 
         diagram_lines = ["@startuml", f"title {title}", ""]
 
@@ -346,13 +346,6 @@ class PlantUMLDiagramGenerator:
                         continue
 
                     if call_type == 'sql':
-                        sql_type = (call_details.get('sql_type') or '').upper()
-                        if sql_type == 'SELECT':
-                            icon = '??'
-                        elif sql_type in {'INSERT', 'UPDATE', 'DELETE'}:
-                            icon = '??'
-                        else:
-                            icon = '???'
                         # SQL 호출 표시: sql_id<<logical_name>>
                         sql_id = method
                         sql_logical_name = call_details.get('sql_logical_name') or ''
@@ -360,7 +353,7 @@ class PlantUMLDiagramGenerator:
                             label = f"{sql_id}<<{sql_logical_name}>>"
                         else:
                             label = sql_id
-                        call_str = f"{source} -> {target} : {icon} {label}"
+                        call_str = f"{source} -> {target} : {label}"
                         activate_target = True
                     elif call_type == 'table':
                         # SQL -> Table 호출 표시: sql_id<<sql_type>>
@@ -449,8 +442,8 @@ class PlantUMLDiagramGenerator:
             plantuml_paths = [
                 'plantuml.jar',
                 os.path.join(os.getcwd(), 'plantuml.jar'),
-                os.path.join(os.path.dirname(__file__), '..', '..', 'plantuml.jar'),
-                os.path.join(os.path.dirname(__file__), '..', '..', 'libs', 'plantuml.jar'),
+                os.path.join(os.path.dirname(__file__), '..', '..', '..', 'plantuml.jar'),
+                os.path.join(os.path.dirname(__file__), '..', '..', '..', 'libs', 'plantuml.jar'),
                 r'C:\plantuml\plantuml.jar'
             ]
             
