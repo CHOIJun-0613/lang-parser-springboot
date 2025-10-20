@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import threading
@@ -92,6 +93,10 @@ class Neo4jConnectionPool:
             config.pool_size,
             config.database,
         )
+
+        # Neo4j 드라이버의 경고 메시지를 ERROR 레벨로 설정 (WARNING 메시지 억제)
+        # OPTIONAL MATCH에서 발생하는 "relationship type does not exist" 등의 경고는 정상 동작이므로 억제
+        logging.getLogger("neo4j").setLevel(logging.ERROR)
 
         try:
             for index in range(config.pool_size):

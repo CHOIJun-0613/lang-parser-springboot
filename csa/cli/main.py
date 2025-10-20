@@ -9,6 +9,7 @@ from csa.utils.logger import set_command_context
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from csa.cli.commands.analyze import register as register_analyze
+from csa.cli.commands.class_spec import register as register_class_spec
 from csa.cli.commands.crud import register as register_crud_commands
 from csa.cli.commands.db_calls import register as register_db_commands
 from csa.cli.commands.graph_queries import register as register_graph_queries
@@ -39,6 +40,7 @@ register_sequence(cli)
 register_crud_commands(cli)
 register_db_commands(cli)
 register_analyze(cli)
+register_class_spec(cli)
 
 
 if __name__ == "__main__":

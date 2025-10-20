@@ -211,9 +211,9 @@ class PersistenceMixin:
             project_name=project_name,
         )
 
-    def create_method_sql_relationships(self, project_name: str) -> None:
+    def create_method_sql_relationships(self, project_name: str) -> int:
         """Create CALLS relationships between repository methods and SQL statements."""
-        self._execute_write(self._create_method_sql_relationships_tx, project_name)
+        return self._execute_write(self._create_method_sql_relationships_tx, project_name)
 
     @staticmethod
     def _create_method_sql_relationships_tx(tx, project_name: str) -> int:
