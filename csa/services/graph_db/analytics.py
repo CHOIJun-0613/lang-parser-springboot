@@ -13,8 +13,8 @@ class AnalyticsMixin:
         MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
         MATCH (m)-[:CALLS]->(s:SqlStatement)
         WHERE s.tables IS NOT NULL AND s.tables <> '[]'
-        WITH c, m, s, 
-             CASE 
+        WITH c, m, s,
+             CASE
                WHEN s.sql_type = 'SELECT' THEN 'R'
                WHEN s.sql_type = 'INSERT' THEN 'C'
                WHEN s.sql_type = 'UPDATE' THEN 'U'
@@ -32,7 +32,10 @@ class AnalyticsMixin:
         with self._driver.session(database=self._database) as session:
             result = session.run(query)
             raw_data = [record.data() for record in result]
-            matrix_rows: List[Dict[str, Any]] = []
+
+            # 중간 데이터를 저장할 dict: key = (class_name, method_name, table_name)
+            aggregated_data: Dict[tuple, Dict[str, Any]] = {}
+
             for row in raw_data:
                 class_name = row["class_name"]
                 package_name = row["package_name"]
@@ -45,26 +48,44 @@ class AnalyticsMixin:
                         for table_info in tables:
                             if isinstance(table_info, dict) and "name" in table_info:
                                 table_name = table_info["name"]
-                                schema_query = """
-                                MATCH (t:Table {name: $table_name})
-                                RETURN t.schema AS schema
-                                """
-                                schema_result = session.run(schema_query, table_name=table_name)
-                                schema_record = schema_result.single()
-                                schema = schema_record["schema"] if schema_record else "unknown"
-                                matrix_rows.append(
-                                    {
+
+                                # 집계 키 생성
+                                key = (class_name, method_name, table_name)
+
+                                if key not in aggregated_data:
+                                    # 처음 발견된 조합인 경우, schema 조회
+                                    schema_query = """
+                                    MATCH (t:Table {name: $table_name})
+                                    RETURN t.schema AS schema
+                                    """
+                                    schema_result = session.run(schema_query, table_name=table_name)
+                                    schema_record = schema_result.single()
+                                    schema = schema_record["schema"] if schema_record else "unknown"
+
+                                    aggregated_data[key] = {
                                         "class_name": class_name,
                                         "method_name": method_name,
                                         "package_name": package_name,
                                         "table_name": table_name,
                                         "schema": schema,
-                                        "operation": operation,
-                                        "sql_id": row["sql_id"],
+                                        "operations": set(),  # set으로 중복 제거
                                     }
-                                )
+
+                                # operation 추가
+                                aggregated_data[key]["operations"].add(operation)
+
                 except (json.JSONDecodeError, TypeError):
                     continue
+
+            # set을 list로 변환하여 반환
+            matrix_rows = [
+                {
+                    **data,
+                    "operations": sorted(list(data["operations"]))  # 정렬된 리스트로 변환
+                }
+                for data in aggregated_data.values()
+            ]
+
             return matrix_rows
 
     def get_table_crud_summary(self, project_name: Optional[str] = None) -> List[Dict[str, Any]]:

@@ -105,6 +105,8 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
             "",
             f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
+            f"**Total:** {len(matrix)} class-table relationships.",
+            "",
             "| Package | Class Name | Method | Schema | Table | Operations |",
             "|---------|------------|--------|--------|-------|------------|",
         ]
@@ -119,8 +121,6 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
                     ops=", ".join(row["operations"]) if row["operations"] else "None",
                 )
             )
-        lines.append("")
-        lines.append(f"**Total:** {len(matrix)} class-table relationships.")
 
         with open(md_filepath, "w", encoding="utf-8") as file:
             file.write("\n".join(lines))

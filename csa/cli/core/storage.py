@@ -83,8 +83,10 @@ def _save_crud_matrix_as_excel(matrix: Iterable[dict], project_name: str, output
     """CRUD 매트릭스를 Excel 파일로 저장합니다."""
     try:
         import pandas as pd
+        from datetime import datetime
         from openpyxl.styles import Alignment, Font, PatternFill
 
+        # 데이터 변환
         df_data = []
         for row in matrix:
             df_data.append(
@@ -99,17 +101,34 @@ def _save_crud_matrix_as_excel(matrix: Iterable[dict], project_name: str, output
             )
 
         df = pd.DataFrame(df_data)
+        total_count = len(df)
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-            df.to_excel(writer, sheet_name="CRUD Matrix", index=False)
+            # 헤더 정보를 위해 startrow=4부터 데이터 작성
+            df.to_excel(writer, sheet_name="CRUD Matrix", index=False, startrow=4)
 
             worksheet = writer.sheets["CRUD Matrix"]
 
-            for cell in worksheet[1]:
+            # Title 추가 (A1)
+            worksheet["A1"] = f"CRUD Matrix [Project : {project_name}]"
+            worksheet["A1"].font = Font(bold=True, size=14)
+
+            # 작성일시 추가 (A2)
+            worksheet["A2"] = f"Generated at: {generated_at}"
+            worksheet["A2"].font = Font(size=11)
+
+            # 통계 추가 (A3)
+            worksheet["A3"] = f"Total: {total_count} class-table relationships"
+            worksheet["A3"].font = Font(size=11)
+
+            # 헤더 행 스타일 적용 (5행)
+            for cell in worksheet[5]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
                 cell.alignment = Alignment(horizontal="center")
 
+            # 컬럼 너비 자동 조정
             for column in worksheet.columns:
                 max_length = 0
                 column_letter = column[0].column_letter

@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(python -m csa.cli.main crud-matrix --project-name car-center-devlab)",
+      "Bash(python -c \"\nfrom openpyxl import load_workbook\nwb = load_workbook(''output/crud-matrix/CRUD_car-center-devlab_20251020-144343.xlsx'')\nws = wb[''CRUD Matrix'']\nfor i in range(1, 10):\n    row_values = [str(cell.value) if cell.value else '''' for cell in ws[i]]\n    print(f''Row {i}: {row_values[:3]}'')  # 처음 3개 컬럼만 출력\n\")"
     ],
     "deny": [],
     "ask": []
