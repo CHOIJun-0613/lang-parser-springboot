@@ -539,3 +539,4 @@ python -m csa.cli.main analyze --all-objects --clean --project-name myproject
 - **새 CLI 명령어**: `csa/cli/commands/` 아래 추가 후 `main.py`에 등록
 - **새 Neo4j 노드**: `csa/models/graph_entities.py`에 Pydantic 모델 추가
 - **새 그래프 작업**: `csa/services/graph_db/` 아래 적절한 모듈에 추가
+- /status
