@@ -17,6 +17,9 @@ from csa.models.impact import (
     TestScopeItem,
     ImpactAnalysisResult,
 )
+from csa.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ReverseImpactMixin:
@@ -69,15 +72,25 @@ class ReverseImpactMixin:
                 sql_details = self._collect_sql_details(session, sql_statements)
 
                 # 2단계: SQL을 호출하는 Method 및 상위 호출자 재귀 조회
+                # 관계: Service.Method -> Mapper.Method (name == sql.id) -> SqlStatement
                 impact_query = """
                 MATCH (sql:SqlStatement)
                 WHERE sql.id IN $sql_ids
 
-                // SQL을 직접 호출하는 Method (Level 1 - 직접 영향)
-                OPTIONAL MATCH (m:Method)-[:CALLS]->(sql)
+                // SqlStatement.id와 같은 이름을 가진 Mapper Method 찾기
+                // 클래스명 또는 패키지명으로 Mapper/Repository 식별
+                MATCH (mapper_class:Class)-[:HAS_METHOD]->(mapper_method:Method)
+                WHERE mapper_method.name = sql.id
+                  AND (mapper_class.name CONTAINS 'Repository'
+                       OR mapper_class.name CONTAINS 'Mapper'
+                       OR mapper_class.package_name CONTAINS 'repository'
+                       OR mapper_class.package_name CONTAINS 'mapper')
+
+                // Mapper Method를 호출하는 Service/Controller Method 찾기 (Level 1 - 직접 영향)
+                OPTIONAL MATCH (m:Method)-[:CALLS]->(mapper_method)
                 OPTIONAL MATCH (c:Class)-[:HAS_METHOD]->(m)
 
-                // Method를 호출하는 상위 Method 재귀 조회 (Level 2+ - 간접 영향)
+                // Service Method를 호출하는 상위 Method 재귀 조회 (Level 2+ - 간접 영향)
                 OPTIONAL MATCH path = (caller:Method)-[:CALLS*1..10]->(m)
                 WHERE length(path) <= $max_depth
                 OPTIONAL MATCH (caller_class:Class)-[:HAS_METHOD]->(caller)
@@ -105,11 +118,20 @@ class ReverseImpactMixin:
                 """
 
                 sql_ids = [s["sql_id"] for s in sql_statements]
+                logger.debug(f"SQL IDs to analyze: {sql_ids}")
+
                 impact_result = session.run(impact_query, sql_ids=sql_ids, max_depth=max_depth)
                 raw_nodes = [dict(record) for record in impact_result]
 
+                logger.info(f"Query returned {len(raw_nodes)} raw nodes")
+                if raw_nodes:
+                    logger.debug(f"Sample node: {raw_nodes[0]}")
+                else:
+                    logger.warning("No raw nodes returned from query!")
+
                 # 3단계: 영향도 트리 구축
                 impact_tree = self._build_impact_tree(raw_nodes, max_depth)
+                logger.info(f"Impact tree built with {len(impact_tree)} levels")
 
                 # 4단계: 요약 통계 계산
                 summary = self._calculate_summary("table", table_name, project_name, impact_tree)

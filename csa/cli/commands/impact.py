@@ -143,7 +143,7 @@ def impact_analysis_command(
         # Neo4j 연결
         neo4j_database = os.getenv("NEO4J_DATABASE", "neo4j")
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
-        service = ImpactAnalysisService(driver)
+        service = ImpactAnalysisService(driver, database=neo4j_database)
 
         click.echo("=" * 80)
         if table_name:
@@ -200,39 +200,39 @@ def impact_analysis_command(
         md_filename = _generate_filename(impact_result, "md")
         md_filepath = output_path / md_filename
         if reporter.generate_markdown(impact_result, md_filepath):
-            click.echo(f"\n✓ Markdown 리포트 생성: {md_filepath}")
+            click.echo(f"\n[OK] Markdown 리포트 생성: {md_filepath}")
             result["files"].append(str(md_filepath))
         else:
-            click.echo(f"\n✗ Markdown 리포트 생성 실패")
+            click.echo(f"\n[FAIL] Markdown 리포트 생성 실패")
 
         # Excel 리포트 (기본 생성)
         excel_filename = _generate_filename(impact_result, "xlsx")
         excel_filepath = output_path / excel_filename
         if reporter.generate_excel(impact_result, excel_filepath):
-            click.echo(f"✓ Excel 리포트 생성: {excel_filepath}")
+            click.echo(f"[OK] Excel 리포트 생성: {excel_filepath}")
             result["files"].append(str(excel_filepath))
         else:
-            click.echo(f"✗ Excel 리포트 생성 실패")
+            click.echo(f"[FAIL] Excel 리포트 생성 실패")
 
         # JSON 리포트 (선택 생성)
         if include_json:
             json_filename = _generate_filename(impact_result, "json")
             json_filepath = output_path / json_filename
             if reporter.generate_json(impact_result, json_filepath):
-                click.echo(f"✓ JSON 리포트 생성: {json_filepath}")
+                click.echo(f"[OK] JSON 리포트 생성: {json_filepath}")
                 result["files"].append(str(json_filepath))
             else:
-                click.echo(f"✗ JSON 리포트 생성 실패")
+                click.echo(f"[FAIL] JSON 리포트 생성 실패")
 
         # Mermaid 다이어그램 (선택 생성)
         if generate_diagram:
             diagram_filename = _generate_filename(impact_result, "diagram.md")
             diagram_filepath = output_path / diagram_filename
             if reporter.generate_mermaid_diagram(impact_result, diagram_filepath):
-                click.echo(f"✓ Mermaid 다이어그램 생성: {diagram_filepath}")
+                click.echo(f"[OK] Mermaid 다이어그램 생성: {diagram_filepath}")
                 result["files"].append(str(diagram_filepath))
             else:
-                click.echo(f"✗ Mermaid 다이어그램 생성 실패")
+                click.echo(f"[FAIL] Mermaid 다이어그램 생성 실패")
 
         click.echo("\n분석 완료!")
         result["success"] = True

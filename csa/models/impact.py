@@ -76,8 +76,8 @@ class SqlDetail(BaseModel):
     """
     sql_id: str = Field(description="SQL ID")
     sql_type: str = Field(description="SQL 타입 (SELECT/INSERT/UPDATE/DELETE)")
-    mapper_class: str = Field(description="매퍼 클래스명")
-    mapper_method: str = Field(description="매퍼 메서드명")
+    mapper_class: Optional[str] = Field(default=None, description="매퍼 클래스명")
+    mapper_method: Optional[str] = Field(default=None, description="매퍼 메서드명")
     complexity: int = Field(default=0, description="SQL 복잡도")
     query_preview: Optional[str] = Field(default=None, description="쿼리 미리보기 (앞 100자)")
 
