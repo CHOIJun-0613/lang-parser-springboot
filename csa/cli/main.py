@@ -13,6 +13,7 @@ from csa.cli.commands.class_spec import register as register_class_spec
 from csa.cli.commands.crud import register as register_crud_commands
 from csa.cli.commands.db_calls import register as register_db_commands
 from csa.cli.commands.graph_queries import register as register_graph_queries
+from csa.cli.commands.impact import register as register_impact
 from csa.cli.commands.sequence import register as register_sequence
 from csa.dbwork.connection_pool import get_connection_pool
 
@@ -41,6 +42,7 @@ register_crud_commands(cli)
 register_db_commands(cli)
 register_analyze(cli)
 register_class_spec(cli)
+register_impact(cli)
 
 
 if __name__ == "__main__":
