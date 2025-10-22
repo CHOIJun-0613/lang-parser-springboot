@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
+    image: csa-devcontainer:latest
 
     # Ona Agent 연결 문제 방지
     network_mode: host
