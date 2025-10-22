@@ -89,6 +89,11 @@ class ImpactReporter:
             if result.impact_tree:
                 lines.append("## 3. 영향도 트리 (Level별)")
                 lines.append("")
+                lines.append("**범례:**")
+                lines.append("- 🔴 High Risk (복잡도 높음 또는 영향 범위 큼)")
+                lines.append("- 🟡 Medium Risk (중간 복잡도)")
+                lines.append("- 🟢 Low Risk (낮은 복잡도)")
+                lines.append("")
 
                 for level in sorted(result.impact_tree.keys()):
                     nodes = result.impact_tree[level]
@@ -144,51 +149,34 @@ class ImpactReporter:
             if result.sql_details:
                 lines.append("## 5. SQL 상세 정보")
                 lines.append("")
-                lines.append("| SQL ID | Type | Mapper | Complexity | Query |")
-                lines.append("|--------|------|--------|-----------|-------|")
 
                 for sql in result.sql_details:
-                    query_preview = sql.query_preview[:50] + "..." if sql.query_preview and len(sql.query_preview) > 50 else sql.query_preview or ""
-                    query_preview_md = query_preview.replace("|", "\\|")  # 파이프 이스케이프
+                    lines.append(f"### SQL ID: `{sql.sql_id}`")
+                    lines.append("")
+                    lines.append(f"- **Type**: {sql.sql_type}")
+                    lines.append(f"- **Mapper Class**: `{sql.mapper_class}`")
+                    lines.append(f"- **Mapper Method**: `{sql.mapper_method}`")
+                    lines.append(f"- **Complexity**: {sql.complexity}")
 
-                    lines.append(
-                        f"| {sql.sql_id} "
-                        f"| {sql.sql_type} "
-                        f"| {sql.mapper_class}.{sql.mapper_method} "
-                        f"| {sql.complexity} "
-                        f"| `{query_preview_md}` |"
-                    )
-                lines.append("")
+                    if sql.query_preview:
+                        lines.append("- **Query Preview**:")
+                        lines.append("  ```sql")
+                        # 쿼리를 적절히 포맷팅 (긴 쿼리는 줄바꿈)
+                        query_text = sql.query_preview
+                        if len(query_text) > 100:
+                            # 주요 SQL 키워드 뒤에서 줄바꿈
+                            query_text = query_text.replace(" FROM ", "\n  FROM ")
+                            query_text = query_text.replace(" WHERE ", "\n  WHERE ")
+                            query_text = query_text.replace(" AND ", "\n  AND ")
+                            query_text = query_text.replace(" ORDER BY ", "\n  ORDER BY ")
+                            query_text = query_text.replace(" GROUP BY ", "\n  GROUP BY ")
+                        lines.append(f"  {query_text}")
+                        lines.append("  ```")
 
-            # 6. 권장 테스트 범위
-            if result.test_scope:
-                lines.append("## 6. 권장 테스트 범위")
-                lines.append("")
-
-                existing_tests = [item for item in result.test_scope if item.status == "존재"]
-                missing_tests = [item for item in result.test_scope if item.status == "미존재"]
-
-                if existing_tests:
-                    lines.append("### 기존 테스트 (실행 권장)")
-                    for item in existing_tests:
-                        lines.append(f"- ✓ `{item.test_class}` (메서드 {item.test_method_count}개)")
                     lines.append("")
 
-                if missing_tests:
-                    lines.append("### 테스트 미존재 (작성 권장)")
-                    for item in missing_tests:
-                        lines.append(f"- ⚠️ `{item.impacted_class}` - 테스트 클래스 없음")
-                    lines.append("")
-
-                # 테스트 커버리지
-                total_classes = len(result.test_scope)
-                tested_classes = len(existing_tests)
-                coverage_pct = (tested_classes / total_classes * 100) if total_classes > 0 else 0
-                lines.append(f"**테스트 커버리지**: {tested_classes}/{total_classes} ({coverage_pct:.1f}%)")
-                lines.append("")
-
-            # 7. 변경 시 주의사항
-            lines.append("## 7. 변경 시 주의사항")
+            # 6. 변경 시 주의사항
+            lines.append("## 6. 변경 시 주의사항")
 
             if result.has_circular_reference:
                 lines.append(f"- ⚠️ **순환 참조 감지**: {len(result.circular_paths)}개")
