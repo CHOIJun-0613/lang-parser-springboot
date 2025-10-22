@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import List, Dict
 from pathlib import Path
+from datetime import datetime
 
 from csa.models.impact import ImpactAnalysisResult, ImpactNode
 from csa.utils.logger import get_logger
@@ -40,12 +41,17 @@ class ImpactMermaidGenerator:
         try:
             lines = []
 
+            # timestamp 형식 변환: YYYYMMDD-HHmmss -> YYYY-MM-DD HH:mm:ss
+            formatted_timestamp = self._format_timestamp(result.timestamp)
+
             # 제목
             lines.append(f"# 영향도 분석 다이어그램: {result.target_name}")
             lines.append("")
-            lines.append(f"**분석 대상**: {result.target_name}")
-            lines.append(f"**프로젝트**: {result.project_name or '전체'}")
-            lines.append(f"**분석 일시**: {result.timestamp}")
+            lines.append(f"**분석 대상**: {result.target_name}  ")
+            lines.append("")
+            lines.append(f"**프로젝트**: {result.project_name or '전체'}  ")
+            lines.append("")
+            lines.append(f"**분석 일시**: {formatted_timestamp}  ")
             lines.append("")
             lines.append("---")
             lines.append("")
@@ -210,6 +216,8 @@ class ImpactMermaidGenerator:
         lines = []
         risk_dist = result.summary.risk_distribution
 
+        # 파이 차트 크기를 작게 설정 (textPosition: 0.5로 크기 축소)
+        lines.append("%%{init: {'theme':'base', 'themeVariables': {'pieOuterStrokeWidth': '3px', 'pieSectionTextSize': '14px'}, 'pie': {'textPosition': 0.5}}}%%")
         lines.append("pie title 리스크 등급 분포")
 
         high_count = risk_dist.get("HIGH", 0)
@@ -265,3 +273,22 @@ class ImpactMermaidGenerator:
             lines.append(f"    PKG{idx} --> PKG{idx+1}")
 
         return lines
+
+    def _format_timestamp(self, timestamp: str) -> str:
+        """timestamp 형식 변환
+
+        Args:
+            timestamp: YYYYMMDD-HHmmss 형식의 문자열
+
+        Returns:
+            YYYY-MM-DD HH:mm:ss 형식의 문자열
+        """
+        try:
+            # YYYYMMDD-HHmmss 형식 파싱
+            dt = datetime.strptime(timestamp, "%Y%m%d-%H%M%S")
+            # YYYY-MM-DD HH:mm:ss 형식으로 변환
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            # 파싱 실패 시 원본 반환
+            logger.warning(f"timestamp 파싱 실패: {timestamp}, 원본 사용")
+            return timestamp

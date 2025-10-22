@@ -147,7 +147,7 @@ class ReverseImpactMixin:
                 has_circular, circular_paths = self._detect_circular_references(session, impacted_classes, project_name)
 
                 # 결과 생성
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                 result = ImpactAnalysisResult(
                     project_name=project_name,
                     analysis_type="table",
@@ -272,7 +272,7 @@ class ReverseImpactMixin:
                 has_circular, circular_paths = self._detect_circular_references(session, impacted_classes, project_name)
 
                 # 결과 생성
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                 result = ImpactAnalysisResult(
                     project_name=project_name,
                     analysis_type="method",
@@ -774,7 +774,7 @@ class ReverseImpactMixin:
         Returns:
             빈 ImpactAnalysisResult
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         return ImpactAnalysisResult(
             project_name=project_name,
             analysis_type=analysis_type,

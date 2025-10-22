@@ -608,6 +608,14 @@ def save_java_objects_to_neo4j(
         )
         resolve_bean_dependencies_from_neo4j(db, project_name, logger)
 
+    # Method -> SqlStatement CALLS 관계 생성
+    # artifacts.sql_statements가 Neo4j에 저장된 후 실행
+    if artifacts.sql_statements:
+        logger.info("")
+        logger.info("Creating Method -> SqlStatement CALLS relationships...")
+        relationships_created = db.create_method_sql_relationships(project_name)
+        logger.info("Created %s Method -> SqlStatement relationships", relationships_created)
+
     java_end_time = datetime.now()
     java_stats.start_time = java_start_time
     java_stats.end_time = java_end_time

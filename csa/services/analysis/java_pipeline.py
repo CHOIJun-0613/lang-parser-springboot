@@ -98,6 +98,13 @@ def _analyze_with_streaming(
     logger.info("  - Beans: %s", stats['beans'])
     logger.info("  - Endpoints: %s", stats['endpoints'])
 
+    # Method -> SqlStatement CALLS 관계 생성 (스트리밍 모드)
+    if stats.get('sql_statements', 0) > 0:
+        logger.info("")
+        logger.info("Creating Method -> SqlStatement CALLS relationships...")
+        relationships_created = graph_db.create_method_sql_relationships(final_project_name)
+        logger.info("Created %s Method -> SqlStatement relationships", relationships_created)
+
     # JavaAnalysisArtifacts 생성 (빈 리스트로, 실제 데이터는 Neo4j에 있음)
     artifacts = JavaAnalysisArtifacts(
         packages=[],  # 스트리밍 모드에서는 메모리에 저장하지 않음
