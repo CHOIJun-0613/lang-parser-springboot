@@ -16,7 +16,7 @@ from csa.vendor import javalang
 from csa.models.graph_entities import (
     Bean,
     BeanDependency,
-    Class,
+    Class, 
     ConfigFile,
     Endpoint,
     Field,

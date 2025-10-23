@@ -3,7 +3,7 @@ from typing import Literal, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import List
-
+ 
 
 class Project(BaseModel):
     """Represents a project in the system."""
