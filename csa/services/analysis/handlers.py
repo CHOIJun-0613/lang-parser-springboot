@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from csa.models.analysis import AnalysisResult, DatabaseAnalysisStats, JavaAnalysisStats
+from csa.models.graph_entities import Project
 from csa.services.analysis.db_pipeline import analyze_full_project_db
 from csa.services.analysis.java_pipeline import analyze_full_project_java
 from csa.services.analysis.neo4j_writer import save_java_objects_to_neo4j
@@ -65,9 +66,38 @@ def _resolve_db_script_folder(db_script_folder: Optional[str], logger) -> Option
     return env_folder
 
 
+def _resolve_project_path(java_source_folder: Optional[str]) -> str:
+    """Return absolute project path when available."""
+    if not java_source_folder:
+        return ""
+
+    try:
+        normalized_path = os.path.abspath(java_source_folder)
+    except (TypeError, OSError):
+        return ""
+
+    if not os.path.exists(normalized_path):
+        return ""
+
+    return normalized_path
+
+
+def _count_project_files(project_path: str) -> int:
+    """Count every file under the project path excluding hidden directories."""
+    if not project_path or not os.path.isdir(project_path):
+        return 0
+
+    total_files = 0
+    for _, dirnames, filenames in os.walk(project_path):
+        dirnames[:] = [dirname for dirname in dirnames if not dirname.startswith(".")]
+        total_files += len(filenames)
+    return total_files
+
+
 def analyze_project(
     java_source_folder: str,
     project_name: str,
+    application_name: Optional[str],
     db_script_folder: Optional[str],
     neo4j_uri: str,
     neo4j_user: str,
@@ -88,6 +118,27 @@ def analyze_project(
     java_stats: Optional[JavaAnalysisStats] = None
     db_stats: Optional[DatabaseAnalysisStats] = None
     db: Optional[GraphDB] = None
+    project_path = _resolve_project_path(java_source_folder)
+    fallback_project_name = ""
+    fallback_source = project_path or java_source_folder or ""
+    if not project_name and fallback_source:
+        normalized_source = os.path.normpath(str(fallback_source))
+        candidate = os.path.basename(normalized_source.rstrip("\\/"))
+        if candidate not in ("", ".", "..", os.path.sep):
+            fallback_project_name = candidate
+    effective_project_name = project_name or fallback_project_name or ""
+    timestamp = overall_start_time.strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
+    project_entity = Project(
+        name=effective_project_name,
+        description="",
+        ai_description="",
+        application_name=application_name or "",
+        number_of_files=_count_project_files(project_path),
+        path=project_path,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    project_name = project_entity.name
 
     try:
         db = _prepare_database(
@@ -120,12 +171,19 @@ def analyze_project(
             # 스트리밍 모드 확인
             use_streaming = os.getenv("USE_STREAMING_PARSE", "false").lower() == "true"
 
+            if use_streaming and db:
+                db.add_project(project_entity)
+
             artifacts, final_project_name = analyze_full_project_java(
                 java_source_folder,
                 project_name,
                 logger,
                 graph_db=db,  # 스트리밍 모드를 위해 graph_db 전달
             )
+
+            if final_project_name:
+                project_entity.name = final_project_name
+                project_name = final_project_name
 
             if use_streaming:
                 # 스트리밍 모드: Neo4j에서 직접 통계 조회
@@ -134,12 +192,14 @@ def analyze_project(
                 start_time = artifacts.metadata.get('start_time') if hasattr(artifacts, 'metadata') and artifacts.metadata else None
                 end_time = artifacts.metadata.get('end_time') if hasattr(artifacts, 'metadata') and artifacts.metadata else None
                 java_stats = get_java_stats_from_neo4j(db, final_project_name, logger, start_time, end_time)
+                if db:
+                    db.add_project(project_entity)
             else:
                 # 배치 모드: 기존 방식으로 Neo4j에 저장
                 java_stats = save_java_objects_to_neo4j(
                     db,
                     artifacts,
-                    final_project_name,
+                    project_entity,
                     clean,
                     logger,
                 )

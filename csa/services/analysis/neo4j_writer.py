@@ -195,17 +195,18 @@ def add_springboot_objects(
         logger.info("DB 저장 -  %s SQL statements to database...", len(sql_statements))
         start_time = time.time()
         last_percent = 0
+        relationships: list[dict[str, str]] = []
         for idx, sql_statement in enumerate(sql_statements, 1):
             db.add_sql_statement(sql_statement, project_name)
-            with _session_scope(db) as session:
-                session.execute_write(
-                    db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                    sql_statement.mapper_name,
-                    sql_statement.id,
-                    project_name,
-                )
-
+            relationships.append(
+                {
+                    "mapper_name": sql_statement.mapper_name,
+                    "sql_id": sql_statement.id,
+                }
+            )
             last_percent = _log_progress("sql_statements 저장", idx, len(sql_statements), last_percent, logger)
+        if relationships:
+            db.add_mapper_sql_relationships_batch(relationships, project_name)
         _log_duration("Added SQL statements", len(sql_statements), start_time, logger)
 
 
@@ -258,17 +259,17 @@ def add_single_class_objects(
 
     if sql_statements:
         logger.info("DB 저장 -  %s SQL statements to database...", len(sql_statements))
+        relationships: list[dict[str, str]] = []
         for sql_statement in sql_statements:
             db.add_sql_statement(sql_statement, project_name)
-
-            with _session_scope(db) as session:
-                session.execute_write(
-                    db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                    sql_statement.mapper_name,
-                    sql_statement.id,
-                    project_name,
-                )
-
+            relationships.append(
+                {
+                    "mapper_name": sql_statement.mapper_name,
+                    "sql_id": sql_statement.id,
+                }
+            )
+        if relationships:
+            db.add_mapper_sql_relationships_batch(relationships, project_name)
 
 def add_batch_class_objects_streaming(
     db: GraphDB,
@@ -364,15 +365,16 @@ def add_batch_class_objects_streaming(
         if sql_statements:
             db.add_sql_statements_batch(sql_statements, project_name)
 
-            # Mapper-SQL 관계는 개별로 생성 (UNWIND로 할 수도 있지만 복잡도 고려)
-            for sql_statement in sql_statements:
-                with _session_scope(db) as session:
-                    session.execute_write(
-                        db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                        sql_statement.mapper_name,
-                        sql_statement.id,
-                        project_name,
-                    )
+            # Mapper-SQL 관계를 한 번에 연결
+            relationships = [
+                {
+                    "mapper_name": sql_statement.mapper_name,
+                    "sql_id": sql_statement.id,
+                }
+                for sql_statement in sql_statements
+            ]
+            if relationships:
+                db.add_mapper_sql_relationships_batch(relationships, project_name)
             stats['sql_statements'] = len(sql_statements)
             logger.debug(f"  → SQL Statement {len(sql_statements)}개 배치 저장")
 
@@ -488,16 +490,17 @@ def add_single_class_objects_streaming(
         # SQL Statements 즉시 추출 및 저장
         sql_statements = extract_sql_statements_from_mappers(mybatis_mappers, project_name)
         if sql_statements:
+            relationships: list[dict[str, str]] = []
             for sql_statement in sql_statements:
                 db.add_sql_statement(sql_statement, project_name)
-
-                with _session_scope(db) as session:
-                    session.execute_write(
-                        db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                        sql_statement.mapper_name,
-                        sql_statement.id,
-                        project_name,
-                    )
+                relationships.append(
+                    {
+                        "mapper_name": sql_statement.mapper_name,
+                        "sql_id": sql_statement.id,
+                    }
+                )
+            if relationships:
+                db.add_mapper_sql_relationships_batch(relationships, project_name)
             stats['sql_statements'] = len(sql_statements)
             logger.debug(f"  → SQL Statement {len(sql_statements)}개 저장")
 
@@ -532,7 +535,7 @@ def _add_classes(
 def save_java_objects_to_neo4j(
     db: Optional[GraphDB],
     artifacts: JavaAnalysisArtifacts,
-    project_name: str,
+    project: Project,
     clean: bool,
     logger,
 ) -> JavaAnalysisStats:
@@ -552,6 +555,7 @@ def save_java_objects_to_neo4j(
         artifacts.test_classes,
         artifacts.sql_statements,
     )
+    project_name = project.name or ""
     java_stats.project_name = project_name
 
     if db is None:
@@ -567,18 +571,10 @@ def save_java_objects_to_neo4j(
 
         db = connect_to_neo4j_db(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, logger)
 
-    logger.info("DB 저장 -  project: %s", project_name)
-    project = Project(
-        name=project_name,
-        display_name=project_name,
-        description=f"Java project: {project_name}",
-        repository_url="",
-        language="Java",
-        framework="Spring Boot",
-        version="1.0",
-        ai_description="",
-        created_at=datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3],
-    )
+    logger.info("DB 저장 -  project: %s", project_name or "<unknown>")
+    if not project.created_at:
+        project.created_at = datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
+    project.updated_at = datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
     db.add_project(project)
 
     _add_packages(db, artifacts.packages, project_name, logger)

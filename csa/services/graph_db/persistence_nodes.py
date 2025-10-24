@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import List
+from typing import List, Sequence
 
 from csa.models.graph_entities import JpaEntity, JpaQuery, JpaRepository, MyBatisMapper, SqlStatement
 from csa.services.graph_db.base import GraphDBBase
@@ -59,6 +59,29 @@ class PersistenceMixin:
         if not sql_statements:
             return
         self._execute_write(self._create_sql_statements_batch_tx, sql_statements, project_name)
+
+    def add_mapper_sql_relationships_batch(
+        self,
+        relationships: Sequence[dict[str, str]],
+        project_name: str,
+    ) -> None:
+        """Create mapper-to-SQL relationships in bulk to minimize transaction overhead."""
+        if not relationships:
+            return
+
+        unique_pairs = {
+            (rel.get("mapper_name"), rel.get("sql_id"))
+            for rel in relationships
+            if rel.get("mapper_name") and rel.get("sql_id")
+        }
+        if not unique_pairs:
+            return
+
+        payload = [
+            {"mapper_name": mapper_name, "sql_id": sql_id}
+            for mapper_name, sql_id in unique_pairs
+        ]
+        self._execute_write(self._create_mapper_sql_relationships_batch_tx, payload, project_name)
 
     @staticmethod
     def _create_mybatis_mapper_node_tx(tx, mapper: MyBatisMapper, project_name: str) -> None:
@@ -208,6 +231,24 @@ class PersistenceMixin:
             relationship_query,
             mapper_name=mapper_name,
             sql_id=sql_id,
+            project_name=project_name,
+        )
+
+    @staticmethod
+    def _create_mapper_sql_relationships_batch_tx(
+        tx,
+        relationships: Sequence[dict[str, str]],
+        project_name: str,
+    ) -> None:
+        relationship_query = (
+            "UNWIND $relationships AS rel "
+            "MATCH (m:MyBatisMapper {name: rel.mapper_name, project_name: $project_name}) "
+            "MATCH (s:SqlStatement {id: rel.sql_id, mapper_name: rel.mapper_name, project_name: $project_name}) "
+            "MERGE (m)-[:HAS_SQL_STATEMENT]->(s)"
+        )
+        tx.run(
+            relationship_query,
+            relationships=list(relationships),
             project_name=project_name,
         )
 

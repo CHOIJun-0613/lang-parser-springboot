@@ -16,6 +16,7 @@ from csa.utils.logger import get_logger, set_command_context
 @with_command_lifecycle("analyze")
 @click.option("--java-source-folder", help="Path to Java source folder (default: current directory)")
 @click.option("--project-name", help="Project name (if not provided, extracted from folder name)")
+@click.option("--application-name", help="Application name for the project (optional)")
 @click.option("--db-script-folder", help="Path to database script folder")
 @click.option("--neo4j-uri", default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help="Neo4j URI")
 @click.option("--neo4j-user", default=os.getenv("NEO4J_USER", "neo4j"), help="Neo4j username")
@@ -31,6 +32,7 @@ from csa.utils.logger import get_logger, set_command_context
 def analyze_command(
     java_source_folder,
     project_name,
+    application_name,
     db_script_folder,
     neo4j_uri,
     neo4j_user,
@@ -83,6 +85,7 @@ def analyze_command(
         result = analyze_project(
             java_source_folder=java_source_folder,
             project_name=final_project_name,
+            application_name=application_name,
             db_script_folder=db_script_folder,
             neo4j_uri=neo4j_uri,
             neo4j_user=neo4j_user,

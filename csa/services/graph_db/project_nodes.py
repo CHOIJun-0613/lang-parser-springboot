@@ -28,26 +28,22 @@ class ProjectMixin:
         created_at = project.created_at if project.created_at else current_timestamp
         project_query = (
             "MERGE (p:Project {name: $name}) "
-            "SET p.display_name = $display_name, "
-            "p.description = $description, "
-            "p.repository_url = $repository_url, "
-            "p.language = $language, "
-            "p.framework = $framework, "
-            "p.version = $version, "
+            "SET p.description = $description, "
             "p.ai_description = $ai_description, "
+            "p.application_name = $application_name, "
+            "p.number_of_files = $number_of_files, "
+            "p.path = $path, "
             "p.updated_at = $updated_at, "
             "p.created_at = COALESCE(p.created_at, $created_at)"
         )
         tx.run(
             project_query,
-            name=project.name,
-            display_name=project.display_name or "",
+            name=project.name or "",
             description=project.description or "",
-            repository_url=project.repository_url or "",
-            language=project.language or "Java",
-            framework=project.framework or "",
-            version=project.version or "",
             ai_description=project.ai_description or "",
+            application_name=project.application_name or "",
+            number_of_files=int(project.number_of_files or 0),
+            path=project.path or "",
             updated_at=current_timestamp,
             created_at=created_at,
         )
@@ -260,6 +256,13 @@ class ProjectMixin:
                 interface=interface,
                 class_name=class_node.name,
             )
+        method_records: list[dict[str, Any]] = []
+        method_annotation_records: list[dict[str, str]] = []
+        throws_records: list[dict[str, str]] = []
+        parameter_records: list[dict[str, Any]] = []
+        return_records: list[dict[str, Any]] = []
+        statement_records: list[dict[str, Any]] = []
+
         for method in class_node.methods:
             method_annotations = getattr(method, "annotations", [])
             serialized_annotations: list[dict[str, Any]] = []
@@ -322,33 +325,9 @@ class ProjectMixin:
 
                 serialized_parameters.append(param_serialized)
 
-            method_query = (
-                "MATCH (c:Class {name: $class_name}) "
-                "MERGE (m:Method {name: $method_name, class_name: $class_name}) "
-                "SET m.return_type = $return_type, m.parameters = $parameters_json, "
-                "m.annotations = $annotations_json, m.visibility = $visibility, "
-                "m.description = $description, m.ai_description = $ai_description, "
-                "m.logical_name = $logical_name, "
-                "m.package_name = $package_name, m.project_name = $project_name, "
-                "m.updated_at = $updated_at "
-                "MERGE (c)-[:HAS_METHOD]->(m)"
-            )
             try:
-                tx.run(
-                    method_query,
-                    class_name=class_node.name,
-                    method_name=method.name,
-                    return_type=getattr(method, "return_type", "") or "",
-                    parameters_json=json.dumps(serialized_parameters),
-                    annotations_json=json.dumps(serialized_annotations),
-                    visibility=visibility,
-                    description=getattr(method, "description", "") or "",
-                    ai_description=getattr(method, "ai_description", "") or "",
-                    logical_name=getattr(method, "logical_name", "") or "",
-                    package_name=package_name,
-                    project_name=project_name,
-                    updated_at=current_timestamp,
-                )
+                parameters_json = json.dumps(serialized_parameters)
+                annotations_json = json.dumps(serialized_annotations)
             except (TypeError, ValueError) as exc:
                 logger.error(
                     "Method serialization error: %s.%s -> %s | annotations=%s | parameters=%s",
@@ -359,97 +338,165 @@ class ProjectMixin:
                     serialized_parameters,
                 )
                 raise
-            for exception in getattr(method, "throws", []):
-                throws_query = (
-                    "MATCH (m:Method {name: $method_name, class_name: $class_name}) "
-                    "MERGE (e:Exception {name: $exception}) "
-                    "MERGE (m)-[:THROWS]->(e)"
-                )
-                tx.run(
-                    throws_query,
-                    method_name=method.name,
-                    class_name=class_node.name,
-                    exception=exception,
-                )
+            method_records.append(
+                {
+                    "class_name": class_node.name,
+                    "method_name": method.name,
+                    "package_name": package_name,
+                    "project_name": project_name,
+                    "return_type": getattr(method, "return_type", "") or "",
+                    "parameters_json": parameters_json,
+                    "annotations_json": annotations_json,
+                    "visibility": visibility,
+                    "description": getattr(method, "description", "") or "",
+                    "ai_description": getattr(method, "ai_description", "") or "",
+                    "logical_name": getattr(method, "logical_name", "") or "",
+                    "updated_at": current_timestamp,
+                }
+            )
+
             for annotation in method_annotations:
                 annotation_name = getattr(annotation, "name", str(annotation))
-                method_annotation_query = (
-                    "MATCH (m:Method {name: $method_name, class_name: $class_name}) "
-                    "MERGE (a:Annotation {name: $annotation}) "
-                    "MERGE (m)-[:ANNOTATED_WITH]->(a)"
+                method_annotation_records.append(
+                    {
+                        "method_name": method.name,
+                        "class_name": class_node.name,
+                        "annotation_name": annotation_name,
+                    }
                 )
-                tx.run(
-                    method_annotation_query,
-                    method_name=method.name,
-                    class_name=class_node.name,
-                    annotation=annotation_name,
+            for exception in getattr(method, "throws", []):
+                throws_records.append(
+                    {
+                        "method_name": method.name,
+                        "class_name": class_node.name,
+                        "exception": exception,
+                    }
                 )
             for param_info in serialized_parameters:
-                param_query = (
-                    "MATCH (m:Method {name: $method_name, class_name: $class_name}) "
-                    "MERGE (p:Parameter {name: $param_name, method_name: $method_name, class_name: $class_name}) "
-                    "SET p.type = $param_type, p.description = $param_description, p.ai_description = $param_ai_description, "
-                    "p.package_name = $package_name, p.project_name = $project_name, p.updated_at = $updated_at "
-                    "MERGE (m)-[:HAS_PARAMETER]->(p)"
+                parameter_records.append(
+                    {
+                        "method_name": method.name,
+                        "class_name": class_node.name,
+                        "param_name": param_info["name"],
+                        "param_type": param_info.get("type", ""),
+                        "param_description": param_info.get("description", ""),
+                        "param_ai_description": param_info.get("ai_description", ""),
+                        "package_name": param_info.get("package_name", package_name),
+                        "project_name": project_name,
+                        "updated_at": current_timestamp,
+                    }
                 )
-                try:
-                    tx.run(
-                        param_query,
-                        method_name=method.name,
-                        class_name=class_node.name,
-                        param_name=param_info["name"],
-                        param_type=param_info.get("type", ""),
-                        param_description=param_info.get("description", ""),
-                        param_ai_description=param_info.get("ai_description", ""),
-                        package_name=param_info.get("package_name", package_name),
-                        project_name=project_name,
-                        updated_at=current_timestamp,
-                    )
-                except (TypeError, ValueError) as exc:
-                    logger.error(
-                        "Parameter serialization error: %s.%s(%s) -> %s | data=%s",
-                        class_node.name,
-                        method.name,
-                        param_info["name"],
-                        exc,
-                        param_info,
-                    )
-                    raise
             if getattr(method, "return_type", None):
-                return_query = (
-                    "MATCH (m:Method {name: $method_name, class_name: $class_name}) "
-                    "MERGE (r:ReturnType {name: $return_type, method_name: $method_name, class_name: $class_name}) "
-                    "SET r.description = $return_description, r.ai_description = $return_ai_description, "
-                    "r.package_name = $package_name, r.project_name = $project_name, r.updated_at = $updated_at "
-                    "MERGE (m)-[:RETURNS]->(r)"
-                )
-                tx.run(
-                    return_query,
-                    method_name=method.name,
-                    class_name=class_node.name,
-                    return_type=method.return_type,
-                    return_description=getattr(method, "return_description", "") or "",
-                    return_ai_description=getattr(method, "return_ai_description", "") or "",
-                    package_name=package_name,
-                    project_name=project_name,
-                    updated_at=current_timestamp,
+                return_records.append(
+                    {
+                        "method_name": method.name,
+                        "class_name": class_node.name,
+                        "return_type": method.return_type,
+                        "return_description": getattr(method, "return_description", "") or "",
+                        "return_ai_description": getattr(method, "return_ai_description", "") or "",
+                        "package_name": package_name,
+                        "project_name": project_name,
+                        "updated_at": current_timestamp,
+                    }
                 )
             for statement in getattr(method, "statements", []):
-                statement_query = (
-                    "MATCH (m:Method {name: $method_name, class_name: $class_name}) "
-                    "MERGE (s:Statement {index: $statement_index, method_name: $method_name, class_name: $class_name}) "
-                    "SET s.type = $statement_type, s.content = $statement_content, s.updated_at = $updated_at "
-                    "MERGE (m)-[:HAS_STATEMENT]->(s)"
+                statement_records.append(
+                    {
+                        "method_name": method.name,
+                        "class_name": class_node.name,
+                        "statement_index": getattr(statement, "index", 0),
+                        "statement_type": getattr(statement, "type", ""),
+                        "statement_content": getattr(statement, "content", ""),
+                        "updated_at": current_timestamp,
+                    }
                 )
-                tx.run(
-                    statement_query,
-                    method_name=method.name,
-                    class_name=class_node.name,
-                    statement_index=getattr(statement, "index", 0),
-                    statement_type=getattr(statement, "type", ""),
-                    statement_content=getattr(statement, "content", ""),
-                    updated_at=current_timestamp,
-                )
+
+        if method_records:
+            tx.run(
+                """
+                UNWIND $methods AS m
+                MATCH (c:Class {name: m.class_name, package_name: m.package_name})
+                MERGE (meth:Method {name: m.method_name, class_name: m.class_name})
+                SET meth.return_type = m.return_type,
+                    meth.parameters = m.parameters_json,
+                    meth.annotations = m.annotations_json,
+                    meth.visibility = m.visibility,
+                    meth.description = m.description,
+                    meth.ai_description = m.ai_description,
+                    meth.logical_name = m.logical_name,
+                    meth.package_name = m.package_name,
+                    meth.project_name = m.project_name,
+                    meth.updated_at = m.updated_at
+                MERGE (c)-[:HAS_METHOD]->(meth)
+                """,
+                methods=method_records,
+            )
+        if method_annotation_records:
+            tx.run(
+                """
+                UNWIND $items AS item
+                MATCH (m:Method {name: item.method_name, class_name: item.class_name})
+                MERGE (a:Annotation {name: item.annotation_name})
+                MERGE (m)-[:ANNOTATED_WITH]->(a)
+                """,
+                items=method_annotation_records,
+            )
+        if throws_records:
+            tx.run(
+                """
+                UNWIND $throws AS t
+                MATCH (m:Method {name: t.method_name, class_name: t.class_name})
+                MERGE (e:Exception {name: t.exception})
+                MERGE (m)-[:THROWS]->(e)
+                """,
+                throws=throws_records,
+            )
+        if parameter_records:
+            tx.run(
+                """
+                UNWIND $params AS p
+                MATCH (m:Method {name: p.method_name, class_name: p.class_name})
+                MERGE (par:Parameter {name: p.param_name, method_name: p.method_name, class_name: p.class_name})
+                SET par.type = p.param_type,
+                    par.description = p.param_description,
+                    par.ai_description = p.param_ai_description,
+                    par.package_name = p.package_name,
+                    par.project_name = p.project_name,
+                    par.updated_at = p.updated_at
+                MERGE (m)-[:HAS_PARAMETER]->(par)
+                """,
+                params=parameter_records,
+            )
+        if return_records:
+            tx.run(
+                """
+                UNWIND $returns AS r
+                MATCH (m:Method {name: r.method_name, class_name: r.class_name})
+                MERGE (ret:ReturnType {name: r.return_type, method_name: r.method_name, class_name: r.class_name})
+                SET ret.description = r.return_description,
+                    ret.ai_description = r.return_ai_description,
+                    ret.package_name = r.package_name,
+                    ret.project_name = r.project_name,
+                    ret.updated_at = r.updated_at
+                MERGE (m)-[:RETURNS]->(ret)
+                """,
+                returns=return_records,
+            )
+        if statement_records:
+            tx.run(
+                """
+                UNWIND $statements AS s
+                MATCH (m:Method {name: s.method_name, class_name: s.class_name})
+                MERGE (st:Statement {index: s.statement_index, method_name: s.method_name, class_name: s.class_name})
+                SET st.type = s.statement_type,
+                    st.content = s.statement_content,
+                    st.updated_at = s.updated_at
+                MERGE (m)-[:HAS_STATEMENT]->(st)
+                """,
+                statements=statement_records,
+            )
+
+        field_records: list[dict[str, Any]] = []
         for prop in class_node.properties:
             prop_modifiers_json = json.dumps(prop.modifiers) if prop.modifiers else json.dumps([])
             prop_annotations_json = json.dumps(
@@ -461,35 +508,41 @@ class ProjectMixin:
                     for a in prop.annotations
                 ]
             )
-            prop_query = (
-                "MATCH (c:Class {name: $class_name}) "
-                "MERGE (p:Field {name: $prop_name, class_name: $class_name, project_name: $project_name}) "
-                "SET p.type = $prop_type, "
-                "p.logical_name = $prop_logical_name, "
-                "p.modifiers_json = $prop_modifiers_json, "
-                "p.annotations_json = $prop_annotations_json, "
-                "p.initial_value = $prop_initial_value, "
-                "p.package_name = $package_name, "
-                "p.project_name = $project_name, "
-                "p.description = $prop_description, "
-                "p.ai_description = $prop_ai_description, "
-                "p.updated_at = $updated_at "
-                "MERGE (c)-[:HAS_FIELD]->(p)"
+            field_records.append(
+                {
+                    "class_name": class_node.name,
+                    "prop_name": prop.name,
+                    "prop_type": prop.type,
+                    "prop_logical_name": prop.logical_name or "",
+                    "prop_modifiers_json": prop_modifiers_json,
+                    "prop_annotations_json": prop_annotations_json,
+                    "prop_initial_value": prop.initial_value or "",
+                    "package_name": prop.package_name,
+                    "project_name": project_name,
+                    "prop_description": prop.description or "",
+                    "prop_ai_description": prop.ai_description or "",
+                    "updated_at": current_timestamp,
+                }
             )
+        if field_records:
             tx.run(
-                prop_query,
-                class_name=class_node.name,
-                prop_name=prop.name,
-                prop_type=prop.type,
-                prop_logical_name=prop.logical_name or "",
-                prop_modifiers_json=prop_modifiers_json,
-                prop_annotations_json=prop_annotations_json,
-                prop_initial_value=prop.initial_value or "",
-                package_name=prop.package_name,
-                project_name=project_name,
-                prop_description=prop.description or "",
-                prop_ai_description=prop.ai_description or "",
-                updated_at=current_timestamp,
+                """
+                UNWIND $fields AS f
+                MATCH (c:Class {name: f.class_name})
+                MERGE (p:Field {name: f.prop_name, class_name: f.class_name, project_name: f.project_name})
+                SET p.type = f.prop_type,
+                    p.logical_name = f.prop_logical_name,
+                    p.modifiers_json = f.prop_modifiers_json,
+                    p.annotations_json = f.prop_annotations_json,
+                    p.initial_value = f.prop_initial_value,
+                    p.package_name = f.package_name,
+                    p.project_name = f.project_name,
+                    p.description = f.prop_description,
+                    p.ai_description = f.prop_ai_description,
+                    p.updated_at = f.updated_at
+                MERGE (c)-[:HAS_FIELD]->(p)
+                """,
+                fields=field_records,
             )
         for method_call in class_node.calls:
             if not getattr(method_call, "target_class", "") or not getattr(method_call, "target_method", ""):

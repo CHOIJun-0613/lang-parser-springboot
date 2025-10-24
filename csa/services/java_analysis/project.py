@@ -1161,18 +1161,21 @@ def parse_java_project_streaming(
         stats['mybatis_mappers'] += 1
 
         # XML mapper의 SQL statements 즉시 추출 및 저장
-        from csa.services.analysis.neo4j_writer import _session_scope
         sql_statements = extract_sql_statements_from_mappers([mapper], project_name)
-        for sql_statement in sql_statements:
-            graph_db.add_sql_statement(sql_statement, project_name)
-            with _session_scope(graph_db) as session:
-                session.execute_write(
-                    graph_db._create_mapper_sql_relationship_tx,  # pylint: disable=protected-access
-                    sql_statement.mapper_name,
-                    sql_statement.id,
-                    project_name,
+        if sql_statements:
+            relationships = []
+            for sql_statement in sql_statements:
+                graph_db.add_sql_statement(sql_statement, project_name)
+                relationships.append(
+                    {
+                        "mapper_name": sql_statement.mapper_name,
+                        "sql_id": sql_statement.id,
+                    }
                 )
-            stats['sql_statements'] += 1
+            if relationships:
+                graph_db.add_mapper_sql_relationships_batch(relationships, project_name)
+            stats['sql_statements'] += len(sql_statements)
+
 
     # 3. Config files 처리
     logger.info("Config files 처리 중...")
