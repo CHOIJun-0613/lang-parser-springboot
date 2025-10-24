@@ -39,6 +39,9 @@ def _prepare_database(
     db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
     if clean:
+        # 인덱스는 유지 (MERGE 성능 유지)
+        # clean_database()로 데이터만 삭제되고 인덱스는 남음
+
         if all_objects:
             logger.info("Cleaning all database objects...")
             db.clean_database()
@@ -51,6 +54,12 @@ def _prepare_database(
             logger.info("Cleaning DB objects only...")
             db.clean_db_objects()
             logger.info("DB objects cleaned successfully")
+
+    # 인덱스 확인 및 생성 (없으면 생성, 있으면 건너뜀)
+    # 데이터 저장 전에 실행하여 MERGE 성능 보장
+    logger.info("")
+    db.ensure_indexes()
+    logger.info("")
 
     return db
 
@@ -203,6 +212,8 @@ def analyze_project(
                     clean,
                     logger,
                 )
+
+        # 인덱스는 이미 데이터 저장 전에 생성됨
 
         overall_end_time = datetime.now()
         print_analysis_summary(overall_start_time, overall_end_time, java_stats, db_stats, dry_run, db, project_name)

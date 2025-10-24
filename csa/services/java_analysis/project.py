@@ -1054,6 +1054,33 @@ def parse_java_project_streaming(
     batch_size = int(os.getenv("NEO4J_BATCH_SIZE", "50"))  # 배치 크기
     logger.info(f"병렬 파싱 워커 수: {parallel_workers}, Neo4j 배치 크기: {batch_size}")
 
+    # 0. Package 사전 생성 (성능 최적화)
+    logger.info("Package 정보 수집 중...")
+    package_names = set()
+    package_pattern = re.compile(r'^\s*package\s+([\w.]+)\s*;', re.MULTILINE)
+
+    for file_path in java_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read(500)  # 첫 500자만 읽기 (package는 파일 상단에 위치)
+                match = package_pattern.search(content)
+                if match:
+                    package_names.add(match.group(1))
+        except Exception as e:
+            logger.debug(f"Package 추출 실패 (무시): {file_path} - {e}")
+            continue
+
+    # 모든 Package를 한 번에 생성 (배치 처리)
+    if package_names:
+        logger.info(f"총 {len(package_names)}개 패키지 발견, 배치 생성 중...")
+        package_start = time.time()
+        package_nodes = [Package(name=pkg_name) for pkg_name in package_names]
+        graph_db.add_packages_batch(package_nodes, project_name)
+        packages_saved.update(package_names)
+        stats['packages'] = len(package_names)
+        package_elapsed = time.time() - package_start
+        logger.info(f"Package 배치 생성 완료 ({package_elapsed:.2f}초)")
+
     # 1. 병렬 파일 파싱 + 배치 Neo4j 저장
     logger.info("병렬 파싱 시작...")
     parse_start_time = time.time()
@@ -1098,12 +1125,7 @@ def parse_java_project_streaming(
                         batch_start_time = time.time()
                         logger.debug(f"배치 저장 시작 ({len(parsed_buffer)}개 클래스)")
 
-                        # Package 저장 (개별, 중복 체크 필요)
-                        for package_node, class_node, inner_classes, package_name in parsed_buffer:
-                            if package_name and package_name not in packages_saved:
-                                graph_db.add_package(package_node, project_name)
-                                packages_saved.add(package_name)
-                                stats['packages'] += 1
+                        # Package는 이미 사전 생성되어 있으므로 건너뜀
 
                         # Class 배치 저장 (Top-level + Inner classes)
                         classes_to_save = []
@@ -1118,10 +1140,13 @@ def parse_java_project_streaming(
                                 classes_to_save.append(inner_class)
                                 class_to_package[inner_class.name] = package_name
 
-                        for cls in classes_to_save:
-                            pkg_name = class_to_package.get(cls.name, "")
-                            graph_db.add_class(cls, pkg_name, project_name)
-                            stats['classes'] += 1
+                        # 클래스 배치 저장 (성능 최적화)
+                        classes_batch_data = [
+                            (cls, class_to_package.get(cls.name, ""), project_name)
+                            for cls in classes_to_save
+                        ]
+                        graph_db.add_classes_batch(classes_batch_data)
+                        stats['classes'] += len(classes_to_save)
 
                         # Bean/Endpoint 등 배치 저장
                         from csa.services.analysis.neo4j_writer import add_batch_class_objects_streaming

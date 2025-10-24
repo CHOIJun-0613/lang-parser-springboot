@@ -1,7 +1,38 @@
 from __future__ import annotations
 
+from csa.services.graph_db.indexes import IndexManager
+
+
 class MaintenanceMixin:
     """Provide cleanup helpers for the graph database."""
+
+    def ensure_indexes(self) -> None:
+        """
+        필수 인덱스가 존재하는지 확인하고, 없으면 생성합니다.
+
+        성능 최적화를 위해 analyze 명령 실행 시 자동으로 호출됩니다.
+        """
+        index_manager = IndexManager(self)
+        index_manager.create_all_indexes()
+
+    def list_indexes(self) -> list[dict]:
+        """
+        현재 데이터베이스의 모든 인덱스 조회
+
+        Returns:
+            인덱스 정보 리스트
+        """
+        index_manager = IndexManager(self)
+        return index_manager.list_indexes()
+
+    def drop_all_indexes(self) -> None:
+        """
+        모든 인덱스 및 제약조건 삭제
+
+        WARNING: 개발/테스트 환경에서만 사용하세요!
+        """
+        index_manager = IndexManager(self)
+        index_manager.drop_all_indexes()
 
     def delete_class_and_related_data(self, class_name: str, project_name: str) -> None:
         """Delete a class node and every associated artifact."""

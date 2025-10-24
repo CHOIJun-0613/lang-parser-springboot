@@ -31,3 +31,10 @@ class GraphDBBase:
             if hasattr(session, "write_transaction"):
                 return session.write_transaction(transaction_function, *args, **kwargs)
             return session.execute_write(transaction_function, *args, **kwargs)
+
+    def _execute_read(self, transaction_function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Execute a read transaction against the database."""
+        with self._driver.session(database=self._database) as session:
+            if hasattr(session, "read_transaction"):
+                return session.read_transaction(transaction_function, *args, **kwargs)
+            return session.execute_read(transaction_function, *args, **kwargs)
