@@ -5,7 +5,6 @@ LLM을 사용하여 Class, Method, SQL의 특징을 분석합니다.
 
 import logging
 import re
-from typing import Optional
 
 from .ai_config import ai_config
 from .ai_providers import ai_provider_manager
@@ -161,7 +160,7 @@ class AIAnalyzer:
         # 4. 코드 블록이 없으면 정제된 텍스트 반환
         return cleaned.strip()
 
-    def analyze_class(self, source_code: str, class_name: str = "") -> Optional[str]:
+    def analyze_class(self, source_code: str, class_name: str = "") -> str:
         """
         Java Class 소스 코드를 분석하여 AI description을 생성합니다.
 
@@ -170,10 +169,10 @@ class AIAnalyzer:
             class_name: 클래스명 (로깅용)
 
         Returns:
-            AI 분석 결과 (Markdown 형식) 또는 None
+            AI 분석 결과 (Markdown 형식) 또는 빈 문자열
         """
         if not self.is_available():
-            return None
+            return ""
 
         try:
             prompt = get_prompt("class_doc")
@@ -186,13 +185,13 @@ class AIAnalyzer:
             ai_description = self._clean_response(raw_response)
 
             logger.debug(f"Class AI 분석 완료: {class_name}")
-            return ai_description
+            return ai_description if ai_description else ""
 
         except Exception as e:
             logger.warning(f"Class AI 분석 실패 ({class_name}): {e}")
-            return None
+            return ""
 
-    def analyze_method(self, source_code: str, method_name: str = "") -> Optional[str]:
+    def analyze_method(self, source_code: str, method_name: str = "") -> str:
         """
         Java Method 소스 코드를 분석하여 AI description을 생성합니다.
 
@@ -201,10 +200,10 @@ class AIAnalyzer:
             method_name: 메서드명 (로깅용)
 
         Returns:
-            AI 분석 결과 (Markdown 형식) 또는 None
+            AI 분석 결과 (Markdown 형식) 또는 빈 문자열
         """
         if not self.is_available():
-            return None
+            return ""
 
         try:
             prompt = get_prompt("method_doc")
@@ -217,13 +216,13 @@ class AIAnalyzer:
             ai_description = self._clean_response(raw_response)
 
             logger.debug(f"Method AI 분석 완료: {method_name}")
-            return ai_description
+            return ai_description if ai_description else ""
 
         except Exception as e:
             logger.warning(f"Method AI 분석 실패 ({method_name}): {e}")
-            return None
+            return ""
 
-    def analyze_sql(self, sql_statement: str, sql_id: str = "") -> Optional[str]:
+    def analyze_sql(self, sql_statement: str, sql_id: str = "") -> str:
         """
         SQL 문을 분석하여 AI description을 생성합니다.
 
@@ -232,10 +231,10 @@ class AIAnalyzer:
             sql_id: SQL ID (로깅용)
 
         Returns:
-            AI 분석 결과 (Markdown 형식) 또는 None
+            AI 분석 결과 (Markdown 형식) 또는 빈 문자열
         """
         if not self.is_available():
-            return None
+            return ""
 
         try:
             prompt = get_prompt("sql_doc")
@@ -248,11 +247,11 @@ class AIAnalyzer:
             ai_description = self._clean_response(raw_response)
 
             logger.debug(f"SQL AI 분석 완료: {sql_id}")
-            return ai_description
+            return ai_description if ai_description else ""
 
         except Exception as e:
             logger.warning(f"SQL AI 분석 실패 ({sql_id}): {e}")
-            return None
+            return ""
 
 
 # 전역 AI Analyzer 인스턴스

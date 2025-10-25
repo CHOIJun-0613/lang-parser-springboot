@@ -51,17 +51,18 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
             if sql_content and sql_type:
                 sql_analysis = sql_parser.parse_sql_statement(sql_content, sql_type)
             
-            # AI 분석 수행
+            # AI 분석 수행 (오류 시 빈 문자열 반환)
             sql_ai_description = ""
             if AI_ANALYZER_AVAILABLE and sql_content:
                 try:
                     analyzer = get_ai_analyzer()
                     if analyzer.is_available():
-                        sql_ai_description = analyzer.analyze_sql(sql_content, sql_dict.get('id', '')) or ""
+                        sql_ai_description = analyzer.analyze_sql(sql_content, sql_dict.get('id', ''))
                 except Exception as e:
                     from csa.utils.logger import get_logger
                     logger = get_logger(__name__)
                     logger.warning(f"AI SQL 분석 실패 ({mapper.name}.{sql_dict.get('id', '')}): {e}")
+                    sql_ai_description = ""
 
             sql_statement = SqlStatement(
                 id=sql_dict.get('id', ''),

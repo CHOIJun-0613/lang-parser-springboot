@@ -315,15 +315,16 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
         from csa.parsers.java.description import extract_java_class_description
         class_description = extract_java_class_description(class_annotations, project_name)
 
-        # AI 분석 수행
+        # AI 분석 수행 (오류 시 빈 문자열 반환)
         ai_description = ""
         if AI_ANALYZER_AVAILABLE:
             try:
                 analyzer = get_ai_analyzer()
                 if analyzer.is_available():
-                    ai_description = analyzer.analyze_class(file_content, class_name) or ""
+                    ai_description = analyzer.analyze_class(file_content, class_name)
             except Exception as e:
                 logger.warning(f"AI Class 분석 실패 ({class_name}): {e}")
+                ai_description = ""
 
         class_node = Class(
             name=class_name,
@@ -454,15 +455,16 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             from csa.parsers.java.description import extract_java_method_description
             method_description = extract_java_method_description(method_annotations, project_name)
 
-            # AI 분석 수행
+            # AI 분석 수행 (오류 시 빈 문자열 반환)
             method_ai_description = ""
             if AI_ANALYZER_AVAILABLE and method_source:
                 try:
                     analyzer = get_ai_analyzer()
                     if analyzer.is_available():
-                        method_ai_description = analyzer.analyze_method(method_source, declaration.name) or ""
+                        method_ai_description = analyzer.analyze_method(method_source, declaration.name)
                 except Exception as e:
                     logger.warning(f"AI Method 분석 실패 ({class_name}.{declaration.name}): {e}")
+                    method_ai_description = ""
 
             method = Method(
                 name=declaration.name,
