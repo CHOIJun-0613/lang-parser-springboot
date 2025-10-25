@@ -458,13 +458,14 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             # AI 분석 수행 (오류 시 빈 문자열 반환)
             method_ai_description = ""
             if AI_ANALYZER_AVAILABLE and method_source:
-                try:
-                    analyzer = get_ai_analyzer()
-                    if analyzer.is_available():
-                        method_ai_description = analyzer.analyze_method(method_source, declaration.name)
-                except Exception as e:
-                    logger.warning(f"AI Method 분석 실패 ({class_name}.{declaration.name}): {e}")
-                    method_ai_description = ""
+                analyzer = get_ai_analyzer()
+                if analyzer.is_available():
+                    # class_name도 함께 전달하여 로그에 Class.Method 형식으로 표시
+                    method_ai_description = analyzer.analyze_method(
+                        method_source,
+                        method_name=declaration.name,
+                        class_name=class_name
+                    )
 
             method = Method(
                 name=declaration.name,

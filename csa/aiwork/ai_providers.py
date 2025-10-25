@@ -77,16 +77,19 @@ class GoogleAIProvider(BaseAIProvider):
 
         # Google GenAI Wrapper 클래스
         class GoogleGenAIWrapper:
-            def __init__(self, model_name):
+            def __init__(self, model_name, api_key):
                 self.model_name = model_name
-                self.client = genai.Client()
+                self.api_key = api_key
+                # API 키를 명시적으로 전달
+                self.client = genai.Client(api_key=self.api_key)
 
             def __call__(self, prompt):
                 """직접 호출 시 genai.Client 사용"""
                 try:
+                    # contents는 문자열로 직접 전달 (리스트 아님)
                     response = self.client.models.generate_content(
                         model=self.model_name,
-                        contents=[prompt]
+                        contents=prompt
                     )
                     return response.text
                 except APIError as e:
@@ -94,7 +97,7 @@ class GoogleAIProvider(BaseAIProvider):
                 except Exception as e:
                     raise RuntimeError(f"Gemini 알 수 없는 오류: {e}")
 
-        return GoogleGenAIWrapper(model_name=self.model_name)
+        return GoogleGenAIWrapper(model_name=self.model_name, api_key=self.api_key)
 
     def is_available(self) -> bool:
         """Google Gemini가 사용 가능한지 확인합니다."""
