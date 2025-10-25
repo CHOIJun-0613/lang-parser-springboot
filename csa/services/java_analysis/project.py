@@ -53,6 +53,14 @@ from .utils import (
     parse_annotations,
 )
 
+# AI 분석 서비스
+try:
+    from csa.aiwork.ai_analyzer import get_ai_analyzer
+    AI_ANALYZER_AVAILABLE = True
+except ImportError:
+    AI_ANALYZER_AVAILABLE = False
+    get_ai_analyzer = None
+
 def extract_inner_class_source(inner_class_declaration: javalang.tree.ClassDeclaration, file_content: str) -> str:
     """
     Inner class의 선언부 소스 코드 추출
@@ -307,6 +315,16 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
         from csa.parsers.java.description import extract_java_class_description
         class_description = extract_java_class_description(class_annotations, project_name)
 
+        # AI 분석 수행
+        ai_description = ""
+        if AI_ANALYZER_AVAILABLE:
+            try:
+                analyzer = get_ai_analyzer()
+                if analyzer.is_available():
+                    ai_description = analyzer.analyze_class(file_content, class_name) or ""
+            except Exception as e:
+                logger.warning(f"AI Class 분석 실패 ({class_name}): {e}")
+
         class_node = Class(
             name=class_name,
             logical_name=class_logical_name if class_logical_name else "",
@@ -318,9 +336,9 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             package_name=package_name,
             project_name=project_name,
             description=class_description if class_description else "",
-            ai_description=""
+            ai_description=ai_description
         )
-        
+
         # imports 추가
         for imp in tree.imports:
             class_node.imports.append(imp.path)
@@ -436,6 +454,16 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
             from csa.parsers.java.description import extract_java_method_description
             method_description = extract_java_method_description(method_annotations, project_name)
 
+            # AI 분석 수행
+            method_ai_description = ""
+            if AI_ANALYZER_AVAILABLE and method_source:
+                try:
+                    analyzer = get_ai_analyzer()
+                    if analyzer.is_available():
+                        method_ai_description = analyzer.analyze_method(method_source, declaration.name) or ""
+                except Exception as e:
+                    logger.warning(f"AI Method 분석 실패 ({class_name}.{declaration.name}): {e}")
+
             method = Method(
                 name=declaration.name,
                 logical_name=method_logical_name if method_logical_name else "",
@@ -446,6 +474,7 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
                 package_name=package_name,
                 annotations=method_annotations,
                 description=method_description if method_description else "",
+                ai_description=method_ai_description,
                 calls=[]  # 명시적으로 calls 속성 초기화
             )
             

@@ -8,21 +8,22 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 
-# Google ADK 모델들
+# Google GenAI (최신 google-genai 라이브러리)
 try:
-    from google.adk.models.google_llm import Gemini
+    from google import genai
+    from google.genai.errors import APIError
     GOOGLE_LLM_AVAILABLE = True
 except ImportError:
-    # Gemini가 없는 경우 플래그로 관리
-    Gemini = None
+    genai = None
+    APIError = None
     GOOGLE_LLM_AVAILABLE = False
 
+# LiteLLM (순수 litellm 라이브러리 사용)
 try:
-    from google.adk.models.lite_llm import LiteLlm
+    import litellm
     LITE_LLM_AVAILABLE = True
 except ImportError:
-    # LiteLlm이 없는 경우 플래그로 관리
-    LiteLlm = None
+    litellm = None
     LITE_LLM_AVAILABLE = False
 
 # AI 설정
@@ -57,125 +58,189 @@ class BaseAIProvider(ABC):
         pass
 
 class GoogleAIProvider(BaseAIProvider):
-    """Google Gemini AI Provider"""
-    
+    """Google Gemini AI Provider (google-genai 라이브러리 사용)"""
+
     def __init__(self):
         self.api_key = ai_config.google_api_key
         self.model_name = ai_config.gemini_model_name
-    
+
     def create_llm(self):
         """Google Gemini LLM을 생성합니다."""
         if not self.is_available():
             raise ValueError("Google API 키가 설정되지 않았습니다.")
-        
+
         if not GOOGLE_LLM_AVAILABLE:
-            raise ImportError("Gemini 모듈을 사용할 수 없습니다. google-adk 패키지를 설치해주세요.")
-        
-        # 환경변수 설정 (Gemini이 자동으로 읽음)
-        os.environ["GOOGLE_API_KEY"] = self.api_key
-        
-        return Gemini(
-            model_name=self.model_name,
-            temperature=0.1
-        )
-    
+            raise ImportError("google-genai 모듈을 사용할 수 없습니다. google-genai 패키지를 설치해주세요.")
+
+        # 환경변수 설정 (genai.Client가 자동으로 읽음)
+        os.environ["GEMINI_API_KEY"] = self.api_key
+
+        # Google GenAI Wrapper 클래스
+        class GoogleGenAIWrapper:
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.client = genai.Client()
+
+            def __call__(self, prompt):
+                """직접 호출 시 genai.Client 사용"""
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=[prompt]
+                    )
+                    return response.text
+                except APIError as e:
+                    raise RuntimeError(f"Gemini API 호출 오류: {e}")
+                except Exception as e:
+                    raise RuntimeError(f"Gemini 알 수 없는 오류: {e}")
+
+        return GoogleGenAIWrapper(model_name=self.model_name)
+
     def is_available(self) -> bool:
         """Google Gemini가 사용 가능한지 확인합니다."""
         return self.api_key is not None and GOOGLE_LLM_AVAILABLE
-    
+
     def get_model_name(self) -> str:
         """모델명을 반환합니다."""
         return self.model_name
 
 class GroqAIProvider(BaseAIProvider):
     """Groq AI Provider"""
-    
+
     def __init__(self):
         self.api_key = ai_config.groq_api_key
         self.model_name = ai_config.groq_model_name
-    
+
     def create_llm(self):
         """Groq LLM을 생성합니다."""
         if not self.is_available():
             raise ValueError("Groq API 키가 설정되지 않았습니다.")
-        
+
         if not LITE_LLM_AVAILABLE:
-            raise ImportError("LiteLlm 모듈을 사용할 수 없습니다. lite-llm 패키지를 설치해주세요.")
-        
-        # LiteLlm을 통해 Groq 연결
-        return LiteLlm(
+            raise ImportError("litellm 모듈을 사용할 수 없습니다. litellm 패키지를 설치해주세요.")
+
+        # 순수 litellm을 사용하여 Groq 연결
+        # LiteLLM Wrapper 객체 반환
+        class LiteLLMWrapper:
+            def __init__(self, model, api_key):
+                self.model = model
+                self.api_key = api_key
+
+            def __call__(self, prompt):
+                """직접 호출 시 litellm.completion 사용"""
+                response = litellm.completion(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    api_key=self.api_key,
+                    temperature=0.1
+                )
+                return response.choices[0].message.content
+
+        return LiteLLMWrapper(
             model=f"groq/{self.model_name}",
-            api_key=self.api_key,
-            temperature=0.1
+            api_key=self.api_key
         )
-    
+
     def is_available(self) -> bool:
         """Groq가 사용 가능한지 확인합니다."""
         return self.api_key is not None and LITE_LLM_AVAILABLE
-    
+
     def get_model_name(self) -> str:
         """모델명을 반환합니다."""
         return self.model_name
 
 class LMStudioAIProvider(BaseAIProvider):
     """LM Studio AI Provider"""
-    
+
     def __init__(self):
         self.base_url = ai_config.lmstudio_base_url
         self.model_name = ai_config.lmstudio_qwen_model_name
-    
+
     def create_llm(self):
         """LM Studio LLM을 생성합니다."""
         if not self.is_available():
             raise ValueError("LM Studio가 설정되지 않았습니다.")
-        
+
         if not LITE_LLM_AVAILABLE:
-            raise ImportError("LiteLlm 모듈을 사용할 수 없습니다. lite-llm 패키지를 설치해주세요.")
-        
-        # LiteLlm을 통해 LM Studio 연결
-        return LiteLlm(
+            raise ImportError("litellm 모듈을 사용할 수 없습니다. litellm 패키지를 설치해주세요.")
+
+        # 순수 litellm을 사용하여 LM Studio 연결
+        # LiteLLM Wrapper 객체 반환
+        class LiteLLMWrapper:
+            def __init__(self, model, base_url):
+                self.model = model
+                self.base_url = base_url
+
+            def __call__(self, prompt):
+                """직접 호출 시 litellm.completion 사용"""
+                response = litellm.completion(
+                    model=f"openai/{self.model}",
+                    messages=[{"role": "user", "content": prompt}],
+                    api_base=self.base_url,
+                    api_key="lm-studio",  # Dummy key
+                    temperature=0.1
+                )
+                return response.choices[0].message.content
+
+        return LiteLLMWrapper(
             model=self.model_name,
-            base_url=self.base_url,
-            temperature=0.1
+            base_url=self.base_url
         )
-    
+
     def is_available(self) -> bool:
         """LM Studio가 사용 가능한지 확인합니다."""
-        # LM Studio는 로컬에서 실행되므로 LiteLlm만 사용 가능한지 확인
+        # LM Studio는 로컬에서 실행되므로 litellm만 사용 가능한지 확인
         return LITE_LLM_AVAILABLE
-    
+
     def get_model_name(self) -> str:
         """모델명을 반환합니다."""
         return self.model_name
 
 class OpenAIProvider(BaseAIProvider):
     """OpenAI AI Provider"""
-    
+
     def __init__(self):
         self.api_key = ai_config.openai_api_key
         self.model_name = ai_config.openai_model_name
         self.base_url = ai_config.openai_base_url
-    
+
     def create_llm(self):
         """OpenAI LLM을 생성합니다."""
         if not self.is_available():
             raise ValueError("OpenAI API 키가 설정되지 않았습니다.")
-        
+
         if not LITE_LLM_AVAILABLE:
-            raise ImportError("LiteLlm 모듈을 사용할 수 없습니다. lite-llm 패키지를 설치해주세요.")
-        
-        # LiteLlm을 통해 Ollama 연결 (OpenAI 호환 API)
-        return LiteLlm(
-            model=f"openai/{self.model_name}",
-            api_key=self.api_key or "dummy-key",  # Ollama는 API 키가 필요 없지만 LiteLlm에서 요구
+            raise ImportError("litellm 모듈을 사용할 수 없습니다. litellm 패키지를 설치해주세요.")
+
+        # 순수 litellm을 사용하여 OpenAI/Ollama 연결
+        # LiteLLM Wrapper 객체 반환
+        class LiteLLMWrapper:
+            def __init__(self, model, base_url, api_key):
+                self.model = model
+                self.base_url = base_url
+                self.api_key = api_key
+
+            def __call__(self, prompt):
+                """직접 호출 시 litellm.completion 사용"""
+                response = litellm.completion(
+                    model=f"openai/{self.model}",
+                    messages=[{"role": "user", "content": prompt}],
+                    api_base=self.base_url,
+                    api_key=self.api_key or "dummy-key",
+                    temperature=0.1
+                )
+                return response.choices[0].message.content
+
+        return LiteLLMWrapper(
+            model=self.model_name,
             base_url=self.base_url,
-            temperature=0.1
+            api_key=self.api_key
         )
-    
+
     def is_available(self) -> bool:
         """OpenAI가 사용 가능한지 확인합니다."""
         return self.api_key is not None and LITE_LLM_AVAILABLE
-    
+
     def get_model_name(self) -> str:
         """모델명을 반환합니다."""
         return self.model_name

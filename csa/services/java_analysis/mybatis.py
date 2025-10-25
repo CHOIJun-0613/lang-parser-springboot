@@ -19,6 +19,14 @@ from csa.services.graph_db import GraphDB
 from csa.services.sql_parser import SQLParser
 from csa.utils.logger import get_logger
 
+# AI 분석 서비스
+try:
+    from csa.aiwork.ai_analyzer import get_ai_analyzer
+    AI_ANALYZER_AVAILABLE = True
+except ImportError:
+    AI_ANALYZER_AVAILABLE = False
+    get_ai_analyzer = None
+
 
 def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], project_name: str) -> list[SqlStatement]:
     """
@@ -43,6 +51,18 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
             if sql_content and sql_type:
                 sql_analysis = sql_parser.parse_sql_statement(sql_content, sql_type)
             
+            # AI 분석 수행
+            sql_ai_description = ""
+            if AI_ANALYZER_AVAILABLE and sql_content:
+                try:
+                    analyzer = get_ai_analyzer()
+                    if analyzer.is_available():
+                        sql_ai_description = analyzer.analyze_sql(sql_content, sql_dict.get('id', '')) or ""
+                except Exception as e:
+                    from csa.utils.logger import get_logger
+                    logger = get_logger(__name__)
+                    logger.warning(f"AI SQL 분석 실패 ({mapper.name}.{sql_dict.get('id', '')}): {e}")
+
             sql_statement = SqlStatement(
                 id=sql_dict.get('id', ''),
                 logical_name=sql_dict.get('logical_name', ''),
@@ -54,7 +74,8 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
                 mapper_name=mapper.name,
                 namespace=mapper.namespace,  # namespace 추가
                 annotations=[],
-                project_name=project_name
+                project_name=project_name,
+                ai_description=sql_ai_description
             )
 
             if sql_analysis:
