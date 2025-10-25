@@ -23,7 +23,7 @@ from csa.aiwork.ai_config import ai_config
 import logging
 
 # DEBUG 로그 레벨 설정
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)s - %(name)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(name)s - %(message)s')
 
 
 def test_ai_config():

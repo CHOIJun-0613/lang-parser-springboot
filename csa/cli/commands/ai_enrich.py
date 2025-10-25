@@ -31,9 +31,16 @@ def _ensure_password() -> str | None:
     help="Node type to enrich (default: all)",
 )
 @click.option(
+    "--concurrent",
+    default=None,
+    type=int,
+    help="Number of concurrent AI requests (default: CONCURRENT_AI_REQUESTS env var or 10)",
+)
+@click.option(
     "--batch-size",
-    default=int(os.getenv("AI_ENRICHMENT_BATCH_SIZE", "50")),
-    help="Batch size for processing (default: 50 or AI_ENRICHMENT_BATCH_SIZE env var)",
+    default=None,
+    type=int,
+    help="Deprecated: use --concurrent instead",
 )
 @click.option(
     "--limit",
@@ -42,8 +49,8 @@ def _ensure_password() -> str | None:
     help="Maximum number of nodes to process (default: all)",
 )
 @with_command_lifecycle("ai-enrich")
-def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_type, batch_size, limit):
-    """Add AI-generated descriptions to existing Neo4j nodes without ai_description."""
+def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_type, concurrent, batch_size, limit):
+    """Add AI-generated descriptions to existing Neo4j nodes without ai_description (with async parallel processing)."""
 
     # 명령어 실행 직전에 컨텍스트 설정
     set_command_context("ai-enrich")
@@ -69,15 +76,24 @@ def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_
         click.echo(result["error"])
         return result
 
+    # concurrent 옵션 결정 (하위 호환성)
+    if concurrent is None and batch_size is not None:
+        concurrent = batch_size
+        logger.warning("--batch-size is deprecated. Use --concurrent instead.")
+
+    # concurrent가 여전히 None이면 환경변수 또는 기본값 사용
+    if concurrent is None:
+        concurrent = int(os.getenv("CONCURRENT_AI_REQUESTS", "10"))
+
     try:
         db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
         click.echo("=" * 80)
-        click.echo("AI Enrichment - Add AI descriptions to existing nodes")
+        click.echo("AI Enrichment - Add AI descriptions to existing nodes (Async Parallel Processing)")
         click.echo("=" * 80)
         click.echo(f"Project: {project_name}")
         click.echo(f"Node type: {node_type}")
-        click.echo(f"Batch size: {batch_size}")
+        click.echo(f"Concurrent requests: {concurrent}")
         if limit:
             click.echo(f"Limit: {limit} nodes")
         click.echo("")
@@ -92,7 +108,7 @@ def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_
         stats = enrichment_service.enrich_project(
             project_name=project_name,
             node_type=node_type,
-            batch_size=batch_size,
+            batch_size=concurrent,
             limit=limit
         )
 

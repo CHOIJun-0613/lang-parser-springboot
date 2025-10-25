@@ -282,7 +282,7 @@ JAVA_PARSE_WORKERS=8                    # 병렬 워커 수 (기본값: 8)
 # AI 분석 설정 (선택사항)
 AI_USE_ANALYSIS=true                    # AI 분석 활성화 (기본값: false)
 SKIP_AI_ANALYSIS=false                  # AI 분석 건너뛰기 (--skip-ai 옵션으로도 설정 가능)
-AI_ENRICHMENT_BATCH_SIZE=50             # AI enrichment 배치 크기 (기본값: 50)
+CONCURRENT_AI_REQUESTS=10               # AI enrichment 동시 요청 수 (기본값: 10, 로컬: 10-20, 클라우드: 5-10)
 AI_PROVIDER=lmstudio                    # AI provider (google, groq, lmstudio, openai)
 
 # 외부 도구 경로 (선택사항)
@@ -346,18 +346,22 @@ python -m csa.cli.main ai-enrich --project-name myproject --node-type method
 # SQL 노드만 AI enrichment
 python -m csa.cli.main ai-enrich --project-name myproject --node-type sql
 
-# 배치 크기 조절 (Rate Limit 회피)
-python -m csa.cli.main ai-enrich --project-name myproject --batch-size 20
+# 동시 요청 수 조절 (비동기 병렬 처리, 성능 향상)
+python -m csa.cli.main ai-enrich --project-name myproject --concurrent 20
 
 # 최대 처리 노드 수 제한
 python -m csa.cli.main ai-enrich --project-name myproject --limit 100
+
+# 로컬 LLM (LM Studio) 사용 시 권장 설정
+python -m csa.cli.main ai-enrich --project-name myproject --concurrent 15
 ```
 
 **옵션 설명:**
 - `--project-name`: 프로젝트명 (필수)
 - `--node-type`: 처리할 노드 타입 (all, class, method, sql, 기본값: all)
-- `--batch-size`: 배치 크기 (기본값: 50 또는 AI_ENRICHMENT_BATCH_SIZE)
+- `--concurrent`: 동시 AI 요청 수 (기본값: 10 또는 CONCURRENT_AI_REQUESTS, 로컬: 10-20, 클라우드: 5-10)
 - `--limit`: 최대 처리 노드 수 (기본값: 전체)
+- `--batch-size`: (deprecated) --concurrent 사용 권장
 
 **사용 시나리오:**
 1. Phase 1: `analyze --skip-ai`로 빠르게 파싱
