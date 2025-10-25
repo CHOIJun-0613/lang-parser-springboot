@@ -200,6 +200,37 @@ Neo4j 데이터 쿼리
 output/sequence-diagram/ 에 저장
 ```
 
+#### 6. **AI 분석 2-Phase 아키텍처 (성능 최적화)**
+```
+Phase 1: 빠른 파싱 (--skip-ai 옵션)
+analyze 명령어 → SKIP_AI_ANALYSIS=true 설정
+    ↓
+Java/DB 파싱 (AI 분석 건너뜀)
+    ↓
+Neo4j에 저장 (ai_description은 빈 문자열)
+    ↓
+파싱 완료 (빠른 속도)
+
+Phase 2: AI Enrichment (선택적 실행)
+ai-enrich 명령어
+    ↓
+Neo4j에서 ai_description 없는 노드 조회
+    ↓
+배치 처리로 AI 분석 (진행률 표시)
+    │
+    ├─→ Class AI 분석 → ai_description 업데이트
+    ├─→ Method AI 분석 → ai_description 업데이트
+    └─→ SQL AI 분석 → ai_description 업데이트
+    ↓
+Neo4j 업데이트 (ai_description 채움)
+```
+
+**장점:**
+- 파싱 속도 향상 (LLM API 호출 제거)
+- 더 나은 LLM 모델 사용 가능 (성능 영향 없음)
+- 필요한 노드만 선택적 AI 분석
+- Rate Limit 회피 (배치 크기 조절)
+
 ### Neo4j 그래프 모델
 
 - **프로젝트 노드**: `Project`
@@ -248,6 +279,12 @@ CRUD_MATRIX_OUTPUT_DIR=./output/crud-matrix
 USE_STREAMING_PARSE=true                # 스트리밍 모드 활성화 (대규모 프로젝트용)
 JAVA_PARSE_WORKERS=8                    # 병렬 워커 수 (기본값: 8)
 
+# AI 분석 설정 (선택사항)
+AI_USE_ANALYSIS=true                    # AI 분석 활성화 (기본값: false)
+SKIP_AI_ANALYSIS=false                  # AI 분석 건너뛰기 (--skip-ai 옵션으로도 설정 가능)
+AI_ENRICHMENT_BATCH_SIZE=50             # AI enrichment 배치 크기 (기본값: 50)
+AI_PROVIDER=lmstudio                    # AI provider (google, groq, lmstudio, openai)
+
 # 외부 도구 경로 (선택사항)
 MMDC_PATH=/path/to/mmdc                 # Mermaid CLI 경로
 ```
@@ -277,6 +314,9 @@ python -m csa.cli.main analyze --java-object --dry-run
 
 # 병렬 처리 워커 수 지정
 python -m csa.cli.main analyze --all-objects --project-name myproject
+
+# AI 분석 건너뛰기 (빠른 파싱, Phase 1)
+python -m csa.cli.main analyze --all-objects --clean --skip-ai --project-name myproject
 ```
 
 **옵션 설명:**
@@ -285,10 +325,44 @@ python -m csa.cli.main analyze --all-objects --project-name myproject
 - `--db-object`: DB 스키마만 분석
 - `--clean`: 기존 프로젝트 노드 삭제 후 재분석
 - `--update`: 기존 데이터 유지하고 새로운 항목만 추가
+- `--skip-ai`: AI 분석 건너뛰기 (빠른 파싱, 나중에 ai-enrich로 보완)
 - 병렬 처리는 `.env`의 `JAVA_PARSE_WORKERS` 등 환경 변수로 제어합니다.
 - `--class-name <이름>`: 특정 클래스만 분석
 - `--project-name <이름>`: Neo4j에 저장할 프로젝트명
 - `--dry-run`: Neo4j 연결 없이 파싱만 수행
+
+### AI Enrichment (Phase 2)
+
+```bash
+# 모든 노드 타입에 AI 설명 추가
+python -m csa.cli.main ai-enrich --project-name myproject
+
+# Class 노드만 AI enrichment
+python -m csa.cli.main ai-enrich --project-name myproject --node-type class
+
+# Method 노드만 AI enrichment
+python -m csa.cli.main ai-enrich --project-name myproject --node-type method
+
+# SQL 노드만 AI enrichment
+python -m csa.cli.main ai-enrich --project-name myproject --node-type sql
+
+# 배치 크기 조절 (Rate Limit 회피)
+python -m csa.cli.main ai-enrich --project-name myproject --batch-size 20
+
+# 최대 처리 노드 수 제한
+python -m csa.cli.main ai-enrich --project-name myproject --limit 100
+```
+
+**옵션 설명:**
+- `--project-name`: 프로젝트명 (필수)
+- `--node-type`: 처리할 노드 타입 (all, class, method, sql, 기본값: all)
+- `--batch-size`: 배치 크기 (기본값: 50 또는 AI_ENRICHMENT_BATCH_SIZE)
+- `--limit`: 최대 처리 노드 수 (기본값: 전체)
+
+**사용 시나리오:**
+1. Phase 1: `analyze --skip-ai`로 빠르게 파싱
+2. Phase 2: `ai-enrich`로 선택적으로 AI 설명 추가
+3. Rate Limit 발생 시 `--batch-size`로 조절하여 재시도
 
 ### 시퀀스 다이어그램 생성
 

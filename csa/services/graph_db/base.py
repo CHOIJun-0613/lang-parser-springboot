@@ -16,6 +16,16 @@ class GraphDBBase:
         self._database = database
         self.logger = get_logger(__name__)
 
+    @property
+    def driver(self) -> Driver:
+        """Return the Neo4j driver instance."""
+        return self._driver
+
+    @property
+    def database(self) -> str:
+        """Return the database name."""
+        return self._database
+
     @staticmethod
     def _get_current_timestamp() -> str:
         """Return current timestamp formatted as YYYY/MM/DD HH24:Mi:SS.sss."""

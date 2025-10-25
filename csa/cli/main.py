@@ -8,6 +8,7 @@ from csa.utils.logger import set_command_context
 # Ensure project root is on sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from csa.cli.commands.ai_enrich import register as register_ai_enrich
 from csa.cli.commands.analyze import register as register_analyze
 from csa.cli.commands.class_spec import register as register_class_spec
 from csa.cli.commands.crud import register as register_crud_commands
@@ -43,6 +44,7 @@ register_db_commands(cli)
 register_analyze(cli)
 register_class_spec(cli)
 register_impact(cli)
+register_ai_enrich(cli)
 
 
 if __name__ == "__main__":

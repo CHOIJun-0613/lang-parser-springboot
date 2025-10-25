@@ -52,8 +52,10 @@ def extract_sql_statements_from_mappers(mybatis_mappers: list[MyBatisMapper], pr
                 sql_analysis = sql_parser.parse_sql_statement(sql_content, sql_type)
             
             # AI 분석 수행 (오류 시 빈 문자열 반환)
+            # AI 분석 수행 (SKIP_AI_ANALYSIS 환경변수 확인)
             sql_ai_description = ""
-            if AI_ANALYZER_AVAILABLE and sql_content:
+            skip_ai = os.getenv("SKIP_AI_ANALYSIS", "false").lower() == "true"
+            if not skip_ai and AI_ANALYZER_AVAILABLE and sql_content:
                 try:
                     analyzer = get_ai_analyzer()
                     if analyzer.is_available():

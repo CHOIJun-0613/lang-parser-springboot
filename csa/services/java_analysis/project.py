@@ -317,7 +317,9 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
 
         # AI 분석 수행 (오류 시 빈 문자열 반환)
         ai_description = ""
-        if AI_ANALYZER_AVAILABLE:
+        # AI 분석 수행 (SKIP_AI_ANALYSIS 환경변수 확인)
+        skip_ai = os.getenv("SKIP_AI_ANALYSIS", "false").lower() == "true"
+        if not skip_ai and AI_ANALYZER_AVAILABLE:
             try:
                 analyzer = get_ai_analyzer()
                 if analyzer.is_available():
@@ -457,7 +459,9 @@ def parse_single_java_file(file_path: str, project_name: str, graph_db: GraphDB 
 
             # AI 분석 수행 (오류 시 빈 문자열 반환)
             method_ai_description = ""
-            if AI_ANALYZER_AVAILABLE and method_source:
+            # SKIP_AI_ANALYSIS 환경 변수 확인
+            skip_ai = os.getenv("SKIP_AI_ANALYSIS", "false").lower() == "true"
+            if not skip_ai and AI_ANALYZER_AVAILABLE and method_source:
                 analyzer = get_ai_analyzer()
                 if analyzer.is_available():
                     # class_name도 함께 전달하여 로그에 Class.Method 형식으로 표시

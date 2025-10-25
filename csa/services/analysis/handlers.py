@@ -120,6 +120,7 @@ def analyze_project(
     class_name: Optional[str],
     update: bool,
     logger,
+    skip_ai: bool = False,  # backward compatibility
 ) -> Dict[str, object]:
     """Analyze project artifacts and optionally persist them into Neo4j."""
     overall_start_time = datetime.now()
