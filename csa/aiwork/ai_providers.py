@@ -157,7 +157,7 @@ class LMStudioAIProvider(BaseAIProvider):
 
     def __init__(self):
         self.base_url = ai_config.lmstudio_base_url
-        self.model_name = ai_config.lmstudio_qwen_model_name
+        self.model_name = ai_config.lmstudio_model_name
 
     def create_llm(self):
         """LM Studio LLM을 생성합니다."""

@@ -31,7 +31,7 @@ class AIConfig:
 
         # LM Studio 설정
         self.lmstudio_base_url = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-        self.lmstudio_qwen_model_name = os.getenv("LMSTUDIO_QWEN_MODEL_NAME", "lm_studio/qwen/qwen3-8b")
+        self.lmstudio_model_name = os.getenv("LMSTUDIO_MODEL_NAME", "lm_studio/qwen/qwen3-8b")
 
 
         # OpenAI 설정
@@ -47,7 +47,7 @@ class AIConfig:
         if self.ai_provider == "groq":
             return self.groq_model_name
         elif self.ai_provider == "lmstudio":
-            return self.lmstudio_qwen_model_name
+            return self.lmstudio_model_name
         elif self.ai_provider == "openai":
             return self.openai_model_name
         else:  # google (기본값)
