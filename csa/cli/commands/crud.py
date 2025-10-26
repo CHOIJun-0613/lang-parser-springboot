@@ -187,32 +187,24 @@ def table_summary_command(neo4j_uri, neo4j_user, project_name, output_file, auto
     if not neo4j_password:
         return
 
-    driver = None
     try:
         neo4j_database = os.getenv("NEO4J_DATABASE", "neo4j")
-        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
-        analysis_service = DBCallAnalysisService(driver)
+        db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
         logger.info("Table Summary Analysis")
         logger.info("=" * 50)
 
-        result = analysis_service.get_table_summary(project_name)
+        table_summary = db.get_table_crud_summary(project_name)
 
-        if auto_create_relationships and ("error" in result or not result.get("table_summary")):
+        if auto_create_relationships and not table_summary:
             logger.info("No table summary found. Creating Method-SqlStatement relationships...")
-            graph_db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
-            relationships_created = graph_db.create_method_sql_relationships(project_name)
+            relationships_created = db.create_method_sql_relationships(project_name)
             if relationships_created:
                 logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
-                result = analysis_service.get_table_summary(project_name)
+                table_summary = db.get_table_crud_summary(project_name)
             else:
                 logger.info("No relationships could be created.")
 
-        if "error" in result:
-            logger.error(f"Error: {result['error']}")
-            return
-
-        table_summary = result.get("table_summary", [])
         if not table_summary:
             logger.info("No table summary data available.")
             return
@@ -231,14 +223,12 @@ def table_summary_command(neo4j_uri, neo4j_user, project_name, output_file, auto
             )
 
         if output_file:
+            result = {"project_name": project_name, "table_summary": table_summary}
             with open(output_file, "w", encoding="utf-8") as file:
                 json.dump(result, file, indent=2, ensure_ascii=False)
             logger.info(f"\nSummary saved to: {output_file}")
     except Exception as exc:  # pylint: disable=broad-except
         logger.error(f"Error generating table summary: {exc}")
-    finally:
-        if driver:
-            driver.close()
 
 
 @click.command(name="crud-analysis")
@@ -341,30 +331,27 @@ def crud_visualization_command(
     if not neo4j_password:
         return
 
-    driver = None
     try:
         neo4j_database = os.getenv("NEO4J_DATABASE", "neo4j")
-        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
-        analysis_service = DBCallAnalysisService(driver)
+        db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
         logger.info("CRUD Matrix Visualization")
         logger.info("=" * 50)
         logger.info(f"Generating {output_format.upper()} visualization for project: {project_name}")
 
-        result = analysis_service.generate_crud_matrix(project_name)
+        matrix = db.get_crud_matrix(project_name)
 
-        if auto_create_relationships and ("error" in result or not result.get("class_matrix")):
+        if auto_create_relationships and not matrix:
             logger.info("No CRUD data found. Creating Method-SqlStatement relationships...")
-            graph_db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
-            relationships_created = graph_db.create_method_sql_relationships(project_name)
+            relationships_created = db.create_method_sql_relationships(project_name)
             if relationships_created:
                 logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
-                result = analysis_service.generate_crud_matrix(project_name)
+                matrix = db.get_crud_matrix(project_name)
             else:
                 logger.info("No relationships could be created.")
 
-        if "error" in result or not result.get("class_matrix"):
-            logger.error(f"Error: {result.get('error', 'No CRUD data found')}")
+        if not matrix:
+            logger.error("Error: No CRUD data found")
             return
 
         output_dir = os.getenv("CRUD_MATRIX_OUTPUT_DIR", "./output/crud-matrix")
@@ -375,42 +362,54 @@ def crud_visualization_command(
         if fmt == "excel":
             excel_filename = f"CRUD_visualization_{project_name}_{timestamp}.xlsx"
             excel_filepath = os.path.join(output_dir, excel_filename)
-            if _save_crud_matrix_as_excel(result, project_name, excel_filepath):
+            if _save_crud_matrix_as_excel(matrix, project_name, excel_filepath):
                 logger.info(f"CRUD visualization (Excel) saved to: {excel_filepath}")
             else:
                 logger.info("Failed to save Excel file.")
         else:
             image_filename = f"CRUD_visualization_{project_name}_{timestamp}.{fmt}"
             image_filepath = os.path.join(output_dir, image_filename)
-            if _save_crud_matrix_as_image(result, project_name, image_filepath, fmt):
+            if _save_crud_matrix_as_image(matrix, project_name, image_filepath, fmt):
                 logger.info(f"CRUD visualization ({fmt.upper()}) saved to: {image_filepath}")
             else:
                 logger.info(f"Failed to save {fmt.upper()} file.")
 
-        summary = result.get("summary", {})
-        class_matrix = summary.get("class_matrix", [])
-        table_matrix = summary.get("table_matrix", [])
+        # 요약 정보 계산
+        class_names = set()
+        table_names = set()
+        for row in matrix:
+            if row.get("class_name"):
+                class_names.add(row["class_name"])
+            if row.get("table_name"):
+                table_names.add(row["table_name"])
 
         logger.info("=" * 50)
         logger.info("CRUD MATRIX SUMMARY")
         logger.info("=" * 50)
-        logger.info(f"Total classes: {len(class_matrix)}")
-        logger.info(f"Total tables: {len(table_matrix)}")
+        logger.info(f"Total classes: {len(class_names)}")
+        logger.info(f"Total tables: {len(table_names)}")
+        logger.info(f"Total relationships: {len(matrix)}")
 
-        if class_matrix:
+        if class_names:
             logger.info("\nClasses with database operations:")
-            for class_data in class_matrix[:10]:
-                class_name = class_data.get("class_name", "Unknown")
-                tables = class_data.get("tables", [])
-                table_count = len(tables) if isinstance(tables, list) else 0
-                logger.info(f"  - {class_name}: {table_count} tables")
-            if len(class_matrix) > 10:
-                logger.info(f"  ... and {len(class_matrix) - 10} more classes")
+            # 클래스별 테이블 수 계산
+            class_table_count = {}
+            for row in matrix:
+                class_name = row.get("class_name")
+                table_name = row.get("table_name")
+                if class_name and table_name:
+                    if class_name not in class_table_count:
+                        class_table_count[class_name] = set()
+                    class_table_count[class_name].add(table_name)
+
+            # 상위 10개 출력
+            sorted_classes = sorted(class_table_count.items(), key=lambda x: len(x[1]), reverse=True)
+            for class_name, tables in sorted_classes[:10]:
+                logger.info(f"  - {class_name}: {len(tables)} tables")
+            if len(sorted_classes) > 10:
+                logger.info(f"  ... and {len(sorted_classes) - 10} more classes")
     except Exception as exc:  # pylint: disable=broad-except
         logger.error(f"Error generating diagram: {exc}")
-    finally:
-        if driver:
-            driver.close()
 
 
 @click.command(name="table-impact")
