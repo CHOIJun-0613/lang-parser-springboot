@@ -9,14 +9,15 @@ from csa.cli.core.lifecycle import with_command_lifecycle
 from csa.cli.core.storage import _save_crud_matrix_as_excel, _save_crud_matrix_as_image
 from csa.services.db_call_analysis import DBCallAnalysisService
 from csa.services.graph_db import GraphDB
-from csa.utils.logger import set_command_context
+from csa.utils.logger import set_command_context, get_logger
 
 
 def _ensure_password() -> str | None:
+    logger = get_logger(__name__)
     password = os.getenv("NEO4J_PASSWORD")
     if not password:
-        click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-        click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+        logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+        logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
     return password
 
 
@@ -42,6 +43,7 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
 
     # 명령어 실행 직전에 컨텍스트 설정 (모든 로거가 같은 파일 사용)
     set_command_context("crud-matrix")
+    logger = get_logger(__name__, command="crud-matrix")
 
     result = {"success": False, "message": "", "stats": {}, "error": None, "files": []}
 
@@ -54,31 +56,31 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
         neo4j_database = os.getenv("NEO4J_DATABASE", "neo4j")
         db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
-        click.echo("CRUD Matrix - Class to Table Operations")
-        click.echo("=" * 80)
+        logger.info("CRUD Matrix - Class to Table Operations")
+        logger.info("=" * 80)
 
         matrix = db.get_crud_matrix(project_name)
 
         if not matrix and auto_create_relationships:
-            click.echo("No CRUD operations found. Creating Method-SqlStatement relationships...")
+            logger.info("No CRUD operations found. Creating Method-SqlStatement relationships...")
             relationships_created = db.create_method_sql_relationships(project_name)
             if relationships_created:
-                click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+                logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
                 matrix = db.get_crud_matrix(project_name)
             else:
-                click.echo("No relationships could be created.")
+                logger.info("No relationships could be created.")
 
         if not matrix:
             result["error"] = "No CRUD operations found"
-            click.echo("No CRUD operations found.")
+            logger.info("No CRUD operations found.")
             if not auto_create_relationships:
-                click.echo(
+                logger.info(
                     "Tip: Use --auto-create-relationships to build Method-SqlStatement links before running again."
                 )
             return result
 
-        click.echo(f"{'Package':<35} {'Class Name':<30} {'Method':<25} {'Schema':<10} {'Table':<20} {'Operations':<15}")
-        click.echo("-" * 135)
+        logger.info(f"{'Package':<35} {'Class Name':<30} {'Method':<25} {'Schema':<10} {'Table':<20} {'Operations':<15}")
+        logger.info("-" * 135)
 
         for row in matrix:
             package_name = row["package_name"] or "N/A"
@@ -87,11 +89,11 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
             schema = row["schema"] or "unknown"
             table_name = row["table_name"]
             operations = ", ".join(row["operations"]) if row["operations"] else "None"
-            click.echo(
+            logger.info(
                 f"{package_name:<35} {class_name:<30} {method_name:<25} {schema:<10} {table_name:<20} {operations:<15}"
             )
 
-        click.echo(f"\nTotal: {len(matrix)} class-table relationships.")
+        logger.info(f"\nTotal: {len(matrix)} class-table relationships.")
 
         output_dir = os.getenv("CRUD_MATRIX_OUTPUT_DIR", "./output/crud-matrix")
         os.makedirs(output_dir, exist_ok=True)
@@ -124,7 +126,7 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
 
         with open(md_filepath, "w", encoding="utf-8") as file:
             file.write("\n".join(lines))
-        click.echo(f"\nCRUD matrix (Markdown) saved to: {md_filepath}")
+        logger.info(f"\nCRUD matrix (Markdown) saved to: {md_filepath}")
         result["files"].append(md_filepath)
 
         fmt = output_format.lower()
@@ -132,18 +134,18 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
             excel_filename = f"CRUD_{project_name}_{timestamp}.xlsx"
             excel_filepath = os.path.join(output_dir, excel_filename)
             if _save_crud_matrix_as_excel(matrix, project_name, excel_filepath):
-                click.echo(f"CRUD matrix (Excel) saved to: {excel_filepath}")
+                logger.info(f"CRUD matrix (Excel) saved to: {excel_filepath}")
                 result["files"].append(excel_filepath)
             else:
-                click.echo("Failed to generate Excel file.")
+                logger.info("Failed to generate Excel file.")
         elif fmt in {"svg", "png"}:
             image_filename = f"CRUD_{project_name}_{timestamp}.{fmt}"
             image_filepath = os.path.join(output_dir, image_filename)
             if _save_crud_matrix_as_image(matrix, project_name, image_filepath, fmt):
-                click.echo(f"CRUD matrix ({fmt.upper()}) saved to: {image_filepath}")
+                logger.info(f"CRUD matrix ({fmt.upper()}) saved to: {image_filepath}")
                 result["files"].append(image_filepath)
             else:
-                click.echo(f"Failed to generate {fmt.upper()} file.")
+                logger.info(f"Failed to generate {fmt.upper()} file.")
 
         table_groups = {}
         for row in matrix:
@@ -159,7 +161,7 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
         }
     except Exception as exc:  # pylint: disable=broad-except
         result["error"] = str(exc)
-        click.echo(f"Error getting CRUD matrix: {exc}")
+        logger.error(f"Error getting CRUD matrix: {exc}")
 
     return result
 
@@ -179,6 +181,8 @@ def crud_matrix_command(neo4j_uri, neo4j_user, project_name, output_format, auto
 def table_summary_command(neo4j_uri, neo4j_user, project_name, output_file, auto_create_relationships):
     """Show CRUD summary for each table."""
 
+    set_command_context("table-summary")
+    logger = get_logger(__name__, command="table-summary")
     neo4j_password = _ensure_password()
     if not neo4j_password:
         return
@@ -189,37 +193,37 @@ def table_summary_command(neo4j_uri, neo4j_user, project_name, output_file, auto
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         analysis_service = DBCallAnalysisService(driver)
 
-        click.echo("Table Summary Analysis")
-        click.echo("=" * 50)
+        logger.info("Table Summary Analysis")
+        logger.info("=" * 50)
 
         result = analysis_service.get_table_summary(project_name)
 
         if auto_create_relationships and ("error" in result or not result.get("table_summary")):
-            click.echo("No table summary found. Creating Method-SqlStatement relationships...")
+            logger.info("No table summary found. Creating Method-SqlStatement relationships...")
             graph_db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
             relationships_created = graph_db.create_method_sql_relationships(project_name)
             if relationships_created:
-                click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+                logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
                 result = analysis_service.get_table_summary(project_name)
             else:
-                click.echo("No relationships could be created.")
+                logger.info("No relationships could be created.")
 
         if "error" in result:
-            click.echo(f"Error: {result['error']}")
+            logger.error(f"Error: {result['error']}")
             return
 
         table_summary = result.get("table_summary", [])
         if not table_summary:
-            click.echo("No table summary data available.")
+            logger.info("No table summary data available.")
             return
 
-        click.echo(f"\nTable Summary for project: {project_name}")
-        click.echo("-" * 80)
-        click.echo(f"{'Table Name':<30} {'Classes':<10} {'Read Ops':<10} {'Write Ops':<10}")
-        click.echo("-" * 80)
+        logger.info(f"\nTable Summary for project: {project_name}")
+        logger.info("-" * 80)
+        logger.info(f"{'Table Name':<30} {'Classes':<10} {'Read Ops':<10} {'Write Ops':<10}")
+        logger.info("-" * 80)
 
         for table in table_summary:
-            click.echo(
+            logger.info(
                 f"{table['table_name']:<30} "
                 f"{table['classes_count']:<10} "
                 f"{table['read_operations']:<10} "
@@ -229,9 +233,9 @@ def table_summary_command(neo4j_uri, neo4j_user, project_name, output_file, auto
         if output_file:
             with open(output_file, "w", encoding="utf-8") as file:
                 json.dump(result, file, indent=2, ensure_ascii=False)
-            click.echo(f"\nSummary saved to: {output_file}")
+            logger.info(f"\nSummary saved to: {output_file}")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error generating table summary: {exc}")
+        logger.error(f"Error generating table summary: {exc}")
     finally:
         if driver:
             driver.close()
@@ -252,6 +256,8 @@ def table_summary_command(neo4j_uri, neo4j_user, project_name, output_file, auto
 def crud_analysis_command(neo4j_uri, neo4j_user, project_name, output_dir, auto_create_relationships):
     """Generate CRUD matrix analysis summary."""
 
+    set_command_context("crud-analysis")
+    logger = get_logger(__name__, command="crud-analysis")
     neo4j_password = _ensure_password()
     if not neo4j_password:
         return
@@ -262,20 +268,20 @@ def crud_analysis_command(neo4j_uri, neo4j_user, project_name, output_dir, auto_
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
-        click.echo("Generating CRUD matrix analysis...")
+        logger.info("Generating CRUD matrix analysis...")
         matrix = db.get_crud_matrix(project_name)
 
         if not matrix and auto_create_relationships:
-            click.echo("No CRUD operations found. Creating Method-SqlStatement relationships...")
+            logger.info("No CRUD operations found. Creating Method-SqlStatement relationships...")
             relationships_created = db.create_method_sql_relationships(project_name)
             if relationships_created:
-                click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+                logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
                 matrix = db.get_crud_matrix(project_name)
             else:
-                click.echo("No relationships could be created.")
+                logger.info("No relationships could be created.")
 
         if not matrix:
-            click.echo("No CRUD operations found.")
+            logger.info("No CRUD operations found.")
             return
 
         os.makedirs(output_dir, exist_ok=True)
@@ -292,9 +298,9 @@ def crud_analysis_command(neo4j_uri, neo4j_user, project_name, output_dir, auto_
                 operations = ", ".join(entry["operations"]) if entry["operations"] else "None"
                 file.write(f"| {entry['class_name']} | {entry['table_name']} | {operations} |\n")
 
-        click.echo(f"CRUD analysis summary saved to: {summary_file}")
+        logger.info(f"CRUD analysis summary saved to: {summary_file}")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error generating CRUD analysis: {exc}")
+        logger.error(f"Error generating CRUD analysis: {exc}")
     finally:
         if driver:
             driver.close()
@@ -329,7 +335,8 @@ def crud_visualization_command(
     auto_create_relationships,
 ):
     """Generate CRUD matrix visualization diagram showing class-table relationships."""
-
+    set_command_context("crud-visualization")
+    logger = get_logger(__name__, command="crud-visualization")
     neo4j_password = _ensure_password()
     if not neo4j_password:
         return
@@ -340,24 +347,24 @@ def crud_visualization_command(
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         analysis_service = DBCallAnalysisService(driver)
 
-        click.echo("CRUD Matrix Visualization")
-        click.echo("=" * 50)
-        click.echo(f"Generating {output_format.upper()} visualization for project: {project_name}")
+        logger.info("CRUD Matrix Visualization")
+        logger.info("=" * 50)
+        logger.info(f"Generating {output_format.upper()} visualization for project: {project_name}")
 
         result = analysis_service.generate_crud_matrix(project_name)
 
         if auto_create_relationships and ("error" in result or not result.get("class_matrix")):
-            click.echo("No CRUD data found. Creating Method-SqlStatement relationships...")
+            logger.info("No CRUD data found. Creating Method-SqlStatement relationships...")
             graph_db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
             relationships_created = graph_db.create_method_sql_relationships(project_name)
             if relationships_created:
-                click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+                logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
                 result = analysis_service.generate_crud_matrix(project_name)
             else:
-                click.echo("No relationships could be created.")
+                logger.info("No relationships could be created.")
 
         if "error" in result or not result.get("class_matrix"):
-            click.echo(f"Error: {result.get('error', 'No CRUD data found')}")
+            logger.error(f"Error: {result.get('error', 'No CRUD data found')}")
             return
 
         output_dir = os.getenv("CRUD_MATRIX_OUTPUT_DIR", "./output/crud-matrix")
@@ -369,38 +376,38 @@ def crud_visualization_command(
             excel_filename = f"CRUD_visualization_{project_name}_{timestamp}.xlsx"
             excel_filepath = os.path.join(output_dir, excel_filename)
             if _save_crud_matrix_as_excel(result, project_name, excel_filepath):
-                click.echo(f"CRUD visualization (Excel) saved to: {excel_filepath}")
+                logger.info(f"CRUD visualization (Excel) saved to: {excel_filepath}")
             else:
-                click.echo("Failed to save Excel file.")
+                logger.info("Failed to save Excel file.")
         else:
             image_filename = f"CRUD_visualization_{project_name}_{timestamp}.{fmt}"
             image_filepath = os.path.join(output_dir, image_filename)
             if _save_crud_matrix_as_image(result, project_name, image_filepath, fmt):
-                click.echo(f"CRUD visualization ({fmt.upper()}) saved to: {image_filepath}")
+                logger.info(f"CRUD visualization ({fmt.upper()}) saved to: {image_filepath}")
             else:
-                click.echo(f"Failed to save {fmt.upper()} file.")
+                logger.info(f"Failed to save {fmt.upper()} file.")
 
         summary = result.get("summary", {})
         class_matrix = summary.get("class_matrix", [])
         table_matrix = summary.get("table_matrix", [])
 
-        click.echo("=" * 50)
-        click.echo("CRUD MATRIX SUMMARY")
-        click.echo("=" * 50)
-        click.echo(f"Total classes: {len(class_matrix)}")
-        click.echo(f"Total tables: {len(table_matrix)}")
+        logger.info("=" * 50)
+        logger.info("CRUD MATRIX SUMMARY")
+        logger.info("=" * 50)
+        logger.info(f"Total classes: {len(class_matrix)}")
+        logger.info(f"Total tables: {len(table_matrix)}")
 
         if class_matrix:
-            click.echo("\nClasses with database operations:")
+            logger.info("\nClasses with database operations:")
             for class_data in class_matrix[:10]:
                 class_name = class_data.get("class_name", "Unknown")
                 tables = class_data.get("tables", [])
                 table_count = len(tables) if isinstance(tables, list) else 0
-                click.echo(f"  - {class_name}: {table_count} tables")
+                logger.info(f"  - {class_name}: {table_count} tables")
             if len(class_matrix) > 10:
-                click.echo(f"  ... and {len(class_matrix) - 10} more classes")
+                logger.info(f"  ... and {len(class_matrix) - 10} more classes")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error generating diagram: {exc}")
+        logger.error(f"Error generating diagram: {exc}")
     finally:
         if driver:
             driver.close()
@@ -422,6 +429,8 @@ def crud_visualization_command(
 def table_impact_command(neo4j_uri, neo4j_user, project_name, table_name, output_file, auto_create_relationships):
     """Analyze impact of table changes on application code."""
 
+    set_command_context("table-impact")
+    logger = get_logger(__name__, command="table-impact")
     neo4j_password = _ensure_password()
     if not neo4j_password:
         return
@@ -432,65 +441,65 @@ def table_impact_command(neo4j_uri, neo4j_user, project_name, table_name, output
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         analysis_service = DBCallAnalysisService(driver)
 
-        click.echo("Table Impact Analysis")
-        click.echo("=" * 50)
-        click.echo(f"Analyzing impact of changes to table: {table_name}")
+        logger.info("Table Impact Analysis")
+        logger.info("=" * 50)
+        logger.info(f"Analyzing impact of changes to table: {table_name}")
 
         result = analysis_service.analyze_table_impact(project_name, table_name)
 
         if auto_create_relationships and ("error" in result or not result.get("impacted_classes")):
-            click.echo("No impact analysis found. Creating Method-SqlStatement relationships...")
+            logger.info("No impact analysis found. Creating Method-SqlStatement relationships...")
             graph_db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
             relationships_created = graph_db.create_method_sql_relationships(project_name)
             if relationships_created:
-                click.echo(f"Created {relationships_created} Method-SqlStatement relationships.")
+                logger.info(f"Created {relationships_created} Method-SqlStatement relationships.")
                 result = analysis_service.analyze_table_impact(project_name, table_name)
             else:
-                click.echo("No relationships could be created.")
+                logger.info("No relationships could be created.")
 
         if "error" in result:
-            click.echo(f"Error: {result['error']}")
+            logger.error(f"Error: {result['error']}")
             return
 
         impacted_classes = result["impacted_classes"]
         summary = result["summary"]
 
-        click.echo("\nImpact Summary:")
-        click.echo(f"  Table: {summary['table_name']}")
-        click.echo(f"  Impacted classes: {summary['total_impacted_classes']}")
-        click.echo(f"  Impacted methods: {summary['total_impacted_methods']}")
-        click.echo(f"  SQL statements: {summary['total_sql_statements']}")
-        click.echo(f"  CRUD operations: {', '.join(summary['crud_operations'])}")
+        logger.info("\nImpact Summary:")
+        logger.info(f"  Table: {summary['table_name']}")
+        logger.info(f"  Impacted classes: {summary['total_impacted_classes']}")
+        logger.info(f"  Impacted methods: {summary['total_impacted_methods']}")
+        logger.info(f"  SQL statements: {summary['total_sql_statements']}")
+        logger.info(f"  CRUD operations: {', '.join(summary['crud_operations'])}")
 
         if summary["high_complexity_sql"]:
-            click.echo(f"  High complexity SQL: {len(summary['high_complexity_sql'])}")
+            logger.info(f"  High complexity SQL: {len(summary['high_complexity_sql'])}")
 
         if impacted_classes:
-            click.echo("\nImpacted Classes:")
-            click.echo("-" * 80)
-            click.echo(f"{'Class':<25} {'Method':<25} {'SQL Type':<10} {'Complexity':<12}")
-            click.echo("-" * 80)
+            logger.info("\nImpacted Classes:")
+            logger.info("-" * 80)
+            logger.info(f"{'Class':<25} {'Method':<25} {'SQL Type':<10} {'Complexity':<12}")
+            logger.info("-" * 80)
             for cls in impacted_classes:
                 class_name = cls["class_name"]
                 method_name = cls["method_name"] or "N/A"
                 sql_type = cls["sql_type"] or "N/A"
                 complexity = str(cls["complexity_score"]) if cls["complexity_score"] else "N/A"
-                click.echo(f"{class_name:<25} {method_name:<25} {sql_type:<10} {complexity:<12}")
+                logger.info(f"{class_name:<25} {method_name:<25} {sql_type:<10} {complexity:<12}")
 
         if summary["high_complexity_sql"]:
-            click.echo("\nHigh Complexity SQL Statements:")
-            click.echo("-" * 60)
+            logger.info("\nHigh Complexity SQL Statements:")
+            logger.info("-" * 60)
             for sql in summary["high_complexity_sql"]:
-                click.echo(
+                logger.info(
                     f"  {sql['class_name']}.{sql['method_name']} - {sql['sql_type']} (complexity: {sql['complexity_score']})"
                 )
 
         if output_file:
             with open(output_file, "w", encoding="utf-8") as file:
                 json.dump(result, file, indent=2, ensure_ascii=False)
-            click.echo(f"\nImpact analysis saved to: {output_file}")
+            logger.info(f"\nImpact analysis saved to: {output_file}")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error analyzing table impact: {exc}")
+        logger.error(f"Error analyzing table impact: {exc}")
     finally:
         if driver:
             driver.close()

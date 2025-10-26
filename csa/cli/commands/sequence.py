@@ -6,7 +6,7 @@ import click
 from csa.cli.core.lifecycle import with_command_lifecycle
 from csa.dbwork.connection_pool import get_connection_pool
 from csa.diagrams.sequence.generator import SequenceDiagramGenerator
-from csa.utils.logger import set_command_context
+from csa.utils.logger import set_command_context, get_logger
 
 
 @click.command(name="sequence")
@@ -51,6 +51,7 @@ def sequence_command(
     """Generate sequence diagram for a specific class and optionally a method."""
     # 명령어 실행 직전에 컨텍스트 설정 (모든 로거가 같은 파일 사용)
     set_command_context("sequence")
+    logger = get_logger(__name__, command="sequence")
 
     result = {
         "success": False,
@@ -63,11 +64,11 @@ def sequence_command(
     neo4j_password = os.getenv("NEO4J_PASSWORD")
     if not neo4j_password:
         result["error"] = "NEO4J_PASSWORD environment variable is not set"
-        click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-        click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+        logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+        logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
         return result
 
-    click.echo(f"Connecting to Neo4j at {neo4j_uri} (database: {neo4j_database})...")
+    logger.info(f"Connecting to Neo4j at {neo4j_uri} (database: {neo4j_database})...")
 
     pool = get_connection_pool()
     if not pool.is_initialized():
@@ -79,13 +80,13 @@ def sequence_command(
         with pool.connection() as conn:
             generator = SequenceDiagramGenerator(conn.driver, format=format, database=conn.database)
 
-            click.echo(f"Generating {format} sequence diagram for class: {class_name}")
+            logger.info(f"Generating {format} sequence diagram for class: {class_name}")
             if method_name:
-                click.echo(f"Focusing on method: {method_name}")
+                logger.info(f"Focusing on method: {method_name}")
             if project_name:
-                click.echo(f"Using project: {project_name}")
+                logger.info(f"Using project: {project_name}")
             else:
-                click.echo("Auto-detecting project name...")
+                logger.info("Auto-detecting project name...")
 
             diagram = generator.generate_sequence_diagram(
                 class_name=class_name,
@@ -100,19 +101,19 @@ def sequence_command(
             )
 
             if isinstance(diagram, str) and diagram.startswith("Error:"):
-                click.echo(f"Error: {diagram}")
+                logger.error(f"Error: {diagram}")
                 result["error"] = diagram
                 return result
 
             if isinstance(diagram, dict):
                 if diagram.get("type") == "class":
-                    click.echo(f"Generated {len(diagram['files'])} sequence diagram files for class '{class_name}':\n")
+                    logger.info(f"Generated {len(diagram['files'])} sequence diagram files for class '{class_name}':\n")
                     for file_info in diagram["files"]:
-                        click.echo(f"- Diagram: {os.path.basename(file_info['diagram_path'])}")
+                        logger.info(f"- Diagram: {os.path.basename(file_info['diagram_path'])}")
                         if file_info["image_path"]:
-                            click.echo(f"  Image: {os.path.basename(file_info['image_path'])}")
+                            logger.info(f"  Image: {os.path.basename(file_info['image_path'])}")
 
-                    click.echo(f"\nFiles saved in: {diagram['output_dir']}/ directory")
+                    logger.info(f"\nFiles saved in: {diagram['output_dir']}/ directory")
 
                     for file_info in diagram["files"]:
                         generated_files.append(file_info["diagram_path"])
@@ -120,17 +121,17 @@ def sequence_command(
                             generated_files.append(file_info["image_path"])
 
                 elif diagram.get("type") == "method":
-                    click.echo(f"Generated sequence diagram for method '{method_name}':")
-                    click.echo(f"- Diagram: {os.path.basename(diagram['diagram_path'])}")
+                    logger.info(f"Generated sequence diagram for method '{method_name}':")
+                    logger.info(f"- Diagram: {os.path.basename(diagram['diagram_path'])}")
                     if diagram["image_path"]:
-                        click.echo(f"- Image: {os.path.basename(diagram['image_path'])}")
+                        logger.info(f"- Image: {os.path.basename(diagram['image_path'])}")
 
                     generated_files.append(diagram["diagram_path"])
                     if diagram["image_path"]:
                         generated_files.append(diagram["image_path"])
             else:
-                click.echo(f"Diagram generated (length: {len(diagram)})")
-                click.echo(diagram)
+                logger.info(f"Diagram generated (length: {len(diagram)})")
+                logger.info(diagram)
 
             result["success"] = True
             result["message"] = "Sequence diagram generated successfully"
@@ -145,8 +146,8 @@ def sequence_command(
             }
     except Exception as exc:  # pylint: disable=broad-except
         result["error"] = str(exc)
-        click.echo(f"Error generating sequence diagram: {exc}")
-        click.echo(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Error generating sequence diagram: {exc}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
     return result
 

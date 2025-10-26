@@ -72,8 +72,8 @@ def analyze_command(
 
     if default_to_full:
         all_objects = True
-        click.echo("No analysis type specified. Defaulting to full analysis (Java + DB objects).")
-        click.echo("Use --db-object, --java-object, --all-objects, --class-name, or --update to specify analysis type.")
+        logger.info("No analysis type specified. Defaulting to full analysis (Java + DB objects).")
+        logger.info("Use --db-object, --java-object, --all-objects, --class-name, or --update to specify analysis type.")
 
     detected_project_name = extract_project_name(java_source_folder)
     final_project_name = get_or_determine_project_name(

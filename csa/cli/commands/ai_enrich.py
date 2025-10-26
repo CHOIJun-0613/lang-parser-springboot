@@ -12,10 +12,12 @@ from csa.utils.logger import get_logger, set_command_context
 
 
 def _ensure_password() -> str | None:
+    from csa.utils.logger import get_logger
+    logger = get_logger(__name__)
     password = os.getenv("NEO4J_PASSWORD")
     if not password:
-        click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-        click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+        logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+        logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
     return password
 
 
@@ -69,11 +71,11 @@ def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_
         analyzer = get_ai_analyzer()
         if not analyzer.is_available():
             result["error"] = "AI analyzer is not available. Please check your AI configuration in .env file."
-            click.echo(result["error"])
+            logger.error(result["error"])
             return result
     except Exception as exc:
         result["error"] = f"Failed to initialize AI analyzer: {exc}"
-        click.echo(result["error"])
+        logger.error(result["error"])
         return result
 
     # concurrent 옵션 결정 (하위 호환성)
@@ -88,15 +90,15 @@ def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_
     try:
         db = GraphDB(neo4j_uri, neo4j_user, neo4j_password, neo4j_database)
 
-        click.echo("=" * 80)
-        click.echo("AI Enrichment - Add AI descriptions to existing nodes (Async Parallel Processing)")
-        click.echo("=" * 80)
-        click.echo(f"Project: {project_name}")
-        click.echo(f"Node type: {node_type}")
-        click.echo(f"Concurrent requests: {concurrent}")
+        logger.info("=" * 80)
+        logger.info("AI Enrichment - Add AI descriptions to existing nodes (Async Parallel Processing)")
+        logger.info("=" * 80)
+        logger.info(f"Project: {project_name}")
+        logger.info(f"Node type: {node_type}")
+        logger.info(f"Concurrent requests: {concurrent}")
         if limit:
-            click.echo(f"Limit: {limit} nodes")
-        click.echo("")
+            logger.info(f"Limit: {limit} nodes")
+        logger.info("")
 
         start_time = datetime.now()
 
@@ -115,27 +117,27 @@ def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
 
-        click.echo("")
-        click.echo("=" * 80)
-        click.echo("AI Enrichment Summary")
-        click.echo("=" * 80)
-        click.echo(f"Total nodes processed: {stats['total_processed']}")
-        click.echo(f"Successfully enriched: {stats['success_count']}")
-        click.echo(f"Failed: {stats['fail_count']}")
-        click.echo(f"Skipped (already has ai_description): {stats['skipped_count']}")
-        click.echo(f"Duration: {duration:.2f} seconds")
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("AI Enrichment Summary")
+        logger.info("=" * 80)
+        logger.info(f"Total nodes processed: {stats['total_processed']}")
+        logger.info(f"Successfully enriched: {stats['success_count']}")
+        logger.info(f"Failed: {stats['fail_count']}")
+        logger.info(f"Skipped (already has ai_description): {stats['skipped_count']}")
+        logger.info(f"Duration: {duration:.2f} seconds")
 
         if stats['success_count'] > 0:
-            click.echo(f"Average time per node: {duration / stats['total_processed']:.2f} seconds")
+            logger.info(f"Average time per node: {duration / stats['total_processed']:.2f} seconds")
 
         if stats['node_type_stats']:
-            click.echo("")
-            click.echo("By Node Type:")
+            logger.info("")
+            logger.info("By Node Type:")
             for node_type_name, type_stats in stats['node_type_stats'].items():
-                click.echo(f"  {node_type_name}:")
-                click.echo(f"    - Processed: {type_stats['processed']}")
-                click.echo(f"    - Success: {type_stats['success']}")
-                click.echo(f"    - Failed: {type_stats['failed']}")
+                logger.info(f"  {node_type_name}:")
+                logger.info(f"    - Processed: {type_stats['processed']}")
+                logger.info(f"    - Success: {type_stats['success']}")
+                logger.info(f"    - Failed: {type_stats['failed']}")
 
         result["success"] = True
         result["message"] = "AI enrichment completed successfully"
@@ -144,7 +146,7 @@ def ai_enrich_command(neo4j_uri, neo4j_user, neo4j_database, project_name, node_
     except Exception as exc:
         logger.error(f"AI enrichment error: {exc}")
         result["error"] = str(exc)
-        click.echo(f"Error during AI enrichment: {exc}")
+        logger.error(f"Error during AI enrichment: {exc}")
     finally:
         if db:
             db.close()

@@ -6,6 +6,7 @@ from neo4j import GraphDatabase
 from csa.cli.core.lifecycle import with_command_lifecycle
 from csa.dbwork.connection_pool import get_connection_pool
 from csa.diagrams.sequence.generator import SequenceDiagramGenerator
+from csa.utils.logger import get_logger, set_command_context
 
 
 @click.command(name="query")
@@ -21,6 +22,9 @@ from csa.diagrams.sequence.generator import SequenceDiagramGenerator
 @with_command_lifecycle("query")
 def query_command(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, basic, detailed, inheritance, package):
     """Execute predefined or custom Cypher queries against Neo4j."""
+
+    set_command_context("query")
+    logger = get_logger(__name__, command="query")
 
     queries = {
         "basic": """
@@ -90,8 +94,8 @@ def query_command(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, 
         cypher_query = queries["package"]
         description = "Package Query"
     else:
-        click.echo("Error: Please specify a query type or provide a custom query.")
-        click.echo("Available options: --basic, --detailed, --inheritance, --package, or --query")
+        logger.error("Error: Please specify a query type or provide a custom query.")
+        logger.info("Available options: --basic, --detailed, --inheritance, --package, or --query")
         return
 
     try:
@@ -101,18 +105,18 @@ def query_command(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, 
             pool.initialize(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, pool_size)
 
         with pool.session() as session:
-            click.echo(f"Executing: {description}")
-            click.echo("=" * 50)
+            logger.info(f"Executing: {description}")
+            logger.info("=" * 50)
 
             records = list(session.run(cypher_query))
 
             if not records:
-                click.echo("No results found.")
+                logger.info("No results found.")
                 return
 
             headers = list(records[0].keys())
-            click.echo(" | ".join(f"{header:20}" for header in headers))
-            click.echo("-" * (len(headers) * 23))
+            logger.info(" | ".join(f"{header:20}" for header in headers))
+            logger.info("-" * (len(headers) * 23))
 
             for record in records:
                 row = []
@@ -125,11 +129,11 @@ def query_command(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, 
                         row.append(text_value[:50] + "..." if len(text_value) > 50 else text_value)
                     else:
                         row.append(str(value)[:20])
-                click.echo(" | ".join(f"{cell:20}" for cell in row))
+                logger.info(" | ".join(f"{cell:20}" for cell in row))
 
-            click.echo(f"\nTotal: {len(records)} results found.")
+            logger.info(f"\nTotal: {len(records)} results found.")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error executing query: {exc}")
+        logger.error(f"Error executing query: {exc}")
 
 
 @click.command(name="list-classes")
@@ -140,12 +144,15 @@ def query_command(neo4j_uri, neo4j_user, neo4j_password, neo4j_database, query, 
 def list_classes_command(neo4j_uri, neo4j_user, neo4j_database):
     """List all available classes stored in Neo4j."""
 
+    set_command_context("list-classes")
+    logger = get_logger(__name__, command="list-classes")
+
     driver = None
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
 
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -153,22 +160,22 @@ def list_classes_command(neo4j_uri, neo4j_user, neo4j_database):
 
         classes = generator.get_available_classes()
         if not classes:
-            click.echo("No classes found in the database.")
+            logger.info("No classes found in the database.")
             return
 
-        click.echo("Available classes:")
-        click.echo("=" * 80)
-        click.echo(f"{'Class Name':<30} {'Package':<30} {'Type':<10}")
-        click.echo("-" * 80)
+        logger.info("Available classes:")
+        logger.info("=" * 80)
+        logger.info(f"{'Class Name':<30} {'Package':<30} {'Type':<10}")
+        logger.info("-" * 80)
 
         for cls in classes:
             package_name = cls.get("package_name") or "N/A"
             class_type = cls.get("type") or "N/A"
-            click.echo(f"{cls['name']:<30} {package_name:<30} {class_type:<10}")
+            logger.info(f"{cls['name']:<30} {package_name:<30} {class_type:<10}")
 
-        click.echo(f"\nTotal: {len(classes)} classes found.")
+        logger.info(f"\nTotal: {len(classes)} classes found.")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error listing classes: {exc}")
+        logger.error(f"Error listing classes: {exc}")
     finally:
         if driver:
             driver.close()
@@ -183,12 +190,15 @@ def list_classes_command(neo4j_uri, neo4j_user, neo4j_database):
 def list_methods_command(neo4j_uri, neo4j_user, neo4j_database, class_name):
     """List all methods declared for the specified class."""
 
+    set_command_context("list-methods")
+    logger = get_logger(__name__, command="list-methods")
+
     driver = None
     try:
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         if not neo4j_password:
-            click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-            click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+            logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+            logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
             return
 
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -196,20 +206,20 @@ def list_methods_command(neo4j_uri, neo4j_user, neo4j_database, class_name):
 
         methods = generator.get_class_methods(class_name)
         if not methods:
-            click.echo(f"No methods found for class '{class_name}'.")
+            logger.info(f"No methods found for class '{class_name}'.")
             return
 
-        click.echo(f"Methods for class '{class_name}':")
-        click.echo("=" * 80)
-        click.echo(f"{'Method Name':<30} {'Return Type':<20} {'Logical Name':<30}")
-        click.echo("-" * 80)
+        logger.info(f"Methods for class '{class_name}':")
+        logger.info("=" * 80)
+        logger.info(f"{'Method Name':<30} {'Return Type':<20} {'Logical Name':<30}")
+        logger.info("-" * 80)
 
         for method in methods:
-            click.echo(f"{method['name']:<30} {method['return_type']:<20} {method['logical_name']:<30}")
+            logger.info(f"{method['name']:<30} {method['return_type']:<20} {method['logical_name']:<30}")
 
-        click.echo(f"\nTotal: {len(methods)} methods found.")
+        logger.info(f"\nTotal: {len(methods)} methods found.")
     except Exception as exc:  # pylint: disable=broad-except
-        click.echo(f"Error listing methods: {exc}")
+        logger.error(f"Error listing methods: {exc}")
     finally:
         if driver:
             driver.close()

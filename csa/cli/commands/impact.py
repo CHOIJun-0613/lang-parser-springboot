@@ -19,10 +19,11 @@ from csa.utils.logger import set_command_context, get_logger
 
 def _ensure_password() -> str | None:
     """Neo4j 비밀번호 환경 변수 확인"""
+    logger = get_logger(__name__)
     password = os.getenv("NEO4J_PASSWORD")
     if not password:
-        click.echo("Error: NEO4J_PASSWORD environment variable is not set.")
-        click.echo("Please set NEO4J_PASSWORD in your .env file or environment variables.")
+        logger.error("Error: NEO4J_PASSWORD environment variable is not set.")
+        logger.error("Please set NEO4J_PASSWORD in your .env file or environment variables.")
     return password
 
 
@@ -120,16 +121,16 @@ def impact_analysis_command(
     # 옵션 검증
     if not table_name and not class_name:
         error_msg = "Error: --table-name 또는 --class-name 중 하나는 반드시 지정해야 합니다."
-        click.echo(error_msg)
-        click.echo("\nUsage:")
-        click.echo("  테이블 분석: --table-name <table_name>")
-        click.echo("  메서드 분석: --class-name <class_name> [--method-name <method_name>]")
+        logger.error(error_msg)
+        logger.info("\nUsage:")
+        logger.info("  테이블 분석: --table-name <table_name>")
+        logger.info("  메서드 분석: --class-name <class_name> [--method-name <method_name>]")
         result["error"] = error_msg
         return result
 
     if table_name and class_name:
         error_msg = "Error: --table-name과 --class-name을 동시에 지정할 수 없습니다."
-        click.echo(error_msg)
+        logger.error(error_msg)
         result["error"] = error_msg
         return result
 
@@ -145,22 +146,22 @@ def impact_analysis_command(
         driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         service = ImpactAnalysisService(driver, database=neo4j_database)
 
-        click.echo("=" * 80)
+        logger.info("=" * 80)
         if table_name:
-            click.echo(f"테이블 영향도 분석: {table_name}")
+            logger.info(f"테이블 영향도 분석: {table_name}")
             if project_name:
-                click.echo(f"프로젝트: {project_name}")
+                logger.info(f"프로젝트: {project_name}")
             else:
-                click.echo("프로젝트: 전체")
+                logger.info("프로젝트: 전체")
         else:
             target_display = f"{class_name}.{method_name}" if method_name else class_name
-            click.echo(f"메서드 영향도 분석: {target_display}")
+            logger.info(f"메서드 영향도 분석: {target_display}")
             if project_name:
-                click.echo(f"프로젝트: {project_name}")
+                logger.info(f"프로젝트: {project_name}")
             else:
-                click.echo("프로젝트: 전체")
-        click.echo(f"최대 깊이: {max_depth}")
-        click.echo("=" * 80)
+                logger.info("프로젝트: 전체")
+        logger.info(f"최대 깊이: {max_depth}")
+        logger.info("=" * 80)
 
         # 영향도 분석 수행
         if table_name:
@@ -178,20 +179,20 @@ def impact_analysis_command(
             )
 
         # 요약 정보 출력
-        click.echo("\n[요약]")
-        click.echo(f"  분석 대상: {impact_result.target_name}")
-        click.echo(f"  영향받는 클래스: {impact_result.summary.total_impacted_classes}개")
-        click.echo(f"  영향받는 메서드: {impact_result.summary.total_impacted_methods}개")
-        click.echo(f"  영향받는 패키지: {impact_result.summary.total_impacted_packages}개")
-        click.echo(f"  최대 호출 깊이: {impact_result.summary.max_depth}")
-        click.echo(f"  평균 호출 깊이: {impact_result.summary.avg_depth}")
-        click.echo(f"  리스크 등급:")
-        click.echo(f"    - HIGH: {impact_result.summary.risk_distribution['HIGH']}개")
-        click.echo(f"    - MEDIUM: {impact_result.summary.risk_distribution['MEDIUM']}개")
-        click.echo(f"    - LOW: {impact_result.summary.risk_distribution['LOW']}개")
+        logger.info("\n[요약]")
+        logger.info(f"  분석 대상: {impact_result.target_name}")
+        logger.info(f"  영향받는 클래스: {impact_result.summary.total_impacted_classes}개")
+        logger.info(f"  영향받는 메서드: {impact_result.summary.total_impacted_methods}개")
+        logger.info(f"  영향받는 패키지: {impact_result.summary.total_impacted_packages}개")
+        logger.info(f"  최대 호출 깊이: {impact_result.summary.max_depth}")
+        logger.info(f"  평균 호출 깊이: {impact_result.summary.avg_depth}")
+        logger.info(f"  리스크 등급:")
+        logger.info(f"    - HIGH: {impact_result.summary.risk_distribution['HIGH']}개")
+        logger.info(f"    - MEDIUM: {impact_result.summary.risk_distribution['MEDIUM']}개")
+        logger.info(f"    - LOW: {impact_result.summary.risk_distribution['LOW']}개")
 
         if impact_result.has_circular_reference:
-            click.echo(f"\n  ⚠️  순환 참조 감지: {len(impact_result.circular_paths)}개")
+            logger.info(f"\n  ⚠️  순환 참조 감지: {len(impact_result.circular_paths)}개")
 
         # 리포트 생성
         reporter = ImpactReporter()
@@ -200,41 +201,41 @@ def impact_analysis_command(
         md_filename = _generate_filename(impact_result, "md")
         md_filepath = output_path / md_filename
         if reporter.generate_markdown(impact_result, md_filepath):
-            click.echo(f"\n[OK] Markdown 리포트 생성: {md_filepath}")
+            logger.info(f"\n[OK] Markdown 리포트 생성: {md_filepath}")
             result["files"].append(str(md_filepath))
         else:
-            click.echo(f"\n[FAIL] Markdown 리포트 생성 실패")
+            logger.error(f"\n[FAIL] Markdown 리포트 생성 실패")
 
         # Excel 리포트 (기본 생성)
         excel_filename = _generate_filename(impact_result, "xlsx")
         excel_filepath = output_path / excel_filename
         if reporter.generate_excel(impact_result, excel_filepath):
-            click.echo(f"[OK] Excel 리포트 생성: {excel_filepath}")
+            logger.info(f"[OK] Excel 리포트 생성: {excel_filepath}")
             result["files"].append(str(excel_filepath))
         else:
-            click.echo(f"[FAIL] Excel 리포트 생성 실패")
+            logger.error(f"[FAIL] Excel 리포트 생성 실패")
 
         # JSON 리포트 (선택 생성)
         if include_json:
             json_filename = _generate_filename(impact_result, "json")
             json_filepath = output_path / json_filename
             if reporter.generate_json(impact_result, json_filepath):
-                click.echo(f"[OK] JSON 리포트 생성: {json_filepath}")
+                logger.info(f"[OK] JSON 리포트 생성: {json_filepath}")
                 result["files"].append(str(json_filepath))
             else:
-                click.echo(f"[FAIL] JSON 리포트 생성 실패")
+                logger.error(f"[FAIL] JSON 리포트 생성 실패")
 
         # Mermaid 다이어그램 (선택 생성)
         if generate_diagram:
             diagram_filename = _generate_filename(impact_result, "diagram.md")
             diagram_filepath = output_path / diagram_filename
             if reporter.generate_mermaid_diagram(impact_result, diagram_filepath):
-                click.echo(f"[OK] Mermaid 다이어그램 생성: {diagram_filepath}")
+                logger.info(f"[OK] Mermaid 다이어그램 생성: {diagram_filepath}")
                 result["files"].append(str(diagram_filepath))
             else:
-                click.echo(f"[FAIL] Mermaid 다이어그램 생성 실패")
+                logger.error(f"[FAIL] Mermaid 다이어그램 생성 실패")
 
-        click.echo("\n분석 완료!")
+        logger.info("\n분석 완료!")
         result["success"] = True
         result["message"] = f"영향도 분석 완료: {impact_result.target_name}"
         result["stats"] = {
@@ -249,7 +250,7 @@ def impact_analysis_command(
     except Exception as exc:
         error_msg = f"영향도 분석 중 오류 발생: {exc}"
         logger.error(error_msg, exc_info=True)
-        click.echo(f"\nError: {error_msg}")
+        logger.error(f"\nError: {error_msg}")
         result["error"] = str(exc)
         return result
 
