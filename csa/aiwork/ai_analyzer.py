@@ -253,8 +253,8 @@ class AIAnalyzer:
         """
         LLM 응답 텍스트를 정제합니다.
         - <think>...</think> 태그 제거
-        - ```markdown ... ``` 코드 블록 추출
-        - 실제 markdown 내용만 반환
+        - ```markdown ... ``` 코드 블록 추출 (있는 경우)
+        - 전체 markdown 내용 반환 (코드 블록 추출 로직 제거)
 
         Args:
             response: LLM 원본 응답 텍스트
@@ -265,18 +265,14 @@ class AIAnalyzer:
         # 1. <think>...</think> 패턴 제거 (멀티라인, non-greedy)
         cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
 
-        # 2. ```markdown ... ``` 코드 블록 추출
+        # 2. ```markdown ... ``` 코드 블록 추출 (명시적으로 markdown 블록으로 감싼 경우만)
         markdown_match = re.search(r'```markdown\s*(.*?)\s*```', cleaned, flags=re.DOTALL)
         if markdown_match:
             # markdown 코드 블록이 있으면 그 내용만 반환
             return markdown_match.group(1).strip()
 
-        # 3. ``` ... ``` 일반 코드 블록 추출 (markdown 키워드 없는 경우)
-        code_block_match = re.search(r'```\s*(.*?)\s*```', cleaned, flags=re.DOTALL)
-        if code_block_match:
-            return code_block_match.group(1).strip()
-
-        # 4. 코드 블록이 없으면 정제된 텍스트 반환
+        # 3. 코드 블록이 없으면 전체 응답 반환
+        # (일반 코드 블록 추출 로직 제거 - 첫 번째 코드 블록만 추출하는 버그 수정)
         return cleaned.strip()
 
     def analyze_class(self, source_code: str, class_name: str = "") -> str:
