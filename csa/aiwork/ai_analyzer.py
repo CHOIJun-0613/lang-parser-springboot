@@ -60,14 +60,14 @@ class AIAnalyzer:
         if '503' in error_msg or 'unavailable' in error_msg_lower or 'service unavailable' in error_msg_lower:
             logger.warning("서비스 일시 불가 감지 (503 UNAVAILABLE)")
             logger.warning("  - Gemini 서비스가 일시적으로 사용 불가능합니다")
-            logger.warning("  - 10초 후 자동으로 재시도합니다 (다른 API 호출 없음)")
+            logger.warning("  - 대기 후 자동으로 재시도합니다 (1회=10초, 2회=20초, 3회=30초)")
             return True
 
         # 2. Rate Limit 초과 (429 RESOURCE_EXHAUSTED)
         if '429' in error_msg or 'resource_exhausted' in error_msg_lower:
             logger.warning("Rate Limit 초과 감지 (429 RESOURCE_EXHAUSTED)")
             logger.warning("  - 분당 요청 수(RPM) 또는 분당 토큰 수(TPM) 초과")
-            logger.warning("  - API 호출 간격을 10초로 조정하고 재시도합니다")
+            logger.warning("  - 대기 시간을 점진적으로 늘려 재시도합니다 (1회=10초, 2회=20초, 3회=30초)")
             return True
 
         return False
@@ -121,8 +121,12 @@ class AIAnalyzer:
 
         Args:
             input_text: LLM에 전달할 입력 텍스트
-            max_retries: 최대 재시도 횟수 (기본값: 3)
-            retry_delay: 재시도 간격 (초, 기본값: 10)
+            max_retries: 최대 재시도 횟수 (기본값: 3, 총 4회 시도)
+            retry_delay: 재시도 기본 간격 (초, 기본값: 10, 재시도마다 10초씩 증가)
+                - 1회 실패 → 10초 sleep → 2회 시도
+                - 2회 실패 → 20초 sleep → 3회 시도
+                - 3회 실패 → 30초 sleep → 4회 시도
+                - 4회 실패 → 오류 처리
 
         Returns:
             LLM 응답 문자열
@@ -173,8 +177,10 @@ class AIAnalyzer:
                         if self._is_retryable_error(e, error_msg):
                             if retry_count < max_retries:
                                 retry_count += 1
-                                logger.warning(f"재시도 {retry_count}/{max_retries}: {retry_delay}초 대기 중...")
-                                time.sleep(retry_delay)
+                                # Linear backoff: 1회 실패=10초, 2회 실패=20초, 3회 실패=30초
+                                wait_time = retry_delay * retry_count
+                                logger.warning(f"재시도 {retry_count}/{max_retries}: {wait_time}초 대기 중...")
+                                time.sleep(wait_time)
                                 continue
                             else:
                                 logger.error(f"최대 재시도 횟수 초과 ({max_retries}회): {error_type} - {error_msg[:200]}")
