@@ -241,12 +241,38 @@ def parse_inner_classes(
                     # 메서드 modifiers 추출
                     modifiers = list(method_declaration.modifiers) if hasattr(method_declaration, 'modifiers') else []
 
+                    # 메서드 소스 코드 추출
+                    method_source = ""
+                    if method_declaration.position:
+                        lines = file_content.splitlines(keepends=True)
+                        start_line = method_declaration.position.line - 1
+
+                        brace_count = 0
+                        end_line = start_line
+                        found_opening_brace = False
+                        for i in range(start_line, len(lines)):
+                            line = lines[i]
+                            for char in line:
+                                if char == '{':
+                                    brace_count += 1
+                                    found_opening_brace = True
+                                elif char == '}':
+                                    brace_count -= 1
+                                    if found_opening_brace and brace_count == 0:
+                                        end_line = i
+                                        break
+                            if found_opening_brace and brace_count == 0:
+                                break
+
+                        method_source = "".join(lines[start_line:end_line + 1])
+
                     method = Method(
                         name=method_name,
                         return_type=return_type,
                         annotations=method_annotations,
                         parameters=parameters,
-                        modifiers=modifiers
+                        modifiers=modifiers,
+                        source=method_source
                     )
 
                     inner_class_node.methods.append(method)

@@ -439,6 +439,7 @@ class ProjectMixin:
                     "description": getattr(method, "description", "") or "",
                     "ai_description": getattr(method, "ai_description", "") or "",
                     "logical_name": getattr(method, "logical_name", "") or "",
+                    "source": getattr(method, "source", "") or "",
                     "updated_at": current_timestamp,
                 }
             )
@@ -512,6 +513,7 @@ class ProjectMixin:
                     meth.description = m.description,
                     meth.ai_description = m.ai_description,
                     meth.logical_name = m.logical_name,
+                    meth.source = m.source,
                     meth.package_name = m.package_name,
                     meth.project_name = m.project_name,
                     meth.updated_at = m.updated_at
@@ -1105,6 +1107,7 @@ class ProjectMixin:
                     "description": getattr(method, "description", "") or "",
                     "ai_description": getattr(method, "ai_description", "") or "",
                     "logical_name": getattr(method, "logical_name", "") or "",
+                    "source": getattr(method, "source", "") or "",
                     "updated_at": current_timestamp,
                 })
 
@@ -1154,6 +1157,7 @@ class ProjectMixin:
                     meth.description = m.description,
                     meth.ai_description = m.ai_description,
                     meth.logical_name = m.logical_name,
+                    meth.source = m.source,
                     meth.package_name = m.package_name,
                     meth.project_name = m.project_name,
                     meth.updated_at = m.updated_at

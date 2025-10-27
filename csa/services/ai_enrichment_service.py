@@ -329,15 +329,13 @@ class AIEnrichmentService:
         concurrent_requests: int,
         limit: Optional[int]
     ) -> Dict[str, int]:
-        """Enrich Method nodes with AI descriptions (비동기 병렬 처리)."""
+        """Enrich Method nodes with AI descriptions (배치 처리)."""
         stats = {"processed": 0, "success": 0, "failed": 0, "skipped": 0}
 
-        # Neo4j 쿼리: ai_description이 비어있거나 없는 Method 노드 조회
+        # Neo4j 쿼리: 모든 Method 노드 조회 (ai_description 및 source 조건 제거)
         query = """
         MATCH (c:Class)-[:HAS_METHOD]->(m:Method)
         WHERE c.project_name = $project_name
-          AND (m.ai_description IS NULL OR m.ai_description = '')
-          AND m.source IS NOT NULL AND m.source <> ''
         RETURN c.name as class_name,
                m.name as method_name,
                m.source as source,
@@ -353,53 +351,132 @@ class AIEnrichmentService:
 
         total = len(methods)
         if total == 0:
-            self.logger.info("No Method nodes found that need AI enrichment")
+            self.logger.info("No Method nodes found")
             return stats
 
         self.logger.info(f"Found {total} Method nodes to enrich")
-        self.logger.info(f"Processing {total} Method nodes with {concurrent_requests} concurrent requests...")
+        self.logger.info(f"Processing {total} Method nodes with batch size 5...")
+
+        # 배치 크기 (5개씩 묶어서 처리)
+        batch_size = 5
 
         # Semaphore로 동시 요청 수 제한
         semaphore = asyncio.Semaphore(concurrent_requests)
 
-        async def process_method(record, index):
-            """단일 Method 노드 처리"""
+        async def process_method_batch(batch_records, batch_start_index):
+            """배치 Method 노드 처리 (5개씩)"""
             async with semaphore:
-                class_name = record["class_name"]
-                method_name = record["method_name"]
-                source = record["source"]
-                node_id = record["node_id"]
+                # 배치 입력 데이터 준비
+                method_items = []
+                node_id_map = {}  # method_id -> node_id 매핑
+                skipped_methods = []  # 유효하지 않은 Method 목록
 
-                try:
-                    # AI 분석 (비동기)
-                    ai_description = await self.analyzer.analyze_method_async(source, method_name, class_name)
+                for record in batch_records:
+                    class_name = record["class_name"]
+                    method_name = record["method_name"]
+                    source = record["source"]
+                    node_id = record["node_id"]
 
-                    if ai_description:
-                        # Neo4j 업데이트
-                        self._update_node_ai_description(node_id, ai_description)
-                        self.logger.info(f"[{index}/{total}] Method enriched: {class_name}.{method_name}")
-                        return {"status": "success", "name": f"{class_name}.{method_name}"}
+                    method_id = f"{class_name}.{method_name}"
+
+                    # 유효성 검증: source, project_name, class_name 체크
+                    is_valid = True
+                    skip_reason = []
+
+                    if not source or source.strip() == "":
+                        is_valid = False
+                        skip_reason.append("source is empty")
+
+                    if not project_name or project_name.strip() == "":
+                        is_valid = False
+                        skip_reason.append("project_name is empty")
+
+                    if not class_name or class_name.strip() == "":
+                        is_valid = False
+                        skip_reason.append("class_name is empty")
+
+                    if not is_valid:
+                        # 유효하지 않은 경우 빈 문자열로 즉시 업데이트
+                        skipped_methods.append({
+                            "method_id": method_id,
+                            "node_id": node_id,
+                            "reason": ", ".join(skip_reason)
+                        })
+                        try:
+                            self._update_node_ai_description(node_id, "")
+                            self.logger.debug(f"Method skipped (set to empty): {method_id} - {', '.join(skip_reason)}")
+                        except Exception as exc:
+                            self.logger.error(f"Method Neo4j update failed for skipped ({method_id}): {exc}")
                     else:
-                        self.logger.warning(f"[{index}/{total}] Method AI analysis returned empty: {class_name}.{method_name}")
-                        return {"status": "failed", "name": f"{class_name}.{method_name}"}
+                        # 유효한 경우만 LLM 호출 대상에 추가
+                        method_items.append({
+                            "method_id": method_id,
+                            "class_name": class_name,
+                            "method_name": method_name,
+                            "source": source
+                        })
+                        node_id_map[method_id] = {
+                            "node_id": node_id,
+                            "class_name": class_name,
+                            "method_name": method_name
+                        }
 
-                except Exception as exc:
-                    self.logger.error(f"[{index}/{total}] Method enrichment failed ({class_name}.{method_name}): {exc}")
-                    return {"status": "failed", "name": f"{class_name}.{method_name}"}
+                batch_stats = {"success": 0, "failed": 0, "skipped": len(skipped_methods)}
 
-        # 모든 Method를 병렬 처리
-        tasks = [process_method(record, i+1) for i, record in enumerate(methods)]
-        results = await asyncio.gather(*tasks)
+                # 유효한 Method가 있는 경우에만 LLM 호출
+                if method_items:
+                    try:
+                        # AI 배치 분석 (비동기)
+                        batch_results = await self.analyzer.analyze_method_batch_async(method_items)
+
+                        # 각 결과를 Neo4j에 업데이트
+                        for method_id, ai_description in batch_results.items():
+                            node_info = node_id_map.get(method_id)
+                            if node_info and ai_description:
+                                try:
+                                    # Neo4j 업데이트
+                                    self._update_node_ai_description(node_info["node_id"], ai_description)
+                                    batch_stats["success"] += 1
+                                    self.logger.debug(f"Method enriched: {method_id}")
+                                except Exception as exc:
+                                    batch_stats["failed"] += 1
+                                    self.logger.error(f"Method Neo4j update failed ({method_id}): {exc}")
+                            else:
+                                batch_stats["failed"] += 1
+
+                        # 실패한 항목 (응답에 없는 Method)
+                        missing_count = len(method_items) - len(batch_results)
+                        batch_stats["failed"] += missing_count
+
+                    except Exception as exc:
+                        self.logger.error(f"Method batch enrichment failed (batch {batch_start_index}): {exc}")
+                        batch_stats["failed"] += len(method_items)
+
+                batch_end_index = batch_start_index + len(batch_records)
+                self.logger.info(
+                    f"[{batch_start_index}-{batch_end_index}/{total}] "
+                    f"Batch processed: Success={batch_stats['success']}, Failed={batch_stats['failed']}, Skipped={batch_stats['skipped']}"
+                )
+
+                return batch_stats
+
+        # 배치 단위로 처리
+        batch_tasks = []
+        for i in range(0, total, batch_size):
+            batch = methods[i:i+batch_size]
+            batch_tasks.append(process_method_batch(batch, i+1))
+
+        # 모든 배치를 병렬 처리
+        batch_results = await asyncio.gather(*batch_tasks)
 
         # 통계 계산
-        for result in results:
-            stats["processed"] += 1
-            if result["status"] == "success":
-                stats["success"] += 1
-            else:
-                stats["failed"] += 1
+        for batch_stat in batch_results:
+            stats["processed"] += batch_stat["success"] + batch_stat["failed"] + batch_stat.get("skipped", 0)
+            stats["success"] += batch_stat["success"]
+            stats["failed"] += batch_stat["failed"]
+            stats["skipped"] += batch_stat.get("skipped", 0)
 
-        self.logger.info(f"Completed: {total}/{total} (100%) - Success: {stats['success']}, Failed: {stats['failed']}")
+        self.logger.info(f"Completed: {total}/{total} (100%) - Success: {stats['success']}, Failed: {stats['failed']}, Skipped: {stats['skipped']}")
         return stats
 
     def _enrich_sql_statements(

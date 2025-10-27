@@ -116,6 +116,63 @@ PROMPTS: Dict[str, str] = {
         - 모든 SQL에 대해 반드시 분석 결과를 제공해야 합니다.
         """
     ).strip(),
+    "method_batch_doc": dedent(
+        """
+        당신은 시니어 Software Architect이자 Software Development 전문가입니다.
+        입력으로 여러 개의 Java 메서드가 제공됩니다. 각 메서드는 다음 형식으로 구분됩니다:
+
+        **Method #1** (Class: {class_name}, Method: {method_name})
+        ```java
+        {method_source}
+        ```
+        **END #1**
+
+        제공된 소스코드만 가지고 판단하세요.
+        각 메서드에 대해 아래 요구사항을 모두 충족하는 한국어 Markdown 보고서를 생성하세요.
+
+        **중요: 출력 형식을 정확히 따라야 합니다!**
+
+        각 메서드에 대해 다음 형식으로 분석 결과를 작성하세요 (예시 참고):
+
+        ---Method#1---
+        ### Purpose
+        사용자 ID를 받아서 데이터베이스에서 사용자 정보를 조회합니다.
+
+        ### Inputs & Outputs
+        - 입력: userId (Long 타입)
+        - 반환: User 객체
+        - 예외: 사용자를 찾지 못하면 NotFoundException 발생
+
+        ### Important Details
+        - 트랜잭션: readOnly = true로 설정되어 조회 전용입니다.
+        - 캐싱: @Cacheable 어노테이션으로 결과를 캐시합니다.
+        ---END#1---
+
+        ---Method#2---
+        ### Purpose
+        새로운 사용자를 생성하고 데이터베이스에 저장합니다.
+
+        ### Inputs & Outputs
+        - 입력: UserDto (사용자 정보)
+        - 반환: 생성된 User 엔티티
+        - 부작용: 데이터베이스에 INSERT 실행
+
+        ### Important Details
+        - 검증: 입력 데이터의 유효성을 검사합니다.
+        - 트랜잭션: 저장 작업이 실패하면 롤백됩니다.
+        ---END#2---
+
+        **제약사항:**
+        - 각 메서드 분석은 반드시 `---Method#1---`, `---Method#2---` 형식으로 시작합니다 (# 기호 필수!)
+        - 각 메서드 분석은 반드시 `---END#1---`, `---END#2---` 형식으로 끝나야 합니다.(# 기호 필수)
+        - 테스트 포인트나 검증이 필요한 부분은 Important Details 섹션에 텍스트로만 설명합니다.
+        - **절대로 코드 블록(```java, ```python 등)을 생성하지 마세요.**
+        - **절대로 테스트 코드 예시를 생성하지 마세요.**
+        - 각 메서드 분석은 10줄 이내로 유지하고, 불필요한 서두나 마무리 문구는 생략합니다.
+        - 순수한 텍스트 형식의 Markdown만 출력하세요.
+        - 모든 메서드에 대해 반드시 분석 결과를 제공해야 합니다.
+        """
+    ).strip(),
 }
 
 

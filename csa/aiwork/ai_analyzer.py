@@ -532,6 +532,61 @@ class AIAnalyzer:
             logger.debug(f"SQL AI 분석 상세 오류 (async, {sql_id}):\n{traceback.format_exc()}")
             return ""
 
+    async def analyze_method_batch_async(self, method_items: list[dict]) -> dict[str, str]:
+        """
+        여러 메서드를 배치로 비동기 분석하여 AI description을 생성합니다.
+
+        Args:
+            method_items: 메서드 정보 리스트 [{"method_id": "Class.Method", "class_name": "...", "method_name": "...", "source": "..."}, ...]
+
+        Returns:
+            {method_id: ai_description} 딕셔너리
+        """
+        if not self.is_available():
+            return {}
+
+        if not method_items:
+            return {}
+
+        try:
+            prompt = get_prompt("method_batch_doc")
+
+            # 배치 입력 텍스트 생성
+            method_sections = []
+            for idx, item in enumerate(method_items, 1):
+                method_id = item.get("method_id", f"unknown_{idx}")
+                class_name = item.get("class_name", "Unknown")
+                method_name = item.get("method_name", "Unknown")
+                source = item.get("source", "")
+                method_sections.append(
+                    f"**Method #{idx}** (Class: {class_name}, Method: {method_name})\n```java\n{source}\n```\n**END #{idx}**\n"
+                )
+
+            input_text = f"{prompt}\n\n" + "\n".join(method_sections)
+
+            # LLM 비동기 호출
+            raw_response = await self._call_llm_async(input_text)
+
+            # 응답 정제 (think 태그, markdown 블록 제거)
+            cleaned_response = self._clean_response(raw_response)
+
+            # 응답 파싱: ---Method#N---...---END#N--- 형식
+            results = self._parse_batch_method_response(cleaned_response, method_items)
+
+            logger.debug(f"Method 배치 AI 분석 완료: {len(results)}개 처리됨")
+            return results
+
+        except Exception as e:
+            # 상세한 오류 로그 기록
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.warning(f"Method 배치 AI 분석 실패: {error_type} - {error_msg}")
+
+            # 디버그 레벨로 전체 traceback 기록
+            import traceback
+            logger.debug(f"Method 배치 AI 분석 상세 오류:\n{traceback.format_exc()}")
+            return {}
+
     async def analyze_sql_batch_async(self, sql_items: list[dict]) -> dict[str, str]:
         """
         여러 SQL 문을 배치로 비동기 분석하여 AI description을 생성합니다.
@@ -669,6 +724,64 @@ class AIAnalyzer:
             logger.warning(
                 f"SQL 배치 분석 응답 파싱 불완전: "
                 f"{len(results)}/{len(sql_items)}개만 파싱됨"
+            )
+            logger.debug(f"응답 내용 (첫 1000자):\n{response[:1000]}")
+
+        return results
+
+    def _parse_batch_method_response(self, response: str, method_items: list[dict]) -> dict[str, str]:
+        """
+        배치 Method 분석 응답을 파싱합니다.
+
+        Args:
+            response: LLM 응답 텍스트
+            method_items: 원본 Method 정보 리스트
+
+        Returns:
+            {method_id: ai_description} 딕셔너리
+        """
+        results = {}
+
+        # 패턴 1: ---Method#N---...---END#N--- (개선된 형식, 번호 포함)
+        pattern1 = r'---Method#(\d+)---(.*?)---END#\1---'
+        matches1 = re.findall(pattern1, response, flags=re.DOTALL)
+
+        logger.debug(f"패턴 1 (---END#N---): {len(matches1)}개 매칭")
+
+        # 패턴 1로 매칭된 Method 번호 기록
+        matched_nums = set()
+        for method_num_str, description in matches1:
+            method_num = int(method_num_str)
+            matched_nums.add(method_num)
+            if 1 <= method_num <= len(method_items):
+                method_id = method_items[method_num - 1].get("method_id", "")
+                if method_id:
+                    results[method_id] = description.strip()
+                    logger.debug(f"  Method#{method_num} ({method_id}): {len(description)}자 추출")
+
+        # 매칭되지 않은 Method 처리 (END 태그 없는 경우)
+        if len(matches1) < len(method_items):
+            logger.debug(f"패턴 2 (유연한 파싱) 시도: 미처리 {len(method_items) - len(matches1)}개")
+            # 패턴 2: ---Method#N---부터 다음 ---Method# 또는 문자열 끝까지
+            pattern2 = r'---Method#(\d+)---(.*?)(?=---Method#\d+---|$)'
+            matches2 = re.findall(pattern2, response, flags=re.DOTALL)
+
+            for method_num_str, description in matches2:
+                method_num = int(method_num_str)
+                # 패턴 1에서 이미 처리되지 않은 것만 처리
+                if method_num not in matched_nums and 1 <= method_num <= len(method_items):
+                    method_id = method_items[method_num - 1].get("method_id", "")
+                    if method_id:
+                        # ---END#N--- 태그 제거 (있을 경우)
+                        desc_clean = re.sub(r'---END#?\d*---', '', description).strip()
+                        results[method_id] = desc_clean
+                        logger.debug(f"  Method#{method_num} ({method_id}): {len(desc_clean)}자 추출 (유연한 파싱)")
+
+        # 결과 검증
+        if len(results) < len(method_items):
+            logger.warning(
+                f"Method 배치 분석 응답 파싱 불완전: "
+                f"{len(results)}/{len(method_items)}개만 파싱됨"
             )
             logger.debug(f"응답 내용 (첫 1000자):\n{response[:1000]}")
 
