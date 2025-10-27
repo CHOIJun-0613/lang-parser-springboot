@@ -63,6 +63,59 @@ PROMPTS: Dict[str, str] = {
         - 순수한 텍스트 형식의 Markdown만 출력하세요.
         """
     ).strip(),
+    "sql_batch_doc": dedent(
+        """
+        당신은 시니어 Software Architect이자 SQL 전문가입니다.
+        입력으로 여러 개의 SQL 문이 제공됩니다. 각 SQL은 다음 형식으로 구분됩니다:
+
+        **SQL #1** (ID: {sql_id})
+        ```sql
+        {sql_content}
+        ```
+        **END #1**
+
+        각 SQL 문에 대해 아래 요구사항을 모두 충족하는 한국어 Markdown 보고서를 생성하세요.
+
+        **중요: 출력 형식을 정확히 따라야 합니다!**
+
+        각 SQL에 대해 다음 형식으로 분석 결과를 작성하세요 (예시 참고):
+
+        ---SQL#1---
+        ### Operation
+        사용자 ID를 기준으로 단일 레코드를 조회하는 SELECT 문입니다.
+
+        ### Tables & Conditions
+        - 테이블: users
+        - 조건: id = #{userId}
+
+        ### Considerations
+        - 인덱스: id 컬럼에 인덱스가 필요합니다.
+        - 단일 레코드 조회로 성능 영향은 최소화됩니다.
+        ---END#1---
+
+        ---SQL#2---
+        ### Operation
+        새로운 사용자 정보를 users 테이블에 삽입하는 INSERT 문입니다.
+
+        ### Tables & Conditions
+        - 테이블: users
+        - 컬럼: name, email
+
+        ### Considerations
+        - 트랜잭션: 커밋 전까지 다른 세션에서 보이지 않습니다.
+        - 제약조건: email은 UNIQUE 제약이 있을 가능성이 높습니다.
+        ---END#2---
+
+        **제약사항:**
+        - 각 SQL 분석은 반드시 `---SQL#1---`, `---SQL#2---` 형식으로 시작합니다 (# 기호 필수!)
+        - 각 SQL 분석은 반드시 `---END#1---`, `---END#2---` 형식으로 끝나야 합니다.(# 기호 필수)
+        - **절대로 코드 블록(```sql, ```java 등)을 생성하지 마세요.**
+        - **절대로 예시 쿼리나 테스트 코드를 생성하지 마세요.**
+        - 각 SQL 분석은 10줄 이내로 유지하고, 불필요한 서두나 마무리 문구는 생략합니다.
+        - 순수한 텍스트 형식의 Markdown만 출력하세요.
+        - 모든 SQL에 대해 반드시 분석 결과를 제공해야 합니다.
+        """
+    ).strip(),
 }
 
 

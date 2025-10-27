@@ -532,6 +532,148 @@ class AIAnalyzer:
             logger.debug(f"SQL AI 분석 상세 오류 (async, {sql_id}):\n{traceback.format_exc()}")
             return ""
 
+    async def analyze_sql_batch_async(self, sql_items: list[dict]) -> dict[str, str]:
+        """
+        여러 SQL 문을 배치로 비동기 분석하여 AI description을 생성합니다.
+
+        Args:
+            sql_items: SQL 정보 리스트 [{"sql_id": "...", "sql_content": "..."}, ...]
+
+        Returns:
+            {sql_id: ai_description} 딕셔너리
+        """
+        if not self.is_available():
+            return {}
+
+        if not sql_items:
+            return {}
+
+        try:
+            prompt = get_prompt("sql_batch_doc")
+
+            # 배치 입력 텍스트 생성
+            sql_sections = []
+            for idx, item in enumerate(sql_items, 1):
+                sql_id = item.get("sql_id", f"unknown_{idx}")
+                sql_content = item.get("sql_content", "")
+                sql_sections.append(
+                    f"**SQL #{idx}** (ID: {sql_id})\n```sql\n{sql_content}\n```\n**END #{idx}**\n"
+                )
+
+            input_text = f"{prompt}\n\n" + "\n".join(sql_sections)
+
+            # LLM 비동기 호출
+            raw_response = await self._call_llm_async(input_text)
+
+            # 응답 정제 (think 태그, markdown 블록 제거)
+            cleaned_response = self._clean_response(raw_response)
+
+            # 응답 파싱: ---SQL#N---...---END#N--- 형식
+            results = self._parse_batch_sql_response(cleaned_response, sql_items)
+
+            logger.debug(f"SQL 배치 AI 분석 완료: {len(results)}개 처리됨")
+            return results
+
+        except Exception as e:
+            # 상세한 오류 로그 기록
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.warning(f"SQL 배치 AI 분석 실패: {error_type} - {error_msg}")
+
+            # 디버그 레벨로 전체 traceback 기록
+            import traceback
+            logger.debug(f"SQL 배치 AI 분석 상세 오류:\n{traceback.format_exc()}")
+            return {}
+
+    def _parse_batch_sql_response(self, response: str, sql_items: list[dict]) -> dict[str, str]:
+        """
+        배치 SQL 분석 응답을 파싱합니다.
+
+        Args:
+            response: LLM 응답 텍스트
+            sql_items: 원본 SQL 정보 리스트
+
+        Returns:
+            {sql_id: ai_description} 딕셔너리
+        """
+        results = {}
+
+        # 패턴 1: ---SQL#N---...---END#N--- (개선된 형식, 번호 포함)
+        pattern1 = r'---SQL#(\d+)---(.*?)---END#\1---'
+        matches1 = re.findall(pattern1, response, flags=re.DOTALL)
+
+        logger.debug(f"패턴 1 (---END#N---): {len(matches1)}개 매칭")
+
+        # 패턴 1로 매칭된 SQL 번호 기록
+        matched_nums = set()
+        for sql_num_str, description in matches1:
+            sql_num = int(sql_num_str)
+            matched_nums.add(sql_num)
+            if 1 <= sql_num <= len(sql_items):
+                sql_id = sql_items[sql_num - 1].get("sql_id", "")
+                if sql_id:
+                    results[sql_id] = description.strip()
+                    logger.debug(f"  SQL#{sql_num} ({sql_id}): {len(description)}자 추출")
+
+        # 매칭되지 않은 SQL 처리 (END 태그 없는 경우)
+        if len(matches1) < len(sql_items):
+            logger.debug(f"패턴 2 (유연한 파싱) 시도: 미처리 {len(sql_items) - len(matches1)}개")
+            # 패턴 2: ---SQL#N---부터 다음 ---SQL# 또는 문자열 끝까지
+            pattern2 = r'---SQL#(\d+)---(.*?)(?=---SQL#\d+---|$)'
+            matches2 = re.findall(pattern2, response, flags=re.DOTALL)
+
+            for sql_num_str, description in matches2:
+                sql_num = int(sql_num_str)
+                # 패턴 1에서 이미 처리되지 않은 것만 처리
+                if sql_num not in matched_nums and 1 <= sql_num <= len(sql_items):
+                    sql_id = sql_items[sql_num - 1].get("sql_id", "")
+                    if sql_id:
+                        # ---END#N--- 태그 제거 (있을 경우)
+                        desc_clean = re.sub(r'---END#?\d*---', '', description).strip()
+                        results[sql_id] = desc_clean
+                        logger.debug(f"  SQL#{sql_num} ({sql_id}): {len(desc_clean)}자 추출 (유연한 파싱)")
+
+        # 이전 fallback 패턴들은 제거
+        if False:
+            # 패턴 2: ---SQL#N---...---END--- (이전 형식, 번호 없음)
+            pattern2 = r'---SQL#(\d+)---(.*?)---END---'
+            matches = re.findall(pattern2, response, flags=re.DOTALL)
+
+            if matches:
+                logger.debug(f"패턴 2 (---END---) 매칭: {len(matches)}개")
+                for sql_num_str, description in matches:
+                    sql_num = int(sql_num_str)
+                    if 1 <= sql_num <= len(sql_items):
+                        sql_id = sql_items[sql_num - 1].get("sql_id", "")
+                        if sql_id:
+                            results[sql_id] = description.strip()
+            else:
+                # 패턴 3: ---SQL#N--- 또는 ---SQLN--- (# 기호 선택적, END 태그 없음)
+                # 다음 SQL 시작까지 또는 문자열 끝까지를 하나의 SQL로 간주
+                pattern3 = r'---SQL#?(\d+)---(.*?)(?=---SQL#?\d+---|$)'
+                matches = re.findall(pattern3, response, flags=re.DOTALL)
+
+                if matches:
+                    logger.debug(f"패턴 3 (유연한 파싱) 매칭: {len(matches)}개")
+                    for sql_num_str, description in matches:
+                        sql_num = int(sql_num_str)
+                        if 1 <= sql_num <= len(sql_items):
+                            sql_id = sql_items[sql_num - 1].get("sql_id", "")
+                            if sql_id:
+                                # ---END#N--- 또는 ---END--- 태그 제거 (있을 경우)
+                                desc_clean = re.sub(r'---END#?\d*---', '', description).strip()
+                                results[sql_id] = desc_clean
+
+        # 결과 검증
+        if len(results) < len(sql_items):
+            logger.warning(
+                f"SQL 배치 분석 응답 파싱 불완전: "
+                f"{len(results)}/{len(sql_items)}개만 파싱됨"
+            )
+            logger.debug(f"응답 내용 (첫 1000자):\n{response[:1000]}")
+
+        return results
+
 
 # 전역 AI Analyzer 인스턴스
 _ai_analyzer = None

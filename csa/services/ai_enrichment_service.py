@@ -477,14 +477,13 @@ class AIEnrichmentService:
         concurrent_requests: int,
         limit: Optional[int]
     ) -> Dict[str, int]:
-        """Enrich SqlStatement nodes with AI descriptions (비동기 병렬 처리)."""
+        """Enrich SqlStatement nodes with AI descriptions (배치 처리)."""
         stats = {"processed": 0, "success": 0, "failed": 0, "skipped": 0}
 
-        # Neo4j 쿼리: ai_description이 비어있거나 없는 SqlStatement 노드 조회
+        # Neo4j 쿼리: 모든 SqlStatement 노드 조회 (ai_description 조건 제거)
         query = """
         MATCH (s:SqlStatement)
         WHERE s.project_name = $project_name
-          AND (s.ai_description IS NULL OR s.ai_description = '')
           AND s.sql_content IS NOT NULL AND s.sql_content <> ''
         RETURN s.id as sql_id,
                s.mapper_name as mapper_name,
@@ -501,51 +500,90 @@ class AIEnrichmentService:
 
         total = len(sql_statements)
         if total == 0:
-            self.logger.info("No SqlStatement nodes found that need AI enrichment")
+            self.logger.info("No SqlStatement nodes found")
             return stats
 
         self.logger.info(f"Found {total} SqlStatement nodes to enrich")
-        self.logger.info(f"Processing {total} SqlStatement nodes with {concurrent_requests} concurrent requests...")
+        self.logger.info(f"Processing {total} SqlStatement nodes with batch size 5...")
+
+        # 배치 크기 (5개씩 묶어서 처리)
+        batch_size = 5
 
         # Semaphore로 동시 요청 수 제한
         semaphore = asyncio.Semaphore(concurrent_requests)
 
-        async def process_sql(record, index):
-            """단일 SQL 노드 처리"""
+        async def process_sql_batch(batch_records, batch_start_index):
+            """배치 SQL 노드 처리 (5개씩)"""
             async with semaphore:
-                sql_id = record["sql_id"]
-                mapper_name = record["mapper_name"]
-                sql_content = record["sql_content"]
-                node_id = record["node_id"]
+                # 배치 입력 데이터 준비
+                sql_items = []
+                node_id_map = {}  # sql_id -> node_id 매핑
+                for record in batch_records:
+                    sql_id = record["sql_id"]
+                    sql_content = record["sql_content"]
+                    node_id = record["node_id"]
+
+                    sql_items.append({
+                        "sql_id": sql_id,
+                        "sql_content": sql_content
+                    })
+                    node_id_map[sql_id] = {
+                        "node_id": node_id,
+                        "mapper_name": record["mapper_name"]
+                    }
 
                 try:
-                    # AI 분석 (비동기)
-                    ai_description = await self.analyzer.analyze_sql_async(sql_content, sql_id)
+                    # AI 배치 분석 (비동기)
+                    batch_results = await self.analyzer.analyze_sql_batch_async(sql_items)
 
-                    if ai_description:
-                        # Neo4j 업데이트
-                        self._update_node_ai_description(node_id, ai_description)
-                        self.logger.info(f"[{index}/{total}] SQL enriched: {mapper_name}.{sql_id}")
-                        return {"status": "success", "name": f"{mapper_name}.{sql_id}"}
-                    else:
-                        self.logger.warning(f"[{index}/{total}] SQL AI analysis returned empty: {mapper_name}.{sql_id}")
-                        return {"status": "failed", "name": f"{mapper_name}.{sql_id}"}
+                    batch_stats = {"success": 0, "failed": 0}
+
+                    # 각 결과를 Neo4j에 업데이트
+                    for sql_id, ai_description in batch_results.items():
+                        node_info = node_id_map.get(sql_id)
+                        if node_info and ai_description:
+                            try:
+                                # Neo4j 업데이트
+                                self._update_node_ai_description(node_info["node_id"], ai_description)
+                                batch_stats["success"] += 1
+                                mapper_name = node_info["mapper_name"]
+                                self.logger.debug(f"SQL enriched: {mapper_name}.{sql_id}")
+                            except Exception as exc:
+                                batch_stats["failed"] += 1
+                                self.logger.error(f"SQL Neo4j update failed ({sql_id}): {exc}")
+                        else:
+                            batch_stats["failed"] += 1
+
+                    # 실패한 항목 (응답에 없는 SQL)
+                    missing_count = len(sql_items) - len(batch_results)
+                    batch_stats["failed"] += missing_count
+
+                    batch_end_index = batch_start_index + len(batch_records)
+                    self.logger.info(
+                        f"[{batch_start_index}-{batch_end_index}/{total}] "
+                        f"Batch processed: Success={batch_stats['success']}, Failed={batch_stats['failed']}"
+                    )
+
+                    return batch_stats
 
                 except Exception as exc:
-                    self.logger.error(f"[{index}/{total}] SQL enrichment failed ({mapper_name}.{sql_id}): {exc}")
-                    return {"status": "failed", "name": f"{mapper_name}.{sql_id}"}
+                    self.logger.error(f"SQL batch enrichment failed (batch {batch_start_index}): {exc}")
+                    return {"success": 0, "failed": len(batch_records)}
 
-        # 모든 SQL을 병렬 처리
-        tasks = [process_sql(record, i+1) for i, record in enumerate(sql_statements)]
-        results = await asyncio.gather(*tasks)
+        # 배치 단위로 처리
+        batch_tasks = []
+        for i in range(0, total, batch_size):
+            batch = sql_statements[i:i+batch_size]
+            batch_tasks.append(process_sql_batch(batch, i+1))
+
+        # 모든 배치를 병렬 처리
+        batch_results = await asyncio.gather(*batch_tasks)
 
         # 통계 계산
-        for result in results:
-            stats["processed"] += 1
-            if result["status"] == "success":
-                stats["success"] += 1
-            else:
-                stats["failed"] += 1
+        for batch_stat in batch_results:
+            stats["processed"] += batch_stat["success"] + batch_stat["failed"]
+            stats["success"] += batch_stat["success"]
+            stats["failed"] += batch_stat["failed"]
 
         self.logger.info(f"Completed: {total}/{total} (100%) - Success: {stats['success']}, Failed: {stats['failed']}")
         return stats
