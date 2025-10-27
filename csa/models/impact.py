@@ -25,9 +25,6 @@ class ImpactNode(BaseModel):
     sql_complexity: Optional[int] = Field(default=None, description="SQL 복잡도")
     risk_grade: str = Field(default="LOW", description="리스크 등급 (HIGH/MEDIUM/LOW)")
 
-    class Config:
-        allow_mutation = True
-
 
 class ImpactSummary(BaseModel):
     """영향도 분석 요약
@@ -47,9 +44,6 @@ class ImpactSummary(BaseModel):
         description="리스크 등급별 개수"
     )
 
-    class Config:
-        allow_mutation = True
-
 
 class PackageSummary(BaseModel):
     """패키지별 통계
@@ -65,9 +59,6 @@ class PackageSummary(BaseModel):
         description="리스크 등급별 개수"
     )
 
-    class Config:
-        allow_mutation = True
-
 
 class SqlDetail(BaseModel):
     """SQL 상세 정보 (테이블 영향도 분석 시)
@@ -81,9 +72,6 @@ class SqlDetail(BaseModel):
     complexity: int = Field(default=0, description="SQL 복잡도")
     query_preview: Optional[str] = Field(default=None, description="쿼리 미리보기 (앞 100자)")
 
-    class Config:
-        allow_mutation = True
-
 
 class TestScopeItem(BaseModel):
     """테스트 범위 항목
@@ -94,9 +82,6 @@ class TestScopeItem(BaseModel):
     test_class: Optional[str] = Field(default=None, description="대응 테스트 클래스명")
     test_method_count: int = Field(default=0, description="테스트 메서드 수")
     status: str = Field(default="미존재", description="테스트 존재 여부 (존재/미존재)")
-
-    class Config:
-        allow_mutation = True
 
 
 class ImpactAnalysisResult(BaseModel):
@@ -133,6 +118,3 @@ class ImpactAnalysisResult(BaseModel):
         default_factory=list,
         description="순환 참조 경로 목록"
     )
-
-    class Config:
-        allow_mutation = True

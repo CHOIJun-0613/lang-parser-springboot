@@ -33,9 +33,6 @@ class JavaAnalysisStats(BaseModel):
     end_time: Optional[datetime] = None
     metadata: Dict[str, int] = Field(default_factory=dict)
 
-    class Config:
-        allow_mutation = True
-
     @property
     def duration_seconds(self) -> Optional[float]:
         """Return run duration in seconds if timestamps are available."""
@@ -57,9 +54,6 @@ class DatabaseAnalysisStats(BaseModel):
     end_time: Optional[datetime] = None
     metadata: Dict[str, int] = Field(default_factory=dict)
 
-    class Config:
-        allow_mutation = True
-
     @property
     def duration_seconds(self) -> Optional[float]:
         """Return run duration in seconds if timestamps are available."""
@@ -76,9 +70,6 @@ class AnalysisResult(BaseModel):
     db_stats: Optional[DatabaseAnalysisStats] = None
     message: Optional[str] = None
     error: Optional[str] = None
-
-    class Config:
-        allow_mutation = True
 
 
 class JavaAnalysisArtifacts(BaseModel):
@@ -102,7 +93,6 @@ class JavaAnalysisArtifacts(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
-        allow_mutation = True
 
 
 class DatabaseAnalysisArtifacts(BaseModel):
@@ -113,7 +103,6 @@ class DatabaseAnalysisArtifacts(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
-        allow_mutation = True
 
 
 class Neo4jDatabaseStats(BaseModel):
@@ -123,6 +112,3 @@ class Neo4jDatabaseStats(BaseModel):
     total_relationships: int = 0
     node_counts_by_label: Dict[str, int] = Field(default_factory=dict)
     relationship_counts_by_type: Dict[str, int] = Field(default_factory=dict)
-
-    class Config:
-        allow_mutation = True
