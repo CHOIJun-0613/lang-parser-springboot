@@ -29,7 +29,7 @@ from csa.utils.logger import get_logger, set_command_context
 @click.option("--all-objects", is_flag=True, help="Analyze both Java and database objects")
 @click.option("--class-name", help="Analyze specific class only")
 @click.option("--update", is_flag=True, help="Update existing classes")
-@click.option("--skip-ai", is_flag=True, help="Skip AI description generation (faster parsing)")
+@click.option("--use-ai", is_flag=True, help="Enable AI description generation (slower, default: disabled)")
 def analyze_command(
     java_source_folder,
     project_name,
@@ -46,7 +46,7 @@ def analyze_command(
     all_objects,
     class_name,
     update,
-    skip_ai,
+    use_ai,
 ):
     """Analyze Java project and database objects."""
 
@@ -83,13 +83,14 @@ def analyze_command(
         logger,
     )
 
-    # skip-ai 옵션 로깅 및 환경 변수 설정
-    if skip_ai:
-        os.environ["SKIP_AI_ANALYSIS"] = "true"
-        logger.info("AI description generation is skipped (--skip-ai)")
+    # use-ai 옵션 로깅 및 환경 변수 설정
+    if use_ai:
+        os.environ["USE_AI_ANALYSIS"] = "true"
+        logger.info("AI description generation is enabled (--use-ai)")
     else:
-        # 명시적으로 false로 설정 (기본값 보장)
-        os.environ["SKIP_AI_ANALYSIS"] = "false"
+        # 기본값: AI 분석 비활성화 (빠른 파싱)
+        os.environ["USE_AI_ANALYSIS"] = "false"
+        logger.info("AI description generation is disabled (default). Use --use-ai to enable.")
 
     try:
         result = analyze_project(
@@ -108,7 +109,7 @@ def analyze_command(
             all_objects=all_objects,
             class_name=class_name,
             update=update,
-            skip_ai=skip_ai,
+            use_ai=use_ai,
             logger=logger,
         )
     except Exception as exc:  # pylint: disable=broad-except
